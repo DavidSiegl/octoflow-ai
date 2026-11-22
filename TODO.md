@@ -61,6 +61,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
   Each closes when drain handles it, or when the user rules it stays.
 
+- **summary.md and the pull request body name a role's model as asked, not as taken.** Ticket herdr-gui-decoupling 15:
+  a turn records the model its agent ran on (`TurnRecord::unoffered_model`), but the roles table of summary.md
+  (`run_summary`, `engine/src/summary.rs`) and of the pull request body (`engine/src/pull_request.rs`), and
+  metrics.json's `roles`, read `RunState::models`, so an ACP run whose harness did not offer the role's model still
+  names that one there. Closed when they name the model the role's turns ran on, or say it was not offered.
+
 - **A run's base can be a closed run's branch prune deletes.** Review 278 (todo 92): `take_base_branch` takes a
   closed run's branch that `origin` has as a new run's base, and the new run's pull request targets it, but
   `prune_remote` (`engine/src/cli/prune.rs`) deletes `origin`'s branch of a merged pull request, or of one closed past

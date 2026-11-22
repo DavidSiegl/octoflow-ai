@@ -35,7 +35,7 @@ use crate::error::OrchestratorError;
 use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
 use crate::human::Human;
 use crate::interrupt::Interrupt;
-use crate::state::{AgentRecord, Backend, RunState};
+use crate::state::{AgentRecord, Backend, RunState, UnofferedModel};
 use connection::{Connection, Failure, Records};
 use journal::Journal;
 use socket::{Commands, Listener};
@@ -155,7 +155,7 @@ impl<'h> AcpAgents<'h> {
     }
 
     /// Start harness h's agent for the role of run as launch says, in a new session or, for launch's session, that
-    /// one. Returns it and what of the launch it started without. Errors: Refused for a session it cannot resume;
+    /// one. Returns it and how it started (Agents::start). Errors: Refused for a session it cannot resume;
     /// Failed for a harness without an ACP launch, and for an agent that does not start or answer.
     fn launch(
         &self,
@@ -163,7 +163,7 @@ impl<'h> AcpAgents<'h> {
         role: &str,
         h: &'static Harness,
         launch: &AgentLaunch,
-    ) -> Result<(Agent, Vec<String>), AgentError> {
+    ) -> Result<(Agent, Started), AgentError> {
         let mode = run_mode(launch.permission_mode);
         let how = startable(h, mode, launch.model, launch.extra_dir)
             .map_err(|why| AgentError::Failed(OrchestratorError(why)))?;
@@ -211,10 +211,17 @@ impl<'h> AcpAgents<'h> {
             }
         };
         unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
+        let mut unoffered_model = None;
         if let Some(model) = how.model {
-            unpassed.extend(set_model(h, &ask, &session, &opened, &model)?);
+            if !choose(&ask, &session, &opened, &MODEL, &model)? {
+                let taken = current(&opened, &MODEL);
+                let on = taken.as_deref().unwrap_or("its own");
+                unpassed.push(format!("{} offers no model {model}; starting it on {on}", h.kind));
+                unoffered_model = Some(UnofferedModel { asked: model, taken });
+            }
         }
-        Ok((Agent { connection: Arc::new(connection), session, harness: h.kind }, unpassed))
+        let agent = Agent { connection: Arc::new(connection), session, harness: h.kind };
+        Ok((agent, Started { asking: false, unpassed, unoffered_model }))
     }
 }
 
@@ -294,9 +301,9 @@ impl Agents for AcpAgents<'_> {
             Err(e) => self.human.log(&format!("[{role}] cannot end what an earlier agent left: {e}")),
         }
         let h = harness(launch.harness)?;
-        let (agent, unpassed) = self.launch(run, role, h, launch)?;
+        let (agent, started) = self.launch(run, role, h, launch)?;
         self.lock().insert(role.to_string(), agent);
-        Ok(Started { asking: false, unpassed })
+        Ok(started)
     }
 
     fn wait_ready(&self, _run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
@@ -685,20 +692,6 @@ fn set_mode(
     }
 }
 
-/// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask
-/// (choose). Returns the log's sentence when the session does not offer model. Errors: the agent refuses the request,
-/// or does not answer it.
-fn set_model(
-    h: &Harness,
-    ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
-    session: &str,
-    opened: &Value,
-    model: &str,
-) -> Result<Option<String>, AgentError> {
-    let offered = choose(ask, session, opened, &MODEL, model)?;
-    Ok((!offered).then(|| format!("{} offers no model {model}; starting it on its own", h.kind)))
-}
-
 /// A choice a session offers, as ACP names it two ways: a session config option of a category
 /// ([session config options](https://agentclientprotocol.com/protocol/session-config-options)), and the older list of
 /// the session's answer that ACP is replacing with it, with its own request.
@@ -747,9 +740,7 @@ fn choose(
     choice: &Choice,
     id: &str,
 ) -> Result<bool, AgentError> {
-    let options = opened.get("configOptions").and_then(Value::as_array);
-    let category = |o: &&Value| o.get("category").and_then(Value::as_str) == Some(choice.category);
-    match options.and_then(|o| o.iter().find(category)) {
+    match config_option(opened, choice) {
         Some(option) if !option_offers(option, id) => Ok(false),
         Some(option) => {
             if option.get("currentValue").and_then(Value::as_str) != Some(id) {
@@ -768,6 +759,23 @@ fn choose(
             Ok(true)
         }
     }
+}
+
+/// The id the session, as its answer opened has it, is on for choice: by the session config option of choice's
+/// category where the session has one, else by choice's list; None when it names none.
+fn current(opened: &Value, choice: &Choice) -> Option<String> {
+    let id = match config_option(opened, choice) {
+        Some(option) => option.get("currentValue"),
+        None => opened.pointer(choice.current),
+    };
+    id.and_then(Value::as_str).filter(|id| !id.is_empty()).map(String::from)
+}
+
+/// The session config option of choice's category in the session's answer opened; None when it has none, and names
+/// the choice by its older list, if at all.
+fn config_option<'v>(opened: &'v Value, choice: &Choice) -> Option<&'v Value> {
+    let options = opened.get("configOptions").and_then(Value::as_array)?;
+    options.iter().find(|o| o.get("category").and_then(Value::as_str) == Some(choice.category))
 }
 
 /// Whether the select config option offers value: among its `options`, flat or in groups.

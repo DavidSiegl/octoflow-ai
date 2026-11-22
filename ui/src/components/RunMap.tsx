@@ -435,9 +435,11 @@ function Station({ stage, record, texts: { holder, harness }, waiting, at, room 
   );
 }
 
-/** A turn's harness and model, as far as the record names them; "" for an analysis, which runs no agent. */
+/** A turn's harness and the model it ran on, as far as the record names them, and the role's model where the harness
+ * did not offer it; "" for an analysis, which runs no agent. */
 function harnessOf(turn: Turn): string {
-  return [turn.agent, turn.model].filter(Boolean).join(" ");
+  const unoffered = turn.unoffered_model && `(${turn.unoffered_model} not offered)`;
+  return [turn.agent, turn.model, unoffered].filter(Boolean).join(" ");
 }
 
 /** Who ran a turn: its harness and model, or "quality gate" for an analysis. */

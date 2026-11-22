@@ -16,7 +16,7 @@ use std::fmt;
 
 use crate::error::OrchestratorError;
 use crate::human::Human;
-use crate::state::{AgentRecord, Backend, RunState};
+use crate::state::{AgentRecord, Backend, RunState, UnofferedModel};
 
 /// Why a backend did not do what it was asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,6 +123,9 @@ pub struct Started {
     /// What of the launch it started without, each as a sentence about its harness for the log: a permission mode the
     /// harness has no equivalent of, a model it cannot be given.
     pub unpassed: Vec<String>,
+    /// The launch's model when the harness's session did not offer it, with the one the agent runs on instead; None
+    /// when it was given the launch's model, or the launch named none.
+    pub unoffered_model: Option<UnofferedModel>,
 }
 
 /// A run's agents as the orchestrator that drives the run reaches them: their place, starting them, prompting them,

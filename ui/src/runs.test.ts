@@ -23,7 +23,7 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
 
 const turn = (step: string, round = 1, quality_round = 0): Turn => ({
   step, role: step, round, quality_round, file: `${step}-${round}.md`, agent: step === "quality" ? null : "claude",
-  model: null, session: null, tokens: null, human_paced: false, started_at: null, ended_at: null, seconds: null,
+  model: null, unoffered_model: null, session: null, tokens: null, human_paced: false, started_at: null, ended_at: null, seconds: null,
 });
 
 /** Each stage of the record's progress as [label, state]. */

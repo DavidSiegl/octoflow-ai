@@ -560,13 +560,16 @@ impl Workflow<'_> {
     pub(super) fn turn_record(&self, role: &str, file: &str, started: Option<i64>) -> TurnRecord {
         let s = &self.state;
         let step = self.pipeline.step(&s.phase);
-        let (harness, model, session) = match step {
-            None => (None, None, None),
-            Some(_) => (
-                Some(s.harness(role).to_string()),
-                s.models.get(role).cloned(),
-                s.agents.get(role).and_then(|a| a.session.clone()),
-            ),
+        let (harness, model, unoffered_model, session) = match step {
+            None => (None, None, None, None),
+            Some(_) => {
+                let agent = s.agents.get(role);
+                let (model, unoffered) = match agent.and_then(|a| a.unoffered_model.clone()) {
+                    Some(u) => (u.taken, Some(u.asked)),
+                    None => (s.models.get(role).cloned(), None),
+                };
+                (Some(s.harness(role).to_string()), model, unoffered, agent.and_then(|a| a.session.clone()))
+            }
         };
         let blocked = s.blocked.as_ref().is_some_and(|b| file_of(b) == Some(file));
         TurnRecord {
@@ -577,6 +580,7 @@ impl Workflow<'_> {
             file: file.to_string(),
             harness,
             model,
+            unoffered_model,
             session,
             tokens: Value::Null,
             human_paced: step.is_some_and(|st| st.human_paced) || blocked,
@@ -744,6 +748,9 @@ impl Workflow<'_> {
             extra_dir: extra_dir.as_deref(),
         };
         let started = self.agents.start(s, role, &launch)?;
+        if let Some(agent) = self.state.agents.get_mut(role) {
+            agent.unoffered_model = started.unoffered_model;
+        }
         for line in started.unpassed {
             if self.told_unpassed.insert((role.to_string(), line.clone())) {
                 self.human.log(&format!("[{role}] {line}"));
