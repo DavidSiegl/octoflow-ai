@@ -94,10 +94,10 @@ pub fn with_header_field(text: &str, key: &str, entry: &str) -> Result<String, O
 }
 
 /// The entries of a Blocked by: line's value, in order, blanks at their ends removed; none without the line, or when
-/// its value is one of NO_BLOCKERS.
+/// its value's first word is one of NO_BLOCKERS, so that a note may follow it: `none (independent)`.
 fn blocker_entries(line: Option<&str>) -> Vec<&str> {
     let line = line.unwrap_or("");
-    if NO_BLOCKERS.contains(&line.trim().to_lowercase().as_str()) {
+    if NO_BLOCKERS.contains(&status_word(line).to_lowercase().as_str()) {
         return vec![];
     }
     line.split(',').map(str::trim).filter(|e| !e.is_empty()).collect()
@@ -321,9 +321,10 @@ impl Queued {
     }
 }
 
-/// A Status: line's value's first word, as drain reads it (Queued::status): `resolved` of `resolved (PR #7 merged)`.
-pub fn status_word(value: &str) -> &str {
-    value.split_whitespace().next().unwrap_or_default()
+/// A header line's entry's first word, as drain reads a Status: line (Queued::status): `resolved` of
+/// `resolved (PR #7 merged)`.
+pub fn status_word(entry: &str) -> &str {
+    entry.split_whitespace().next().unwrap_or_default()
 }
 
 /// A spec's status as drain writes it: "no status" for a spec without a Status: line, or with an empty one.
@@ -331,9 +332,9 @@ pub(super) fn status_text(value: Option<String>) -> String {
     value.filter(|s| !s.is_empty()).unwrap_or_else(|| "no status".to_string())
 }
 
-/// Every spec_dir/<slug>/spec.md on this machine, ordered by slug, each followed by the tickets of its directory
-/// (read_spec_dir). A name in spec_dir that is not UTF-8 is left out. A ticket's Blocked by: entries that name no
-/// single ticket are kept as its unread_blockers.
+/// What each directory of spec_dir on this machine holds, ordered by its name (read_spec_dir): its spec.md, if it has
+/// one, followed by its tickets, whatever the spec's status. A name in spec_dir that is not UTF-8 is left out. A
+/// ticket's Blocked by: entries that name no single ticket are kept as its unread_blockers.
 ///
 /// Errors, naming the specs or tickets: spec_dir or an issues directory cannot be listed, a spec or ticket cannot be
 /// read (read_spec_file), a spec's Blocked by: line names a slug that has no spec.md, or what drain waits on forms a

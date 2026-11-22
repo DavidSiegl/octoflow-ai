@@ -190,7 +190,7 @@ fn a_spec_out_of_ready_starts_none_of_its_tickets_but_its_open_pull_requests_are
     assert_eq!(d.tasks(), ["First"]);
     assert_eq!(d.ticket_header("s", "02-second"), (some(SPEC_READY), None, None));
 
-    for (pr_state, after_status) in [("MERGED", resolved(1)), ("CLOSED", some(SPEC_FOR_HUMAN))] {
+    for (pr_state, settled) in [("MERGED", resolved(1)), ("CLOSED", some(SPEC_FOR_HUMAN))] {
         let d = Drain::new();
         d.spec("s", &spec_text("Spec", Some("needs-triage"), &[]));
         d.ticket("s", "01-first", &spec_text("First", Some(SPEC_IN_REVIEW), &[&format!("PR: {PR_A}")]));
@@ -198,7 +198,7 @@ fn a_spec_out_of_ready_starts_none_of_its_tickets_but_its_open_pull_requests_are
         d.pull_request(PR_A, pr_state, &[]);
         let r = d.drain(vec![], &[]);
         assert_eq!(r.status, 0, "{pr_state}: {}", r.err);
-        assert_eq!(d.ticket_header("s", "01-first").0, after_status, "{pr_state}");
+        assert_eq!(d.ticket_header("s", "01-first").0, settled, "{pr_state}");
         assert_eq!(d.tasks(), Vec::<String>::new());
     }
 }
@@ -216,7 +216,7 @@ fn a_specs_status_is_its_first_word_too() {
 }
 
 #[test]
-fn a_tickets_blockers_name_tickets_by_number_or_another_specs_whatever_its_status() {
+fn a_tickets_blockers_name_tickets_by_number_or_another_specs_whether_or_not_that_spec_is_ready() {
     let d = Drain::new();
     d.spec("a", &ready("A"));
     d.ticket("a", "01-x", &ready_ticket("A1"));
@@ -287,4 +287,16 @@ fn a_cycle_through_a_specs_tickets_stops_the_drain_before_any_run() {
     let r = d.drain(vec![], &[]);
     assert_eq!(r.status, EXIT_ERROR);
     assert!(r.err.starts_with("error: the blockers form a cycle: x -> x/01-a -> y/01-b -> x\n"), "{}", r.err);
+}
+
+#[test]
+fn a_blocked_by_line_naming_none_with_a_note_names_no_blocker() {
+    let d = Drain::new();
+    d.spec("s", &ready("Spec"));
+    d.ticket("s", "01-first", &spec_text("First", Some(SPEC_READY), &["Blocked by: none (independent of 02)"]));
+    d.ticket("s", "02-second", &spec_text("Second", Some(SPEC_READY), &["Blocked by: - (see the spec)"]));
+    let r = d.drain(vec![approved(PR_A, &[]), approved(PR_B, &[])], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.tasks(), ["First", "Second"]);
+    assert_eq!(blocker_slugs(Some("None (independent)")), Vec::<String>::new());
 }

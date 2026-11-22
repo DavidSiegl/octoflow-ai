@@ -25,7 +25,8 @@ pub const DRAIN_DIR: &str = ".scratch";
 /// The values of a spec's Status: line that drain acts on. A spec moves from SPEC_READY to SPEC_IN_REVIEW, its pull
 /// request open, to SPEC_DONE, merged; or to SPEC_FOR_HUMAN, for a run that failed, did not succeed, conflicts, or
 /// opened no pull request (RunState::nothing_to_publish), which drain leaves only for SPEC_IN_REVIEW, once a succeeded
-/// run's conflict is cleared (refreshed_headers). Drain leaves a spec with any other value, or none, alone.
+/// run's conflict is cleared (refreshed_headers). Drain leaves a spec with any other value, or none, alone. A value is
+/// the line's first word (queue::status_word), so a note may follow it.
 pub const SPEC_READY: &str = "ready-for-agent";
 pub const SPEC_IN_REVIEW: &str = "in-review";
 pub const SPEC_DONE: &str = "done";
@@ -37,10 +38,10 @@ pub const TICKET_RESOLVED: &str = "resolved";
 pub const TICKET_WONTFIX: &str = "wontfix";
 
 /// Run the specs and tickets in args.dir that are ready (queue::read_queue), one after another, recording each in its
-/// header, in world on the project at cwd, and say how drain ended: with exit status 0 once none is SPEC_READY,
-/// EXIT_WAITING when those left are blocked or gone (drain_end), or the status of the run that stopped the drain. With
-/// args.dry_run, print what it would change and run, and change nothing. Prints the header changes it made, however it
-/// ended.
+/// header, in world on the project at cwd, and say how drain ended (drain_end): with exit status 0 once none it drains
+/// is SPEC_READY, EXIT_ERROR when a ticket is held for the human (held), EXIT_WAITING when those left are blocked or
+/// gone; or the status of the run that stopped the drain. With args.dry_run, print what it would change and run, and
+/// change nothing, exiting 0. Prints the header changes it made, however it ended.
 ///
 /// Errors (Stop::Failed), before any run starts: the workflow cannot take a spec (Pipeline::seeded_start), and as
 /// read_queue and refreshed_headers fail, and a taken-up run's state that changed since the pass read it or cannot be
@@ -83,14 +84,14 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     let drained = drain_ready(args, world, cwd, &mut queue, &by_slug);
     // The changes are printed whether the drain ended or failed.
     print_changes(&queue, world);
-    let exit_status = match drained? {
-        Some(exit_status) => exit_status,
+    let ended_with = match drained? {
+        Some(stopped_with) => stopped_with,
         None => drain_end(&queue, &by_slug, world),
     };
     if interrupt.is_raised() {
         return Err(Stop::Interrupted(None));
     }
-    Ok(Ended::Status(exit_status))
+    Ok(Ended::Status(ended_with))
 }
 
 /// Run each of queue that is startable, in turn, until none is (None) or one stops the drain (its exit status), as
@@ -109,8 +110,8 @@ fn drain_ready(
             return Err(Stop::Interrupted(None));
         }
         let Some(ready) = next_startable(queue, by_slug, world) else { return Ok(None) };
-        if let Some(status) = drain_one(args, world, cwd, &mut queue[ready])? {
-            return Ok(Some(status));
+        if let Some(stopped_with) = drain_one(args, world, cwd, &mut queue[ready])? {
+            return Ok(Some(stopped_with));
         }
     }
 }
@@ -388,7 +389,7 @@ impl PullRequestStates<'_, '_> {
     }
 }
 
-/// The header lines to set for spec, empty for none, from these steps in this order, each on the status the one
+/// The header lines to set for the spec or ticket, empty for none, from these steps in this order, each on the status the one
 /// before it left:
 ///
 /// 1. a SPEC_IN_REVIEW or SPEC_FOR_HUMAN spec's run, its conflict refreshed, or found cleared by a refresh before
@@ -397,8 +398,8 @@ impl PullRequestStates<'_, '_> {
 ///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN; a conflict a refresh cleared is taken up so, its run
 ///    added to taken;
 /// 3. a spec now SPEC_IN_REVIEW with a pull request, or SPEC_FOR_HUMAN with one whose state step 1 heard, which it
-///    hears only of a run whose conflict is refreshed or was cleared: SPEC_DONE once it is merged, SPEC_FOR_HUMAN
-///    once it is closed (pull_request_header).
+///    hears only of a run whose conflict is refreshed or was cleared: SPEC_DONE, or a ticket's TICKET_RESOLVED, once
+///    it is merged, SPEC_FOR_HUMAN once it is closed (pull_request_header).
 ///
 /// gh hears of each pull request once a pass (prs). runs are Host::run_states's; taken is Refreshed::taken, so far; the
 /// rest is as refreshed_headers says. Errors: as those steps.
