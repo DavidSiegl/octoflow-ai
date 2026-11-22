@@ -282,22 +282,33 @@ fn two_installs_at_once_make_one() {
     assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
 }
 
+/// A run of the engine before an upgrade raised the pins may still start agents from the install it found, so an
+/// install keeps the newest other install, by modification time, and removes the older ones.
 #[test]
-fn a_raised_pin_installs_beside_the_old_install_and_then_removes_it() {
+fn a_raised_pin_installs_beside_the_old_install_which_stays_until_the_next_raise() {
     let f = Fixture::new();
-    let newer = tarball(&f.tmp, "1.0.1");
-    let tarballs: [(&str, &[u8]); 2] = [(NODE, &f.tarball), ("1.0.1", &newer)];
-    let old = f.pins(NODE, &sha256_of(&f.tarball), "0.5.0");
-    let (old_installs, _) = f.installs(old, &tarballs, &[]);
-    old_installs.install(&Interrupt::new()).unwrap();
+    let (middle, newest) = (tarball(&f.tmp, "1.0.1"), tarball(&f.tmp, "1.0.2"));
+    let tarballs: [(&str, &[u8]); 3] = [(NODE, &f.tarball), ("1.0.1", &middle), ("1.0.2", &newest)];
+    let (first, _) = f.installs(f.pins(NODE, &sha256_of(&f.tarball), "0.5.0"), &tarballs, &[]);
+    first.install(&Interrupt::new()).unwrap();
 
-    let (new_installs, _) = f.installs(f.pins("1.0.1", &sha256_of(&newer), "0.6.0"), &tarballs, &[]);
-    assert_eq!(new_installs.installed(), None, "an install of other pins is not the current one");
-    let installed = new_installs.install(&Interrupt::new()).unwrap();
+    let (second, _) = f.installs(f.pins("1.0.1", &sha256_of(&middle), "0.6.0"), &tarballs, &[]);
+    assert_eq!(second.installed(), None, "an install of other pins is not the current one");
+    let installed = second.install(&Interrupt::new()).unwrap();
 
     assert!(installed.script.contains("/node-1.0.1-adapter-0.6.0/"), "{}", installed.script);
-    assert_eq!(f.entries(), [".lock", "node-1.0.1-adapter-0.6.0"]);
-    assert_eq!(old_installs.installed(), None);
+    let first_name = format!("node-{NODE}-adapter-0.5.0");
+    assert_eq!(f.entries(), [".lock", &first_name, "node-1.0.1-adapter-0.6.0"]);
+    assert!(first.installed().is_some(), "the old install still runs");
+
+    // The first install made last, the next raise keeps it and removes the second.
+    let touched = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::open(format!("{}/{first_name}", f.root())).unwrap().set_modified(touched).unwrap();
+    let (third, _) = f.installs(f.pins("1.0.2", &sha256_of(&newest), "0.7.0"), &tarballs, &[]);
+    third.install(&Interrupt::new()).unwrap();
+
+    assert_eq!(f.entries(), [".lock", &first_name, "node-1.0.2-adapter-0.7.0"]);
+    assert_eq!(second.installed(), None);
 }
 
 /// Anything else in the installs' directory, a file or a link as much as a directory, goes once an install is in place.

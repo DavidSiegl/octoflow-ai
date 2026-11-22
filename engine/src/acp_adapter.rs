@@ -14,7 +14,8 @@
 //! `<adapter>-acp` in the engine's data directory (crate::env::data_dir), each with a Node of its own. It is made in
 //! a temporary directory beside it and renamed into place whole, under a lock on a file there, so that a directory of
 //! that name is always a whole install, and two installs at once, from two of the app's windows, make one. A raised
-//! pin installs beside the old install, which goes once the new one is in place.
+//! pin installs beside the old install, which stays, for the runs of the engine before the raise, until the next
+//! raise's install is in place.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -213,7 +214,8 @@ pub struct Installs {
     adapter: Adapter,
     /// The directory the installs are in, `<adapter>-acp` in the data directory; made by the first install.
     root: String,
-    /// The pins of the one install this looks for and makes; installs of any others are removed by the next install.
+    /// The pins of the one install this looks for and makes; installs of others are removed by the next install, but
+    /// for the newest of them (Installs::install).
     pins: Pins,
     /// Where Node's releases are, without a trailing "/": NODE_DIST, or a test's server.
     node_dist: String,
@@ -318,12 +320,13 @@ impl Installs {
         Err(NotLoggedIn { detail, fix: format!("log in with {codex}") })
     }
 
-    /// Install the current pins, unless they are installed already, and then remove every other install: download
-    /// Node's tarball for this platform and check its sha256, unpack it with `tar`, and install the adapter with its
-    /// npm: `npm ci --ignore-scripts`, with `--userconfig` and `--globalconfig` each an empty file, an explicit
-    /// `--registry`, a cache of its own, and none of npm's `npm_config_*` variables, so that nothing of the user's npm
-    /// setup applies; proxies and certificates come from the environment, as http.rs and npm read them. Waits for
-    /// another install in progress, by this or another process, to end first. A failure leaves no install behind, and
+    /// Install the current pins, unless they are installed already, and then remove every other install but the
+    /// newest, which a run of the engine before the last pin raise may still use: download Node's tarball for this
+    /// platform and check its sha256, unpack it with `tar`, and install the adapter with its npm: `npm ci
+    /// --ignore-scripts`, with `--userconfig` and `--globalconfig` each an empty file, an explicit `--registry`, a
+    /// cache of its own, and none of npm's `npm_config_*` variables, so that nothing of the user's npm setup applies;
+    /// proxies and certificates come from the environment, as http.rs and npm read them. Waits for another install in
+    /// progress, by this or another process, to end first. A failure leaves no install behind, and
     /// whatever a failed or killed one left is removed when the next starts.
     ///
     /// Returns the install. Errors: this platform has no pinned Node; the installs' directory or a file in it cannot
@@ -468,10 +471,27 @@ impl Installs {
         Err(OrchestratorError(format!("cannot {doing}: {why}")))
     }
 
-    /// Remove every install but the current pins', and anything else in the installs' directory but its lock.
+    /// Remove every install but the current pins' and the newest other one, and anything else in the installs'
+    /// directory but its lock. The newest other one, by its directory's modification time, is the install of the
+    /// pins before the last raise, which a run of the engine of those pins, which outlives the app, may still start
+    /// agents from.
     fn remove_others(&self) -> Result<(), OrchestratorError> {
         let current = self.pins.install_name();
-        for name in self.entries()?.iter().filter(|n| **n != current && *n != ".lock") {
+        let others: Vec<String> = self.entries()?.into_iter().filter(|n| *n != current && n != ".lock").collect();
+        let mut installs = vec![];
+        for name in &others {
+            let path = format!("{}/{name}", self.root);
+            match fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_dir() && name.starts_with("node-") => {
+                    let modified = meta.modified().map_err(|e| self.failed("read the time of", &path, &e))?;
+                    installs.push((modified, name));
+                }
+                Ok(_) => {}
+                Err(e) => return Err(self.failed("look at", &path, &e)),
+            }
+        }
+        let kept = installs.into_iter().max().map(|(_, name)| name.clone());
+        for name in others.iter().filter(|n| Some(*n) != kept.as_ref()) {
             self.remove(name)?;
         }
         Ok(())
