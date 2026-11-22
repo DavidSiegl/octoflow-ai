@@ -207,9 +207,11 @@ window:
   for each version. Install FUSE, or extract it once with `--appimage-extract` and run the `squashfs-root/AppRun`
   that makes instead.
 - **`.deb`:** it installs the app as `/usr/bin/octoflow`, with its [Tab completion](#tab-completion) for bash, zsh
-  and fish, which works in each new shell with nothing to add to your startup files; bash's needs the
-  `bash-completion` package, which minimal and container images leave out and the `.deb` recommends, so `apt`
-  installs it unless told not to (`--no-install-recommends`).
+  and fish, which works in each new shell with nothing to add to your startup files. bash's needs the
+  `bash-completion` package, which the `.deb` recommends: `apt install ./<file>.deb` installs it, unless
+  recommends are turned off (`--no-install-recommends`, or `APT::Install-Recommends "false"`, as in many container
+  images), and `dpkg -i` never does. bash also has to load it: a user's `~/.bashrc` from `/etc/skel` does, while
+  root's in a Debian container does not; add `. /usr/share/bash-completion/bash_completion` to it there.
 - **macOS:** link the app's executable onto your `PATH`:
 
   ```bash

@@ -7,9 +7,9 @@
 # beside it as THIRD-PARTY-LICENSES-NPM.html those of the npm packages its window bundles, which
 # ui/scripts/npm-licenses.js writes here to dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's
 # version is the release's, as ci/release-version.sh reads it. The .deb also installs octoflow's Tab completion for
-# bash, zsh and fish, packaging/completions' scripts, and the build fails on a .deb without them or without the
-# licenses. Run build-binary.sh first. Jenkins's Package stage builds
-# the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
+# bash, zsh and fish, packaging/completions' scripts, and recommends bash-completion, whose loader bash's script
+# needs; the build fails on a .deb without the scripts, the licenses or that recommend. Run build-binary.sh first.
+# Jenkins's Package stage builds the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
 set -eu
 
 cd "$(dirname "$0")/.."
