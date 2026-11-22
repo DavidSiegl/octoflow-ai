@@ -1,6 +1,7 @@
 //! `doctor`: what a run needs, checked before the first run fails on it (check_setup), and reported (report_checks).
 
 use super::{Local, Target};
+use crate::acp::SelfReport;
 use crate::acp_adapter::Installs;
 use crate::constants::{DEFAULT_HARNESS, EXIT_ERROR, GITLEAKS_INSTALL, NETWORK_TIMEOUT, REMOTE};
 use crate::error::OrchestratorError;
@@ -153,9 +154,9 @@ pub(super) fn doctor_command(
     Ok(status)
 }
 
-/// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that
-/// machine, the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git,
-/// gh, gitleaks, with cwd the project's git checkout and its origin, and the local quality gate, with the release that
+/// A Check of each thing a run needs, in this order: herdr, reaching herdr, with herdr's machine herdr on that machine,
+/// the shell herdr's panes start (crate::herdr::pane_shell), each harness's CLI and herdr integration, git, gh,
+/// gitleaks, with cwd the project's git checkout and its origin, and the local quality gate, with the release that
 /// judges the project.
 ///
 /// host runs commands on this machine, where the orchestrator runs and whose herdr a run drives. Without a machine the
@@ -212,15 +213,15 @@ pub fn check_setup(host: &ProcessHost, herdr: &ProcessHerdr, cwd: Option<&str>, 
 /// harness, at the level check_setup gives its CLI, that its ACP program is there, its command on host's PATH or its
 /// adapter installed in env's data directory (crate::acp_adapter), that it answers `initialize`, as answers says, given
 /// the harness (crate::acp::probe is the real one; a harness the app cannot run yet is answered as not), and that an
-/// adapter's agent is logged in (Installs::logged_in); then git, gh, gitleaks, with cwd the project's checkout and
-/// origin, and the local quality gate, as check_setup checks them. env is the environment the app's runs start their
-/// agents in. Makes no error, as check_setup; it changes nothing itself, but answers may start each agent, which may
-/// write its own state.
+/// adapter's agent is logged in, as its answer's reported login and env tell (Installs::logged_in); then git, gh,
+/// gitleaks, with cwd the project's checkout and origin, and the local quality gate, as check_setup checks them. env
+/// is the environment the app's runs start their agents in. Makes no error, as check_setup; it changes nothing itself,
+/// but answers may start each agent, which may write its own state.
 pub fn check_acp_setup(
     host: &ProcessHost,
     env: &[(OsString, OsString)],
     cwd: Option<&str>,
-    answers: &dyn Fn(&'static Harness) -> Result<String, OrchestratorError>,
+    answers: &dyn Fn(&'static Harness) -> Result<SelfReport, OrchestratorError>,
 ) -> Vec<Check> {
     let mut checks: Vec<Check> = Vec::new();
     for h in &HARNESSES {
@@ -247,9 +248,9 @@ pub fn check_acp_setup(
             };
             let answer = answers(h).map_err(|e| Unmet::with_fix(e.0, &unrunnable_fix(h, installs.as_ref())))?;
             if let Some(installs) = &installs {
-                installs.logged_in().map_err(|e| Unmet::with_fix(e.detail, &e.fix))?;
+                installs.logged_in(answer.login.as_deref()).map_err(|e| Unmet::with_fix(e.detail, &e.fix))?;
             }
-            Ok(format!("{path}: {answer}"))
+            Ok(format!("{path}: {}", answer.identity))
         });
     }
     check_tools(&mut checks, host, None, cwd);

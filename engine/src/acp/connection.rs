@@ -1,8 +1,9 @@
 //! One ACP agent as a child process: JSON-RPC 2.0 over its stdin and stdout, one message a line
 //! ([ACP's transport](https://agentclientprotocol.com/protocol/transports)). A thread of its own reads what the agent
 //! sends: the replies to the requests made of it, its requests for a permission, which wait for an answer
-//! (Connection::answer), and the session updates. What it does goes to its role's journal (super::journal). Every
-//! other request of the agent's is refused, since the engine offers it neither files nor terminals.
+//! (Connection::answer), the session updates, and the login it reports of itself (Connection::reported_login). What
+//! it does goes to its role's journal (super::journal). Every other request of the agent's is refused, since the
+//! engine offers it neither files nor terminals.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -108,6 +109,9 @@ struct State {
     /// Why the run waits on the human's message to it, as crate::agents::Waiting::name names it, since
     /// Connection::await_human; None again once a prompt is sent, and before.
     waiting: Option<&'static str>,
+    /// The kind of login it last reported of itself in an `_auth/status_update` notification (codex-acp's extension:
+    /// its `authStatus.kind`, such as `none` or `account`); None until it reports one.
+    login: Option<String>,
 }
 
 impl Connection {
@@ -188,6 +192,20 @@ impl Connection {
                 state.replies.remove(&id);
                 return Err(unwritten.map_or(Failure::TimedOut, Failure::Unwritten));
             };
+            state = self.shared.wait(state, left);
+        }
+    }
+
+    /// The kind of login the agent reports of itself (State::login), waiting at most timeout for its first report;
+    /// None when none came by then, or it exited first.
+    pub(super) fn reported_login(&self, timeout: Duration) -> Option<String> {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.shared.lock();
+        loop {
+            if state.login.is_some() || state.exited {
+                return state.login.clone();
+            }
+            let left = deadline.checked_duration_since(Instant::now())?;
             state = self.shared.wait(state, left);
         }
     }
@@ -432,6 +450,11 @@ fn read(output: impl BufRead, input: &Mutex<ChildStdin>, shared: &Shared, usage:
                 let update = message.get("params").and_then(|p| p.get("update")).cloned().unwrap_or(Value::Null);
                 shared.journal.write("update", json!({"update": update}));
                 continue;
+            }
+            (Some("_auth/status_update"), None) => {
+                let kind = message.get("params").and_then(|p| p.get("authStatus")).and_then(|s| s.get("kind"));
+                let Some(kind) = kind.and_then(Value::as_str) else { continue };
+                shared.lock().login = Some(kind.to_string());
             }
             // Another notification, which ACP's client has none of.
             (Some(_), None) => continue,

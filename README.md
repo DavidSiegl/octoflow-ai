@@ -187,10 +187,12 @@ first time when a browser downloaded it, as it does the binary.
 - **Project bar:** a project folder on this computer; running agents on another machine is the CLI's `--machine`.
   The app reopens the project you opened last.
 - **Setup:** "Check setup…" shows what the app's runs need for the open project, with the fix for each problem:
-  each harness's command on `PATH` and answering the protocol, a codex login, git, gh, gitleaks and the quality gate. claude and codex
-  run through an ACP adapter, which the dialog offers to install (several hundred MB each, in octoflow's data
-  directory). It opens by itself when the app starts, until you have closed it once with everything a run needs
-  present. Its "Set up the quality gate" button does what `doctor --setup-gate` does, without a pin.
+  each harness's command on `PATH` and answering the protocol, a codex login (as codex reports it, in its `auth.json`
+  or the OS keyring, or an API key in `CODEX_API_KEY` or `OPENAI_API_KEY`, which a codex run logs in with), git, gh,
+  gitleaks and the quality gate. claude and codex run through an ACP adapter, which the dialog offers to install
+  (several hundred MB each, in octoflow's data directory). It opens by itself when the app starts, until you have
+  closed it once with everything a run needs present. Its "Set up the quality gate" button does what
+  `doctor --setup-gate` does, without a pin.
 - **Settings:** "Settings…" in the top bar sets what closing the window does with the open project's runs still
   running: ask each time (the default), keep them running, or stop them. Asked, "Keep running" leaves them running
   without the app, and "Stop all" stops each as Ctrl-C stops a CLI run, for Resume to continue; "Don't ask again"

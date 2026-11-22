@@ -1164,7 +1164,7 @@ fn a_version_number_is_the_first_run_of_dotted_digits() {
 fn acp_setup(
     tools: &FakeTools,
     env: &[(OsString, OsString)],
-    answers: impl Fn(&str) -> Result<String, OrchestratorError>,
+    answers: impl Fn(&str) -> Result<SelfReport, OrchestratorError>,
 ) -> (BTreeMap<String, Check>, Vec<String>, Vec<String>) {
     let asked = RefCell::new(vec![]);
     let answer = |h: &'static Harness| {
@@ -1205,24 +1205,25 @@ fn claude_s_adapter_installed_but_not_answering_is_told_how_it_starts() {
     assert_eq!(checks["claude over ACP"], silent);
 }
 
-/// What the ACP harnesses answer `initialize` with, and why the others cannot answer, as crate::acp::probe says.
-fn acp_answers(kind: &str) -> Result<String, OrchestratorError> {
-    match kind {
-        "agy" | "opencode" => Ok(format!("{kind} 1.0")),
-        "claude" => Ok("@agentclientprotocol/claude-agent-acp 0.101.0".to_string()),
-        "codex" => Ok("@agentclientprotocol/codex-acp 2.5.0".to_string()),
-        _ => Err(OrchestratorError(format!("{kind} has no ACP launch"))),
-    }
+/// What the ACP harnesses answer `initialize` with, and why the others cannot answer, as crate::acp::probe says:
+/// codex's agent reports a login, as codex-acp does whatever store holds it, the others none.
+fn acp_answers(kind: &str) -> Result<SelfReport, OrchestratorError> {
+    let identity = match kind {
+        "agy" | "opencode" => format!("{kind} 1.0"),
+        "claude" => "@agentclientprotocol/claude-agent-acp 0.101.0".to_string(),
+        "codex" => "@agentclientprotocol/codex-acp 2.5.0".to_string(),
+        _ => return Err(OrchestratorError(format!("{kind} has no ACP launch"))),
+    };
+    let login = (kind == "codex").then(|| "account".to_string());
+    Ok(SelfReport { identity, login })
 }
 
 #[test]
 fn the_app_s_acp_setup_checks_each_harness_over_acp_and_nothing_of_herdr() {
     let tools = FakeTools::new();
     let data_home = TempDir::new();
+    // codex's login is in the OS keyring, so its home has no auth.json: its agent reports it (review 264).
     let env = acp_env(&data_home, &[]);
-    // codex's login.
-    std::fs::create_dir_all(data_home.join("home/.codex")).unwrap();
-    std::fs::write(data_home.join("home/.codex/auth.json"), "{}").unwrap();
     let installed = installs_in(Adapter::Claude, &env).install_fake("");
     let codex_installed = installs_in(Adapter::Codex, &env).install_fake("");
     let (checks, order, asked) = acp_setup(&tools, &env, acp_answers);
@@ -1297,11 +1298,18 @@ fn codex_installed_and_answering_but_not_logged_in_is_told_how_to_log_in() {
     let env = acp_env(&data_home, &[]);
     let installs = installs_in(Adapter::Codex, &env);
     installs.install_fake("");
-    let (checks, _, asked) = acp_setup(&tools, &env, acp_answers);
+    let logged_out = |kind: &str| match kind {
+        "codex" => acp_answers(kind).map(|p| SelfReport { login: Some("none".to_string()), ..p }),
+        kind => acp_answers(kind),
+    };
+    let (checks, _, asked) = acp_setup(&tools, &env, logged_out);
+    let keyed = acp_env(&data_home, &[("OPENAI_API_KEY", "sk-test")]);
+    let (with_key, _, _) = acp_setup(&tools, &keyed, logged_out);
 
     assert!(asked.contains(&"codex".to_string()), "{asked:?}");
-    let not_logged_in = installs.logged_in().unwrap_err();
+    let not_logged_in = installs.logged_in(Some("none")).unwrap_err();
     let detail = format!("{}; needed only for a role that runs in codex", not_logged_in.detail);
     let codex = check_of("codex over ACP", Level::Optional, false, &detail, &not_logged_in.fix);
     assert_eq!(checks["codex over ACP"], codex);
+    assert!(with_key["codex over ACP"].ok, "an API key is a login its agent makes: {:?}", with_key["codex over ACP"]);
 }

@@ -109,8 +109,9 @@ impl Setup {
     }
 }
 
-/// How long an ACP agent has to answer `initialize` in project_checks: long enough for a CLI's first start, which
-/// may update itself, short enough that the dialog does not hang on one that never answers.
+/// How long an ACP agent has to answer `initialize` in project_checks, and then to report its login when it declares
+/// it does (crate::acp::probe): long enough for a CLI's first start, which may update itself, short enough that the
+/// dialog does not hang on one that never answers or never reports.
 const PROBE_SECONDS: u64 = 30;
 
 /// The checks of the project in cwd for the app's runs (check_acp_setup), each harness's agent asked `initialize` by

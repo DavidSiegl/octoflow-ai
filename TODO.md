@@ -83,25 +83,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the user decides whether a turn records its waited seconds and the run view shows a standing wait, and that is
   built or dropped.
 
-- **claude's ACP install departs from spec R6 and R7 of `.scratch/herdr-gui-decoupling` (ticket 07), awaiting the
-  user's ruling.** Review 262 (2026-11-21) found three departures, each kept as built until the spec owner amends the
-  spec or asks for the code to change: (1) no in-run offer: "When claude is first needed by an ACP run ... the app
-  offers to install", but a claude ACP run without the install fails, naming the setup dialog, which opens by itself
-  under ACP until claude's Required check passes (its own marker, `setup-checked-acp`, counts only while the install
-  of the current pins is there, `Setup::checked`); (2) the claude check also asks
-  the adapter `initialize` (`cli/doctor.rs`, `check_acp_setup`), where R7 asks only that the install is present, so a
-  present install that does not answer within PROBE_SECONDS fails it; (3) the button says about 913 MB, the measured
-  size (`acp_adapter::Adapter::megabytes`: npm installs both the glibc and the musl Agent SDK binary), not R6's 690.
-- **codex logins in the OS keyring fail the app's codex check.** Review 264: "the check looks only for
-  `<CODEX_HOME or $HOME/.codex>/auth.json`. codex can store its credentials in the OS keyring
-  (`cli_auth_credentials_store = "keyring"` or `"auto"` in config.toml), and then it writes no `auth.json`", so a user
-  logged in that way is told codex is not logged in, and logging in again changes nothing (`acp_adapter.rs`,
-  `Installs::logged_in`). Closed by asking the adapter, whose `_auth/status_update` reports the login, instead of
-  looking for the file.
-- **App runs on codex cannot log in with an API key alone.** Review 264: codex-acp 2.5.0 reads `OPENAI_API_KEY` or
-  `CODEX_API_KEY` only for an ACP `authenticate` request (or `DEFAULT_AUTH_REQUEST`), which the engine does not send,
-  so the check counts only `auth.json` and an API-key user must run `codex login` first. Closed by sending
-  `authenticate` with codex-acp's api-key method when a key is set, and counting the key again.
 - **An install of an ACP adapter removes other pins' installs that runs may still use.** Review 262: runs outlive
   the app (Keep running), so after an upgrade raises a pin, Install in the new app deletes the old pins' directory
   under a live run of the old engine, whose next claude role then fails with "claude's ACP adapter is not installed"
