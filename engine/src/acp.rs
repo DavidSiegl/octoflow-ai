@@ -48,9 +48,9 @@ const USAGE_FILE: &str = "acp-usage.jsonl";
 /// agent may log in or load a long session first.
 const REQUEST_SECONDS: u64 = 120;
 
-/// How long the agents being settled (AcpAgents::settle_all) have to answer their prompts pending, and then, once those left are
-/// cancelled, to answer them as cancelled, in milliseconds: about as long as an agent takes to end a turn. Tests,
-/// whose fake agent answers at once or never, wait less.
+/// How long the agents being settled (AcpAgents::settle_all) have to answer their prompts pending, and then, once
+/// those left are cancelled, to answer them as cancelled, in milliseconds: about as long as an agent takes to end a
+/// turn. Tests, whose fake agent answers at once or never, wait less.
 const SETTLE_MS: u64 = if cfg!(test) { 2_000 } else { 10_000 };
 
 /// How often, in milliseconds, a settle looks at the run's Ctrl-C while it waits.
