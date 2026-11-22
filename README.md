@@ -91,8 +91,9 @@ for the runs that start after it.
 - Nothing for the orchestrator itself, a single [binary](#install); to build it from a checkout, Rust by
   `rust-toolchain.toml`; [uv](https://github.com/astral-sh/uv), with the Python it brings, only for
   [running the gate by hand](docs/quality-gate.md#the-gate)
-- For `--machine`, which only the CLI has: the machine saved in herdr and non-interactive SSH to it, which the orchestrator's
-  commands share one connection to (OpenSSH's `ControlMaster`), unless its server refuses a second session; see
+- For `--machine`, which only the CLI has: the machine saved in herdr and non-interactive SSH to it, which the
+  orchestrator's commands share one connection to (OpenSSH's `ControlMaster`), unless its server refuses a second
+  session; see
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
 - For `--quality-gate local`: a project on a Linux x86_64 machine, which the gate is built for, with curl, tar,
   setsid, ps, sha256sum (or shasum) and gitleaks, and the tools the project's `gate.toml` has the gate run, its test
@@ -294,10 +295,10 @@ octoflow run --workflow-file ~/flows/pairing.toml "fix the off-by-one in the pag
 # With the quality gate after each Builder turn
 octoflow run --quality-gate local "add a token-bucket rate limiter"
 
-# Run every ready spec under .scratch/<slug>/spec.md, one pull request each; see Draining specs
+# Run every ready spec under .scratch/<slug>/spec.md, or its ready tickets, one pull request each; see Draining specs
 octoflow drain --worktree
 
-# A project's runs and whether each is still running; --json for scripts, --pr-state adds each PR's state
+# A project's runs and whether each is still running; --json for scripts, and with it --pr-state for each PR's state
 octoflow list --machine <machine> --cwd ~/GitHub/myproject
 
 # One run in full, by its run id or the six-character key at its end
@@ -328,8 +329,8 @@ octoflow prune --dry-run
 octoflow metrics | jq -s 'map(.rounds) | add / length'
 ```
 
-`--machine` and `--cwd` work the same way for every command, and `doctor` checks a project only when given
-`--cwd`.
+`--machine` and `--cwd` work the same way for every command but `workflows` and `serve`, and `doctor` checks a
+project only when given `--cwd`.
 
 | Flag | Description |
 |---|---|
@@ -353,6 +354,9 @@ octoflow metrics | jq -s 'map(.rounds) | add / length'
 | `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
 | `--dry-run` | `prune`, `drain`, `close` and `forget`: print what would happen, and change nothing. |
+| `--all` | `close` and `forget`, in place of a run: every finished, failed and stale run, or every closed run. |
+| `--json`, `--pr-state` | `list` only: print the runs as one JSON document; with it, ask `gh` for each run's pull request state. |
+| `--setup-gate`, `--pin-gate VERSION` | `doctor` only: write the local gate's starter files into the project, and with `--pin-gate` a `ci/gate.pin`; see [Requirements](#requirements). |
 
 A run saves its settings. `resume` takes the same flags as `run` except `--no-pr`, `--worktree`, `--workflow`,
 `--workflow-file` and `--spec`; a flag given to `resume` overrides the saved value. Turning the quality gate on or
@@ -379,7 +383,8 @@ an `OPENCODE_CONFIG_CONTENT` its pane's shell exports before starting it with `-
 
 A dropped mode is not passed, so the agent starts with its own default, and the log says so once per role. An
 agent that exited is relaunched into its saved session: `--resume <id>` for claude, `--conversation <id>` for
-agy, `--session <id>` for pi and opencode, and `codex resume <id>`. A role whose harness changed since starts a fresh session.
+agy, `--session <id>` for pi and opencode, and `codex resume <id>`. A role whose harness changed since starts a
+fresh session.
 
 #### Unattended runs
 
@@ -500,11 +505,12 @@ PR: https://github.com/o/r/pull/7
 - `Status:` moves from `ready-for-agent` to `in-review` while the run's pull request is open, and to `done` once it
   has merged. A run that does not approve, conflicts or fails leaves its spec `ready-for-human`. Any other status
   is left alone. Drain reads the line's first word, so a note may follow it: `ready-for-agent (reviewed)`.
-- `Blocked by:` lists the specs that must be `done` first, by slug or by a path ending in `<slug>/spec.md`. A
-  missing blocker, or blockers in a cycle, stop drain before it runs anything.
+- `Blocked by:` lists the specs that must be `done` first, by slug or by a path ending in `<slug>/spec.md`, or
+  names none when its first word is `none` or `-`, as in `none (independent)`. A missing blocker, or blockers in a
+  cycle, stop drain before it runs anything.
 - `Run:` and `PR:` are written by drain.
 
-A ready spec with tickets, `DIR/<slug>/issues/<NN>-<name>.md`, is drained ticket by ticket instead: each
+A ready spec with tickets, `DIR/<slug>/issues/<NN>-<name>.md` or `<NN>.md`, is drained ticket by ticket instead: each
 `ready-for-agent` ticket gets its own run and pull request, in number order, and the spec itself is never run.
 A ticket's header works as a spec's, with these differences:
 
@@ -530,15 +536,15 @@ Reviewer), `design` (for visual work such as a page, a logo or a mockup: Creativ
 your pick of a direction → Designer ⇄ Design Critic, who renders the work, then your verdict; you are asked at the
 brief, the direction and the acceptance), `peer-review` (for research written up and refereed: Editor → Author →
 Methods Referee, who reproduces every number → Domain Referee, who checks the claims and sources → the Editor's
-decision to accept or send it back for revision), `quick` (Builder ⇄ Reviewer, the task as the contract) and `product-team` (Product Manager → Architect →
-QA Engineer → Engineer ⇄ Tech Lead, then the Product Manager's acceptance: requirements in business terms, a design
-against the code, acceptance tests written and locked before the code, and the Product Manager judging the change
-the Tech Lead approved against the requirements, or sending it back to the Engineer). Add your own as a TOML file in
-`~/.config/octoflow-ai/workflows/`, named after the workflow, or anywhere with `--workflow-file`. `octoflow
-workflows` lists them and says why one does not load, and `workflows NAME` prints a workflow's full definition, a
-built-in's to start a variant from. A file cannot take a built-in's name: one made before that workflow was built in,
-such as a `quick.toml` copied from an earlier release, no longer loads; delete it to run the built-in, or rename it
-to keep yours.
+decision to accept or send it back for revision), `quick` (Builder ⇄ Reviewer, the task as the contract) and
+`product-team` (Product Manager → Architect → QA Engineer → Engineer ⇄ Tech Lead, then the Product Manager's
+acceptance: requirements in business terms, a design against the code, acceptance tests written and locked before
+the code, and the Product Manager judging the change the Tech Lead approved against the requirements, or sending it
+back to the Engineer). Add your own as a TOML file in `~/.config/octoflow-ai/workflows/`, named after the workflow,
+or anywhere with `--workflow-file`. `octoflow workflows` lists them and says why one does not load, and
+`workflows NAME` prints a workflow's full definition, a built-in's to start a variant from. A file cannot take a
+built-in's name: one made before that workflow was built in, such as a `quick.toml` copied from an earlier release,
+no longer loads; delete it to run the built-in, or rename it to keep yours.
 
 ```toml
 # An abridged product-team.toml: the Architect's design before the default Builder and Reviewer.
@@ -584,7 +590,8 @@ several approves when the last of them approves the round it ends with, and `--m
 them together, except that a step that waits on you is always asked: in the last round it gets the change even when an
 earlier verdict step requested changes, your approval approves the run, and your request for changes takes one round
 more. A workflow's `proof_command`, such as `"python -m pytest -q {proofs}"`, runs the tests the first verdict step
-wrote to back its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`, `{findings}`
+wrote to back its findings. Prompts fill in `{task}`, `{cwd}`, `{n}`, `{change}`, `{path}`, `{proofs_dir}`,
+`{approve}` and `{changes}` (the verdict words, `APPROVE` and `CHANGES_REQUESTED`), `{findings}`
 (from round 2 on, the verdict files whose requests for changes started the round, which the default Builder's `again`
 names: more than one when a step that waits on you was asked after another's request in the last round), and for every
 step `X`, `{X_path}`, `{prev_X_path}` and `{earlier_X_paths}`; write a literal brace as `{{` or `}}`. A placeholder
@@ -600,8 +607,8 @@ a file written by hand.
 ## Prompt files
 
 To change only some of the texts the agents get, put `NAME.md` in `~/.config/octoflow-ai/prompts/`,
-where `NAME` is the text's name in the engine's `engine/src/prompts.rs`. Its content, less its trailing newline, is sent in its
-place, with exactly the placeholders of the text it replaces.
+where `NAME` is the text's name in the engine's `engine/src/prompts.rs`. Its content, less its trailing newline, is
+sent in its place, with exactly the placeholders of the text it replaces.
 
 | File | Sent |
 |---|---|
