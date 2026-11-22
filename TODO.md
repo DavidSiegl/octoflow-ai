@@ -42,6 +42,19 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **drain over tickets: edge cases left as they are.** Raised by cross-review 280 (todo 89, PR #600), not recorded
+  as findings. In `engine/src/cli/drain.rs` and `engine/src/cli/drain/queue.rs`:
+  - When a spec.md is deleted mid-drain, its ready tickets drop out of the end report, and drain exits 0.
+  - A spec that is not `ready-for-agent` is not made `done` when its last ticket merges.
+  - `--dry-run` does not list held tickets.
+  - A blocker `02-old-name` matches any ticket numbered 02.
+  - A blocker line `- 03` or `none yet, 03` names no blocker, since its first word decides, so 03's ticket can start
+    before 03 is resolved.
+  - A ticket's stale `Run:` line under a held spec stops the drain, as a spec's does.
+  - An unreadable ticket file anywhere in DIR stops `read_queue`, and with it the whole drain.
+
+  Each closes when drain handles it, or when the user rules it stays.
+
 - **A run's base can be a closed run's branch prune deletes.** Review 278 (todo 92): `take_base_branch` takes a
   closed run's branch that `origin` has as a new run's base, and the new run's pull request targets it, but
   `prune_remote` (`engine/src/cli/prune.rs`) deletes `origin`'s branch of a merged pull request, or of one closed past
