@@ -454,7 +454,9 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              blockers that are not {SPEC_DONE}. A {SPEC_READY} spec with tickets, DIR/<slug>/issues/<NN>-<name>.md, \
              is not run itself: each of its {SPEC_READY} tickets is, in number order, once the tickets on its Blocked \
              by: line are {TICKET_RESOLVED}, moving as a spec does but to `{TICKET_RESOLVED} (PR #<n> merged)`; the \
-             spec is marked {SPEC_DONE} once each ticket is {TICKET_RESOLVED} or {TICKET_WONTFIX}."
+             spec is marked {SPEC_DONE} once each ticket is {TICKET_RESOLVED} or {TICKET_WONTFIX}. A ticket whose \
+             blockers cannot be read, or include a {TICKET_WONTFIX} one, is held for the human, and drain then exits \
+             {EXIT_ERROR}. A status is read by its first word."
         ))
         .args(target_args())
         .args(settings_args())

@@ -127,19 +127,6 @@ fn a_spec_without_tickets_or_not_ready_drains_as_before() {
 }
 
 #[test]
-fn a_spec_with_tickets_made_ready_while_drain_runs_is_not_run_whole() {
-    let d = Rc::new(Drain::new());
-    d.spec("a", &ready("A"));
-    d.spec("b", &spec_text("B", Some("needs-triage"), &[]));
-    d.ticket("b", "01-first", &ready_ticket("B1"));
-    let dd = Rc::clone(&d);
-    let r = d.drain(vec![after(move || dd.spec("b", &ready("B")), approved(PR_A, &[]))], &[]);
-    assert_eq!(r.status, 0, "{}", r.err);
-    assert_eq!(d.tasks(), ["A"]);
-    assert_eq!(d.text("b"), ready("B"));
-}
-
-#[test]
 fn a_dry_run_shows_the_ticket_runs_it_would_start() {
     let d = Drain::new();
     d.spec("p", &ready("Plain"));
@@ -169,7 +156,29 @@ fn a_tickets_status_is_its_first_word_and_other_statuses_are_left_alone() {
 }
 
 #[test]
-fn a_ticket_waits_once_the_human_takes_its_spec_out_of_ready() {
+fn ticket_numbers_are_the_leading_digits_of_a_numbered_name() {
+    assert_eq!(ticket_number("03-close-dialog"), Some(3));
+    assert_eq!(ticket_number("12"), Some(12));
+    assert_eq!(ticket_number("notes"), None);
+    assert_eq!(ticket_number("3d-view"), None);
+    assert_eq!(ticket_number("-03"), None);
+}
+
+#[test]
+fn a_spec_with_tickets_made_ready_while_drain_runs_has_its_tickets_run_not_itself() {
+    let d = Rc::new(Drain::new());
+    d.spec("a", &ready("A"));
+    d.spec("b", &spec_text("B", Some("needs-triage"), &[]));
+    d.ticket("b", "01-first", &ready_ticket("B1"));
+    let dd = Rc::clone(&d);
+    let r = d.drain(vec![after(move || dd.spec("b", &ready("B")), approved(PR_A, &[])), approved(PR_B, &[])], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.tasks(), ["A", "B1"]);
+    assert_eq!(d.text("b"), ready("B"));
+}
+
+#[test]
+fn a_spec_out_of_ready_starts_none_of_its_tickets_but_its_open_pull_requests_are_followed() {
     let d = Rc::new(Drain::new());
     d.spec("s", &ready("Spec"));
     d.ticket("s", "01-first", &ready_ticket("First"));
@@ -177,64 +186,105 @@ fn a_ticket_waits_once_the_human_takes_its_spec_out_of_ready() {
     let dd = Rc::clone(&d);
     let hold = move || dd.spec("s", &spec_text("Spec", Some(SPEC_FOR_HUMAN), &[]));
     let r = d.drain(vec![after(hold, approved(PR_A, &[]))], &[]);
-    assert_eq!(r.status, EXIT_WAITING, "{}", r.err);
+    assert_eq!((r.status, r.out.ends_with("all specs cleared\n")), (0, true), "{}{}", r.out, r.err);
     assert_eq!(d.tasks(), ["First"]);
-    assert!(r.out.ends_with("s/02-second waits on:\n    s: ready-for-human\n"), "{}", r.out);
+    assert_eq!(d.ticket_header("s", "02-second"), (some(SPEC_READY), None, None));
+
+    for (pr_state, after_status) in [("MERGED", resolved(1)), ("CLOSED", some(SPEC_FOR_HUMAN))] {
+        let d = Drain::new();
+        d.spec("s", &spec_text("Spec", Some("needs-triage"), &[]));
+        d.ticket("s", "01-first", &spec_text("First", Some(SPEC_IN_REVIEW), &[&format!("PR: {PR_A}")]));
+        d.ticket("s", "02-second", &ready_ticket("Second"));
+        d.pull_request(PR_A, pr_state, &[]);
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{pr_state}: {}", r.err);
+        assert_eq!(d.ticket_header("s", "01-first").0, after_status, "{pr_state}");
+        assert_eq!(d.tasks(), Vec::<String>::new());
+    }
 }
 
 #[test]
-fn a_tickets_blockers_name_tickets_by_number_or_by_another_specs_slug() {
+fn a_specs_status_is_its_first_word_too() {
+    let d = Drain::new();
+    d.spec("a", &spec_text("Noted", Some("ready-for-agent (reviewed, review-02.md pass)"), &[]));
+    d.spec("b", &spec_text("Ticketed", Some("ready-for-agent (tickets carry their own)"), &[]));
+    d.ticket("b", "01-first", &ready_ticket("B1"));
+    let r = d.drain(vec![approved(PR_A, &[]), approved(PR_B, &[])], &[]);
+    assert_eq!(r.status, 0, "{}", r.err);
+    assert_eq!(d.tasks(), ["Noted", "B1"]);
+    assert_eq!(d.header("a").0, some(SPEC_IN_REVIEW));
+}
+
+#[test]
+fn a_tickets_blockers_name_tickets_by_number_or_another_specs_whatever_its_status() {
     let d = Drain::new();
     d.spec("a", &ready("A"));
     d.ticket("a", "01-x", &ready_ticket("A1"));
     d.spec("b", &spec_text("B", Some(SPEC_READY), &["Blocked by: c"]));
     d.ticket("b", "01-y", &spec_text("B1", Some(SPEC_READY), &["Blocked by: a/1 (same files)"]));
-    d.ticket("b", "02-z", &spec_text("B2", Some(SPEC_READY), &["Blocked by: 01-y, c/04, d/02"]));
+    d.ticket("b", "02-z", &spec_text("B2", Some(SPEC_READY), &["Blocked by: 01-y, c/04, d/02, e/03"]));
     d.spec("c", &spec_text("C", Some(SPEC_DONE), &[]));
-    d.spec("d", &spec_text("D", Some(SPEC_DONE), &[]));
+    d.spec("d", &spec_text("D", Some("needs-triage"), &[]));
     d.ticket("d", "02-w", &spec_text("D2", Some(TICKET_RESOLVED), &[]));
+    d.ticket("e", "03-v", &spec_text("E3", Some(TICKET_RESOLVED), &[]));
     let queue = read_queue(&d.dir()).unwrap();
-    let blockers: Vec<(&str, &Kind, Vec<String>)> =
-        queue.iter().map(|q| (q.slug.as_str(), &q.kind, q.blockers.clone())).collect();
+    let read: Vec<(&str, &Kind, Vec<String>, Vec<String>)> =
+        queue.iter().map(|q| (q.slug.as_str(), &q.kind, q.blockers.clone(), q.unread_blockers.clone())).collect();
     let (a, b) = (Kind::Ticket("a".into()), Kind::Ticket("b".into()));
+    let (d_, e) = (Kind::Ticket("d".into()), Kind::Ticket("e".into()));
     let strings = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let unread = strings(&["its Blocked by: entry `c/04` names no ticket"]);
     assert_eq!(
-        blockers,
+        read,
         [
-            ("a", &Kind::Ticketed, vec![]),
-            ("a/01-x", &a, vec![]),
-            ("b", &Kind::Ticketed, strings(&["c"])),
-            ("b/01-y", &b, strings(&["a/01-x"])),
-            ("b/02-z", &b, strings(&["b/01-y", "c", "d"])),
-            ("c", &Kind::Spec, vec![]),
-            ("d", &Kind::Ticketed, vec![]),
+            ("a", &Kind::Ticketed, vec![], vec![]),
+            ("a/01-x", &a, vec![], vec![]),
+            ("b", &Kind::Ticketed, strings(&["c"]), vec![]),
+            ("b/01-y", &b, strings(&["a/01-x"]), vec![]),
+            ("b/02-z", &b, strings(&["b/01-y", "d/02-w", "e/03-v"]), unread),
+            ("c", &Kind::Spec, vec![], vec![]),
+            ("d", &Kind::Ticketed, vec![], vec![]),
+            ("d/02-w", &d_, vec![], vec![]),
+            ("e/03-v", &e, vec![], vec![]),
         ]
     );
 }
 
 #[test]
-fn a_ticket_blocker_drain_cannot_find_stops_the_drain_before_any_run() {
-    for blocked_by in ["07", "later", "a/02", "nosuch/01"] {
+fn a_ticket_whose_blocker_drain_cannot_read_or_is_wontfix_is_held_for_the_human_and_the_drain_goes_on() {
+    let cases = [
+        ("Blocked by: 07", "its Blocked by: entry `07` names no ticket"),
+        ("Blocked by: 04, 05; a decision on x", "its Blocked by: entry `05; a decision on x` names no ticket"),
+        ("Blocked by: nosuch/01", "its Blocked by: entry `nosuch/01` names no ticket"),
+        ("Blocked by: 02", "its Blocked by: entry `02` names more than one: s/02-a, s/02-b"),
+        ("Blocked by: 03", "it is blocked by s/03-dropped, which is wontfix"),
+    ];
+    for (blocked_by, why) in cases {
         let d = Drain::new();
-        d.sweepable();
         d.spec("a", &ready("A"));
         d.ticket("a", "01-x", &ready_ticket("A1"));
         d.spec("s", &ready("Spec"));
-        d.ticket("s", "01-first", &spec_text("First", Some(SPEC_READY), &[&format!("Blocked by: {blocked_by}")]));
-        let r = d.drain(vec![], &[]);
-        assert_eq!(r.status, EXIT_ERROR, "{blocked_by}");
-        let message =
-            format!("error: ticket s/01-first is blocked by {blocked_by}, which names no ticket in {}", d.dir());
-        assert!(r.err.starts_with(&message), "{blocked_by}: {}", r.err);
-        assert!(!d.swept());
+        d.ticket("s", "01-held", &spec_text("Held", Some(SPEC_READY), &[blocked_by]));
+        for name in ["02-a", "02-b", "04-four"] {
+            d.ticket("s", name, &spec_text(name, Some(SPEC_IN_REVIEW), &[]));
+        }
+        d.ticket("s", "03-dropped", &spec_text("Dropped", Some(TICKET_WONTFIX), &[]));
+        let r = d.drain(vec![approved(PR_A, &[])], &[]);
+        assert_eq!(r.status, EXIT_ERROR, "{blocked_by}: {}", r.err);
+        assert_eq!(d.tasks(), ["A1"], "{blocked_by}");
+        assert!(r.out.ends_with(&format!("s/01-held needs the human: {why}\n")), "{blocked_by}: {}", r.out);
+        assert_eq!(d.ticket_header("s", "01-held"), (some(SPEC_READY), None, None));
     }
 }
 
 #[test]
-fn ticket_numbers_are_the_leading_digits_of_a_numbered_name() {
-    assert_eq!(ticket_number("03-close-dialog"), Some(3));
-    assert_eq!(ticket_number("12"), Some(12));
-    assert_eq!(ticket_number("notes"), None);
-    assert_eq!(ticket_number("3d-view"), None);
-    assert_eq!(ticket_number("-03"), None);
+fn a_cycle_through_a_specs_tickets_stops_the_drain_before_any_run() {
+    let d = Drain::new();
+    d.spec("x", &ready("X"));
+    d.ticket("x", "01-a", &spec_text("X1", Some(SPEC_READY), &["Blocked by: y/01"]));
+    d.spec("y", &spec_text("Y", Some(SPEC_READY), &["Blocked by: x"]));
+    d.ticket("y", "01-b", &ready_ticket("Y1"));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR);
+    assert!(r.err.starts_with("error: the blockers form a cycle: x -> x/01-a -> y/01-b -> x\n"), "{}", r.err);
 }

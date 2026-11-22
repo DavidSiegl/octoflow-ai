@@ -399,11 +399,12 @@ configuration instead.
 | `0` | Approved, or `FINISHED` for a workflow without a verdict step. |
 | `3` | Changes still requested after the last round, or `QUALITY_GATE_FAILED` for a workflow without a verdict step. The pull request is a draft. |
 | `4` | Approved or finished, but the pull request conflicts with its base branch, so it is a draft. |
-| `5` | `drain`: the specs left wait on blockers that are not `done`, or were deleted or emptied while it ran. `refresh`: a pull request still conflicts, or GitHub has not yet computed whether it does. |
+| `5` | `drain`: the specs and tickets left wait on blockers that are not `done` or `resolved`, or were deleted or emptied while it ran. `refresh`: a pull request still conflicts, or GitHub has not yet computed whether it does. |
 | `1` | Error. |
 | `130` | Interrupted. |
 
-`drain` exits with the status of the run that stopped it, `0` once no spec is `ready-for-agent`, or `5`.
+`drain` exits with the status of the run that stopped it, `0` once no spec or ticket is `ready-for-agent`, `1` when a
+ticket needs you (its blockers cannot be read, or one is `wontfix`), or `5`.
 
 ## How a run works
 
@@ -498,7 +499,7 @@ PR: https://github.com/o/r/pull/7
 
 - `Status:` moves from `ready-for-agent` to `in-review` while the run's pull request is open, and to `done` once it
   has merged. A run that does not approve, conflicts or fails leaves its spec `ready-for-human`. Any other status
-  is left alone.
+  is left alone. Drain reads the line's first word, so a note may follow it: `ready-for-agent (reviewed)`.
 - `Blocked by:` lists the specs that must be `done` first, by slug or by a path ending in `<slug>/spec.md`. A
   missing blocker, or blockers in a cycle, stop drain before it runs anything.
 - `Run:` and `PR:` are written by drain.
@@ -507,14 +508,15 @@ A ready spec with tickets, `DIR/<slug>/issues/<NN>-<name>.md`, is drained ticket
 `ready-for-agent` ticket gets its own run and pull request, in number order, and the spec itself is never run.
 A ticket's header works as a spec's, with these differences:
 
-- `Status:` is read by its first word, so a note may follow it. A merged pull request makes the ticket
-  `resolved (PR #<n> merged)`, and the spec turns `done` once each of its tickets is `resolved` or `wontfix`.
-- `Blocked by:` lists tickets that must be `resolved` first: `02` for one of the same spec, `<slug>/02` for one of
-  another spec's. When that other spec is not `ready-for-agent`, drain does not read its tickets, and the entry
-  waits for the spec to be `done` instead. An entry's first word counts, so `02 (same file)` works. The spec's own
-  `Blocked by:` holds back all of its tickets.
-- A ticket waits while its spec is not `ready-for-agent`. A spec that is not `ready-for-agent` when drain starts
-  has its tickets left alone, and a spec without numbered tickets runs whole, as above.
+- A merged pull request makes the ticket `resolved (PR #<n> merged)`, and the spec turns `done` once each of its
+  tickets is `resolved` or `wontfix`.
+- `Blocked by:` lists tickets that must be `resolved` first: `02` or `02-name` for one of the same spec,
+  `<slug>/02` for one of another spec's, whatever that spec's status. An entry's first word counts, so
+  `02 (same file)` works. The spec's own `Blocked by:` holds back all of its tickets.
+- A ticket whose `Blocked by:` entry names no ticket, or more than one, or whose blocker is `wontfix`, needs you:
+  drain runs the rest, prints `<slug>/<ticket> needs the human: <why>` and exits `1`.
+- Drain starts a ticket only while its spec is `ready-for-agent`, but follows every ticket's pull request, so one
+  merged or closed while its spec is held is still recorded. A spec without numbered tickets runs whole.
 
 Drain stops rather than polls: a spec whose blocker's pull request is still open waits for the next drain. If
 the specs directory is inside the checkout, ignore it in git, or use `--worktree`, since the header edits would

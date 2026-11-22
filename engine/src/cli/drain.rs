@@ -83,14 +83,14 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
     let drained = drain_ready(args, world, cwd, &mut queue, &by_slug);
     // The changes are printed whether the drain ended or failed.
     print_changes(&queue, world);
-    let status = match drained? {
-        Some(status) => status,
+    let exit_status = match drained? {
+        Some(exit_status) => exit_status,
         None => drain_end(&queue, &by_slug, world),
     };
     if interrupt.is_raised() {
         return Err(Stop::Interrupted(None));
     }
-    Ok(Ended::Status(status))
+    Ok(Ended::Status(exit_status))
 }
 
 /// Run each of queue that is startable, in turn, until none is (None) or one stops the drain (its exit status), as
@@ -115,25 +115,47 @@ fn drain_ready(
     }
 }
 
-/// Whether drain runs it: a spec it runs whole, or a ticket whose spec is still SPEC_READY, that is SPEC_READY and
-/// waits for nothing unfinished among queue, by by_slug (waits_for, Queued::finished).
-fn startable(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> bool {
-    let runs = match &item.kind {
+/// Whether drain runs it: a spec it runs whole, or a ticket whose spec is SPEC_READY now; among queue, by by_slug.
+fn drains(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> bool {
+    match &item.kind {
         Kind::Spec => true,
         Kind::Ticketed => false,
-        Kind::Ticket(spec) => queue[by_slug[spec]].status().as_deref() == Some(SPEC_READY),
-    };
-    runs && item.status().as_deref() == Some(SPEC_READY)
+        Kind::Ticket(spec) => by_slug.get(spec).is_some_and(|&i| queue[i].status().as_deref() == Some(SPEC_READY)),
+    }
+}
+
+/// Whether drain runs it next: it drains, is SPEC_READY, is not held for the human (held), and waits for nothing
+/// unfinished among queue, by by_slug (waits_for, Queued::finished).
+fn startable(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> bool {
+    drains(item, queue, by_slug)
+        && item.status().as_deref() == Some(SPEC_READY)
+        && held(item, queue, by_slug).is_none()
         && waits_for(item, queue, by_slug).into_iter().all(|b| queue[by_slug[b]].finished())
 }
 
 /// The slugs, among queue by by_slug, of what must be finished before it starts: its blockers, then a ticket's spec's.
 fn waits_for<'q>(item: &'q Queued, queue: &'q [Queued], by_slug: &HashMap<String, usize>) -> Vec<&'q str> {
     let of_spec = match &item.kind {
-        Kind::Ticket(spec) => queue[by_slug[spec]].blockers.as_slice(),
+        Kind::Ticket(spec) => by_slug.get(spec).map_or(&[][..], |&i| queue[i].blockers.as_slice()),
         _ => &[],
     };
     item.blockers.iter().chain(of_spec).map(String::as_str).collect()
+}
+
+/// Why a ticket can never start until the human acts, which holds it out of the drain: a Blocked by: entry drain
+/// could not read (Queued::unread_blockers), or a blocker that is TICKET_WONTFIX, which never finishes; None for one
+/// that can, and for a spec. queue and by_slug are as waits_for's.
+fn held(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> Option<String> {
+    if !matches!(item.kind, Kind::Ticket(_)) {
+        return None;
+    }
+    if let Some(unread) = item.unread_blockers.first() {
+        return Some(unread.clone());
+    }
+    let wontfix = waits_for(item, queue, by_slug)
+        .into_iter()
+        .find(|b| queue[by_slug[*b]].status().as_deref() == Some(TICKET_WONTFIX))?;
+    Some(format!("it is blocked by {wontfix}, which is {TICKET_WONTFIX}"))
 }
 
 /// The index of the first of queue drain runs next (startable), each read again from disk first, so a status the
@@ -212,18 +234,19 @@ fn print_changes(queue: &[Queued], world: &Connected) {
     }
 }
 
-/// Print what is left once drain can start nothing, and return its exit status: 0 when no spec it runs whole, and no
-/// ticket, was SPEC_READY as drain last read it, else EXIT_WAITING. Such a one is left blocked, or gone; a ticket also
-/// waits while its spec is no longer SPEC_READY.
+/// Print what is left once drain can start nothing, and return its exit status: 0 when nothing it drains was
+/// SPEC_READY as drain last read it; EXIT_ERROR when a ticket is held for the human (held), each printed with why;
+/// else EXIT_WAITING, for those left blocked, or gone.
 fn drain_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connected) -> i32 {
     let left: Vec<&Queued> = queue
         .iter()
-        .filter(|s| s.kind != Kind::Ticketed && s.status_as_read().as_deref() == Some(SPEC_READY))
+        .filter(|s| drains(s, queue, by_slug) && s.status_as_read().as_deref() == Some(SPEC_READY))
         .collect();
     if left.is_empty() {
         world.say("all specs cleared");
         return 0;
     }
+    let mut exit_status = EXIT_WAITING;
     // A blocker's line: its status and pull request, or why it is gone.
     let say_blocker = |slug: &str| {
         let blocker = &queue[by_slug[slug]];
@@ -240,17 +263,17 @@ fn drain_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connect
             world.say(&format!("{}: gone ({gone})", item.slug));
             continue;
         }
-        world.say(&format!("{} waits on:", item.slug));
-        if let Kind::Ticket(spec) = &item.kind {
-            if queue[by_slug[spec]].status().as_deref() != Some(SPEC_READY) {
-                say_blocker(spec);
-            }
+        if let Some(why) = held(item, queue, by_slug) {
+            world.say(&format!("{} needs the human: {why}", item.slug));
+            exit_status = EXIT_ERROR;
+            continue;
         }
+        world.say(&format!("{} waits on:", item.slug));
         for b in waits_for(item, queue, by_slug) {
             say_blocker(b);
         }
     }
-    EXIT_WAITING
+    exit_status
 }
 
 /// What has become of the pull requests and runs that earlier drains left behind (Refreshed): the header lines to set,
@@ -520,7 +543,8 @@ fn finished_run_header(
     let Some(s) = run.and_then(|r| r.state().ok()).filter(|s| s.done()) else {
         let (why, remedy) = unfinished_run(spec, run_id, run, prs, target);
         return Err(OrchestratorError(format!(
-            "spec {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}",
+            "{} {}: run {run_id}, on its {RUN_KEY}: line, {why}; {remedy}",
+            spec.noun(),
             spec.slug
         )));
     };
@@ -544,7 +568,7 @@ fn unfinished_run(
     prs: &PullRequestStates,
     target: &[String],
 ) -> (String, String) {
-    let start_over = format!("remove the {RUN_KEY}: line from {} to start the spec over", spec.file.path);
+    let start_over = format!("remove the {RUN_KEY}: line from {} to start the {} over", spec.file.path, spec.noun());
     let Some(run) = run else {
         return (format!("is not under {}/{RUNS_DIR}", prs.cwd), start_over);
     };

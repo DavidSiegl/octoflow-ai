@@ -141,7 +141,8 @@ pub const EXIT_ERROR: i32 = 1;
 pub const EXIT_CHANGES_REQUESTED: i32 = 3;
 /// Approved, but the pull request conflicts with its base, so it was opened as a draft.
 pub const EXIT_CONFLICT: i32 = 4;
-/// drain ran every spec it could, and specs remain whose blockers are not done, such as a pull request still open.
+/// drain ran every spec and ticket it could, and some remain whose blockers are not finished, such as a pull request
+/// still open.
 pub const EXIT_WAITING: i32 = 5;
 pub const EXIT_INTERRUPTED: i32 = 130;
 

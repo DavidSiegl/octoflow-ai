@@ -403,9 +403,17 @@ by ticket: drain reads it and its tickets into one queue, the tickets after thei
 each ready ticket as `run --spec <ticket>` would, so that each ends in a pull request of its own. The spec is never
 run; it records only whether its tickets are all settled. A ticket blocked by another waits for that ticket's pull
 request to merge, as specs do, rather than building on its open branch: a run stacked on an unmerged branch would
-open a pull request that holds its blocker's change too. A ticket's status is read by its first word, since the
-tracker notes why after it, and a merged ticket is written `resolved (PR #<n> merged)` in the tracker's words
-rather than `done`.
+open a pull request that holds its blocker's change too. Statuses are read by their first word, since the tracker
+notes why after it, and a merged ticket is written `resolved (PR #<n> merged)` in the tracker's words rather than
+`done`, without the release: drain cannot know which release a merge made in an arbitrary project.
+
+Drain reads every directory's tickets, whatever its spec's status, and even without a `spec.md`: a ticket's
+`<slug>/NN` blocker is that ticket's own status, and a ticket's open pull request is followed while its spec is
+held, so its merge is not lost. It starts a ticket only while its spec is `ready-for-agent`. A ticket's `Blocked
+by:` is the tracker's free text, so an entry drain cannot read, or a blocker that is `wontfix` and so never
+finishes, holds only that ticket for the human: the rest of the drain goes on, and drain ends with exit status `1`
+naming each held ticket and why, rather than waiting on it forever. A spec's bad `Blocked by:` still stops drain
+before it runs anything, and so does a cycle among what drain waits on, a spec's tickets included.
 
 **What one drain does, in order.** It first asks `gh` about each `in-review` spec's pull request: merged makes it
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`

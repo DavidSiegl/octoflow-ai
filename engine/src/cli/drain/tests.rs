@@ -525,8 +525,16 @@ fn a_gone_spec_change_line_ends_gone() {
     let d = Drain::new();
     let file = SpecFile { path: d.path("a"), text: ready("A") };
     let was = some(SPEC_READY);
-    let mut spec =
-        Queued { slug: "a".into(), kind: Kind::Spec, file, blockers: vec![], was, changed: false, gone: None };
+    let mut spec = Queued {
+        slug: "a".into(),
+        kind: Kind::Spec,
+        file,
+        blockers: vec![],
+        unread_blockers: vec![],
+        was,
+        changed: false,
+        gone: None,
+    };
     let told = crate::workflow::fixture::Told::default();
     assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW), (PR_KEY, PR_A)]), false, &told).unwrap());
     assert!(!spec.reread());
@@ -544,6 +552,7 @@ fn a_change_line_of_a_spec_without_a_status_says_so() {
             kind: Kind::Spec,
             file,
             blockers: vec![],
+            unread_blockers: vec![],
             was: was.clone(),
             changed: false,
             gone: None,
@@ -1220,11 +1229,11 @@ fn a_refresh_that_fails_changes_no_spec() {
 
 #[test]
 fn bad_blockers_stop_the_drain_before_any_run() {
-    let cycle = "error: the specs' blockers form a cycle: b -> c -> b\n";
+    let cycle = "error: the blockers form a cycle: b -> c -> b\n";
     let cases: [(&[(&str, &str)], &str); 3] = [
         (&[("a", "Blocked by: nosuch")], "error: spec a is blocked by nosuch, which has no spec.md in"),
         (&[("a", "Blocked by: b"), ("b", "Blocked by: c"), ("c", "Blocked by: b")], cycle),
-        (&[("a", "Blocked by: a")], "error: the specs' blockers form a cycle: a -> a\n"),
+        (&[("a", "Blocked by: a")], "error: the blockers form a cycle: a -> a\n"),
     ];
     for (blockers, message) in cases {
         let d = Drain::new();
