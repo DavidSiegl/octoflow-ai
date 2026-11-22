@@ -144,6 +144,13 @@ describe("RunMap", () => {
       "build-1.md · claude (haiku-5.5 not offered)",
       "spec.md · claude opus-5.5 (haiku-5.5 not offered)",
     ]);
+    // Why, as the run's log says it, on hovering the station or the turn.
+    expect(spec?.querySelector("title")?.textContent).toBe("claude offers no model haiku-5.5; starting it on opus-5.5");
+    expect(rows.map((row) => row.getAttribute("title"))).toEqual([
+      "claude offers no model haiku-5.5; starting it on its own",
+      "claude offers no model haiku-5.5; starting it on opus-5.5",
+    ]);
+    expect(stations()[3]?.querySelector("title")).toBeNull();
   });
 
   it("marks where a failed run stopped", () => {

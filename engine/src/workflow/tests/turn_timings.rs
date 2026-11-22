@@ -64,9 +64,11 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
 /// The fixture's FakeHerdr as the run's Agents, but for a session that does not offer the model asked of the role's
 /// agent, and names the one it runs on instead.
 struct Unoffering<'f> {
+    /// The fake that plays every agent, this role's included.
     herdr: &'f FakeHerdr,
-    /// The role, and the model its session runs on instead of the one asked; None for one that names none.
+    /// The role whose session does not offer the model asked of it.
     role: &'static str,
+    /// The model that role's session runs on instead; None for a session that names none.
     taken: Option<&'static str>,
 }
 

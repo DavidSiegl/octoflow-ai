@@ -520,6 +520,10 @@ fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reporte
     let not_offered = agents.start(&f.run, "builder", &model("z")).expect("start");
     f.put("opened.json", &opened(""));
     let unnamed = agents.start(&f.run, "builder", &model("z")).expect("start");
+    f.put("opened.json", &opened(r#""currentModelId":"z","#));
+    let on_it = agents.start(&f.run, "builder", &model("z")).expect("start");
+    f.put("opened.json", r#","modes":{"currentModeId":"default","availableModes":[{"id":"default"}]}"#);
+    let unlisted = agents.start(&f.run, "builder", &model("z")).expect("start");
 
     assert_eq!((offered.unpassed, offered.unoffered_model), (vec![], None));
     assert!(f.log().contains(r#""params":{"sessionId":"s-1","modelId":"b"}"#), "{}", f.log());
@@ -527,6 +531,9 @@ fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reporte
     assert_eq!(not_offered.unoffered_model, z_unoffered(Some("a")));
     assert_eq!(unnamed.unpassed, ["agy offers no model z; starting it on its own"]);
     assert_eq!(unnamed.unoffered_model, z_unoffered(None));
+    assert_eq!((on_it.unpassed, on_it.unoffered_model), (vec![], None));
+    assert_eq!(unlisted.unpassed, ["agy's session names no models, so it may not run on z"]);
+    assert_eq!(unlisted.unoffered_model, None);
     assert_eq!(f.asked("session/set_model"), 1, "{:?}", f.methods());
 }
 

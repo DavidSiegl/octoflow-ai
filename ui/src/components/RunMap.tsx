@@ -189,7 +189,7 @@ export function RunMap({ record, now }: Props) {
             stage={stage}
             record={record}
             waiting={waiting !== null}
-            texts={texts[i] ?? { holder: "", harness: "" }}
+            texts={texts[i] ?? { holder: "", harness: "", reason: "" }}
             at={tips[i] ?? HEAD}
             room={textRoom(tips, wants, i)}
           />
@@ -317,10 +317,12 @@ function fit(text: string, width: number, px: number): string {
 }
 
 /** What a station says under its ring: who holds its stage, and the harness and model of the stage's last turn;
- * an empty string for a line it leaves out. */
+ * an empty string for a line it leaves out. reason is what it says on hover: why that turn's model is not the role's
+ * (unofferedReason), or "" when it is. */
 interface StationTexts {
   holder: string;
   harness: string;
+  reason: string;
 }
 
 /** The texts stage's station shows; record names a publish stage's pull request. */
@@ -331,7 +333,7 @@ function stationTexts(stage: Stage, record: RunRecord): StationTexts {
     : stage.kind === "publish" ? (record.pr ? prLabel(record.pr.url) : "pull request")
     : "";
   const last = stage.turns.at(-1);
-  return { holder, harness: last ? harnessOf(last) : "" };
+  return { holder, harness: last ? harnessOf(last) : "", reason: last ? unofferedReason(last) : "" };
 }
 
 const { x: HX, y: HY } = HEAD;
@@ -372,7 +374,7 @@ const STATE_WORDS: Record<StageState, string> = {
 /** The station at the tip at of a stage's arm: the stage's name and state, its texts cut to room viewBox units (the
  * station's accessible label has them whole), a rounds badge for a step that ran in several rounds, and a verdict
  * step's last verdict. */
-function Station({ stage, record, texts: { holder, harness }, waiting, at, room }: {
+function Station({ stage, record, texts: { holder, harness, reason }, waiting, at, room }: {
   stage: Stage; record: RunRecord; texts: StationTexts; waiting: boolean; at: { x: number; y: number }; room: number;
 }) {
   const radius = 27;
@@ -395,6 +397,7 @@ function Station({ stage, record, texts: { holder, harness }, waiting, at, room 
       data-state={stage.state}
       transform={`translate(${at.x.toFixed(1)},${at.y.toFixed(1)})`}
     >
+      {reason && <title>{reason}</title>}
       {stage.state === "current" && <circle className="halo" r={radius + 4} />}
       <circle className="ring" r={radius} />
       <text className="label" y={glyph ? -2 : 4} textAnchor="middle">
@@ -442,6 +445,15 @@ function harnessOf(turn: Turn): string {
   return [turn.agent, turn.model, unoffered].filter(Boolean).join(" ");
 }
 
+/** Why a turn's model is not the role's, in the words the run's log gives it (the engine's set_model, acp.rs); "" for
+ * a turn that ran on the role's model. */
+function unofferedReason(turn: Turn): string {
+  if (!turn.unoffered_model) {
+    return "";
+  }
+  return `${turn.agent ?? ""} offers no model ${turn.unoffered_model}; starting it on ${turn.model ?? "its own"}`;
+}
+
 /** Who ran a turn: its harness and model, or "quality gate" for an analysis. */
 function turnHolder(turn: Turn): string {
   return turn.agent ? harnessOf(turn) : "quality gate";
@@ -485,11 +497,11 @@ type FeedState = "ended" | "failed" | "running" | "unfinished";
 const FEED_GLYPHS: Record<FeedState, string> = { ended: "·", failed: "✕", running: "●", unfinished: "–" };
 
 /** One row of the turn feed: the step with its quality round, the file, who ran it, and its length, or "running" or
- * "unfinished" for a turn with no end. */
+ * "unfinished" for a turn with no end; on hover, why its model is not the role's (unofferedReason). */
 function FeedRow({ turn, state }: { turn: Turn; state: FeedState }) {
   const length = state === "running" || state === "unfinished" ? state : turn.seconds === null ? "" : formatAge(turn.seconds);
   return (
-    <li className={state === "ended" ? undefined : state}>
+    <li className={state === "ended" ? undefined : state} title={unofferedReason(turn) || undefined}>
       <span>{FEED_GLYPHS[state]}</span>
       <span>{turnStep(turn)}</span>
       <span>

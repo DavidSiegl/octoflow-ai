@@ -211,15 +211,11 @@ impl<'h> AcpAgents<'h> {
             }
         };
         unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
-        let mut unoffered_model = None;
-        if let Some(model) = how.model {
-            if !choose(&ask, &session, &opened, &MODEL, &model)? {
-                let taken = current(&opened, &MODEL);
-                let on = taken.as_deref().unwrap_or("its own");
-                unpassed.push(format!("{} offers no model {model}; starting it on {on}", h.kind));
-                unoffered_model = Some(UnofferedModel { asked: model, taken });
-            }
-        }
+        let (said, unoffered_model) = match how.model {
+            Some(model) => set_model(h, &ask, &session, &opened, &model)?,
+            None => (None, None),
+        };
+        unpassed.extend(said);
         let agent = Agent { connection: Arc::new(connection), session, harness: h.kind };
         Ok((agent, Started { asking: false, unpassed, unoffered_model }))
     }
@@ -690,6 +686,30 @@ fn set_mode(
             Ok(Some(format!("{missing}; starting it without one")))
         }
     }
+}
+
+/// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask
+/// (choose). Returns the log's sentence when it could not, and, when the session lists its models and model is not
+/// among them, model with the one the session is on instead. A session already on model counts as offering it; one
+/// that lists no models, as the answer to a resume may not, is not known to run on another, so none is returned.
+/// Errors: the agent refuses the request, or does not answer it.
+fn set_model(
+    h: &Harness,
+    ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
+    session: &str,
+    opened: &Value,
+    model: &str,
+) -> Result<(Option<String>, Option<UnofferedModel>), AgentError> {
+    let taken = current(opened, &MODEL);
+    if taken.as_deref() == Some(model) || choose(ask, session, opened, &MODEL, model)? {
+        return Ok((None, None));
+    }
+    if config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
+        return Ok((Some(format!("{}'s session names no models, so it may not run on {model}", h.kind)), None));
+    }
+    let on = taken.as_deref().unwrap_or("its own");
+    let said = format!("{} offers no model {model}; starting it on {on}", h.kind);
+    Ok((Some(said), Some(UnofferedModel { asked: model.to_string(), taken })))
 }
 
 /// A choice a session offers, as ACP names it two ways: a session config option of a category
