@@ -650,7 +650,7 @@ fn the_usage_of_a_prompt_pending_at_an_end_a_restart_or_a_settle_is_recorded() {
 }
 
 /// An agent that answers neither its prompt nor the cancel is waited for once: the run's end that follows its settle
-/// kills it at once. A settle once the run's Ctrl-C is raised waits for none.
+/// kills it at once. A settle once the run's Ctrl-C is raised waits for none and cancels none.
 #[test]
 fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     let f = Fixture::new();
@@ -666,10 +666,16 @@ fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
 
     agents.start(&f.run, "builder", &launch("agy")).expect("start");
     agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    let cancels = || f.log().matches("session/cancel ").count();
+    let cancelled_before = cancels();
     f.interrupt.raise();
     let settling = Instant::now();
     agents.settle(&f.run);
     assert!(settling.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", settling.elapsed());
+    // The fake agent logs a cancel within milliseconds of getting it: one logged only after this sleep lets a wrong
+    // settle pass, and never fails a right one.
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(cancels(), cancelled_before, "{}", f.log());
 }
 
 #[test]
