@@ -169,9 +169,14 @@ describe("the conversation of an agent over ACP", () => {
     const intoView = vi.fn();
     Element.prototype.scrollIntoView = intoView;
     const all = session(null);
-    const { api } = fakeApi([4, 7, 9, 10].map((n) => ({ session_start: 1, events: all.slice(0, n), answerable: true })));
+    const restarted = [event(12, { kind: "session", session: "s-1", harness: "agy", resumed: true })];
+    const { api } = fakeApi([
+      ...[4, 7, 9, 10].map((n) => ({ session_start: 1, events: all.slice(0, n), answerable: true })),
+      { session_start: 12, events: restarted, answerable: true },
+    ]);
     const list = show(api);
-    // jsdom lays nothing out: each item is 100px high, in a list 200px high.
+    // jsdom lays nothing out: each item is 100px high, in a list 200px high. Nothing fires the scroll events a browser
+    // would, a frame after the reader scrolls, so each read lands before its scroll's event, as one can in a browser.
     Object.defineProperty(list, "scrollHeight", { get: () => 100 * list.children.length });
     Object.defineProperty(list, "clientHeight", { value: 200 });
     const readAgain = () =>
@@ -185,13 +190,16 @@ describe("the conversation of an agent over ACP", () => {
     expect(list.scrollTop).toBe(list.scrollHeight);
 
     list.scrollTop = 0;
-    fireEvent.scroll(list);
     await readAgain();
     expect(list.scrollTop).toBe(0);
 
     list.scrollTop = list.scrollHeight - list.clientHeight;
-    fireEvent.scroll(list);
     await readAgain();
+    expect(list.scrollTop).toBe(list.scrollHeight);
+
+    list.scrollTop = 0;
+    await readAgain();
+    expect(within(list).getByText("Resumed its session in agy")).toBeInTheDocument();
     expect(list.scrollTop).toBe(list.scrollHeight);
     expect(intoView).not.toHaveBeenCalled();
   });

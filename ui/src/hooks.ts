@@ -44,35 +44,33 @@ export function useNow(intervalMs = 1000): number {
   return now;
 }
 
-/** How far from its end, in pixels, a scrolled element still counts as at its end: the slack for the fractional
- * scroll positions that zoom and high-density screens leave. */
-const AT_END_SLACK_PX = 16;
+/** How far from its end, in pixels, a scrolled element still counts as at its end: the slack for the fraction of a
+ * pixel that a zoomed or high-density screen can leave between the two. Small enough that the least scroll up a
+ * reader can make leaves the end. */
+const AT_END_SLACK_PX = 2;
 
 /** A ref for a scrollable element that follows its end, as a terminal does, while the reader is there: each time
- * content changes, the element is scrolled to its end if it was at its end before, and left where it is if the reader
- * had scrolled away from it. Only the element scrolls, never the page around it. The element starts at its end, and
- * must stay the same one while the component is mounted. */
-export function useFollowEnd<T extends HTMLElement>(content: unknown): RefObject<T | null> {
+ * content changes, the element is scrolled to its end if it was at its end before the change, and left where the
+ * reader put it otherwise. Only the element scrolls, never the page around it. It starts at its end, and again
+ * whenever origin changes: content that starts over, such as a new session's, owes nothing to where the reader was in
+ * the old. */
+export function useFollowEnd<T extends HTMLElement>(content: unknown, origin?: unknown): RefObject<T | null> {
   const ref = useRef<T>(null);
-  // True means the reader's last scroll, if any, left the element at its end; the scroll that following makes keeps it.
-  const atEnd = useRef(true);
-  useEffect(() => {
+  // The origin at the last change, and the element's scrollHeight then: where its end was before the content now
+  // shown. null before the first change.
+  const last = useRef<{ origin: unknown; height: number } | null>(null);
+  // Before paint, so the new content never shows at the old position first. The reader's position is read here, at
+  // the change, rather than kept from scroll events, which arrive a frame late.
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) {
       return;
     }
-    const onScroll = () => {
-      atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_SLACK_PX;
-    };
-    el.addEventListener("scroll", onScroll);
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
-  // Before paint, so the new content never shows at the old position first.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el && atEnd.current) {
+    const before = last.current;
+    if (!before || before.origin !== origin || before.height - el.scrollTop - el.clientHeight <= AT_END_SLACK_PX) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [content]);
+    last.current = { origin, height: el.scrollHeight };
+  }, [content, origin]);
   return ref;
 }

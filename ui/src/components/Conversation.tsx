@@ -34,9 +34,9 @@ interface Props {
  * option, and, while the run waits on the human's message to it, a box to send one. Nothing can be answered while the
  * run is not running. */
 export function Conversation({ api, project, run, role }: Props) {
-  const { events, answerable, problem, refresh } = useConversation(api, project, run, role);
+  const { start, events, answerable, problem, refresh } = useConversation(api, project, run, role);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
-  const list = useFollowEnd<HTMLOListElement>(events);
+  const list = useFollowEnd<HTMLOListElement>(events, start);
 
   const answers = new Map<number, { option: string; by: string }>();
   for (const e of events) {
@@ -303,11 +303,12 @@ function pendingWait(events: AgentEvent[]): string | null {
 }
 
 /** The current session of the agent's events, read now and every AGENT_POLL_MS while mounted, one read at a time,
- * each asking only for the events after the last one held; a session that started since replaces them all.
- * answerable is the last read's; problem says why the last read failed, null once one succeeds. refresh reads again
+ * each asking only for the events after the last one held; a session that started since replaces them all. start is
+ * the session's start, as the server numbers it, null before the first read. answerable is the last read's; problem says why the last read failed, null once one succeeds. refresh reads again
  * at once. */
 function useConversation(api: Api, project: Project, run: string, role: string) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [start, setStart] = useState<number | null>(null);
   const [answerable, setAnswerable] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
@@ -328,6 +329,7 @@ function useConversation(api: Api, project: Project, run: string, role: string) 
           if (fresh || next.events.length > 0) {
             setEvents((before) => (fresh ? next.events : [...before, ...next.events]));
           }
+          setStart(next.session_start);
           setAnswerable(next.answerable);
           setProblem(null);
           timer = setTimeout(read, AGENT_POLL_MS);
@@ -346,5 +348,5 @@ function useConversation(api: Api, project: Project, run: string, role: string) 
       clearTimeout(timer);
     };
   }, [api, project, run, role, reads]);
-  return { events, answerable, problem, refresh: () => setReads((n) => n + 1) };
+  return { start, events, answerable, problem, refresh: () => setReads((n) => n + 1) };
 }

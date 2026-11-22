@@ -42,6 +42,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A herdr pane slides under a reader who scrolled up, once its window is full.** Raised by cross-review 284 (F1):
+  `AgentPane` (`ui/src/components/AgentPanes.tsx`) reads only the agent's last `AGENT_LINES` (200) lines and replaces
+  its text on every read, so once the agent has printed more, each new line drops one off the top. `useFollowEnd`
+  keeps `scrollTop`, so the pane no longer snaps to its end, but the line the reader was on moves up with every read
+  that brings new output. Closing it means keeping their place across reads: matching the line at the top of the view
+  in the new text (a TUI redraws its last screen, so the reads are not a plain append), or reading more lines while
+  the reader is scrolled up. The ACP conversation keeps every event and has no such window.
 - **drain over tickets: edge cases not handled yet.** Raised as notes by the review of todo 89 (PR #600). In
   `engine/src/cli/drain.rs` and `engine/src/cli/drain/queue.rs`:
   - When a spec.md is deleted mid-drain, its ready tickets drop out of the end report, which can say all specs
