@@ -266,8 +266,7 @@ fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&s
             EXIT_ERROR
         }
         Err(Stop::Interrupted(run_id)) => {
-            let target = command.target().map(Target::flags).unwrap_or_default();
-            let _ = writeln!(std::io::stderr(), "{}", interrupted_note(run_id.as_deref(), &target));
+            let _ = writeln!(std::io::stderr(), "{}", interrupted_note(run_id.as_deref(), command.target()));
             EXIT_INTERRUPTED
         }
     }
@@ -580,12 +579,22 @@ pub fn resume_command(run_id: &str, target: &[String]) -> String {
     hint_commands(target).on_run("resume", run_id)
 }
 
-/// What to tell the human whose Ctrl-C, or a SIGTERM or SIGHUP, stopped the orchestrator, with the command that resumes the run of run_id,
-/// target being its --machine and --cwd flags; run_id is None for a Ctrl-C before the run's state existed, and the
-/// note names no command.
-fn interrupted_note(run_id: Option<&str>, target: &[String]) -> String {
-    let hint = run_id.map_or(String::new(), |id| format!("; resume with: {}", resume_command(id, target)));
-    format!("interrupted; the role agents keep running in herdr{hint}")
+/// What to tell the human whose Ctrl-C, or a SIGTERM or SIGHUP, stopped the orchestrator of the run run_id names, for
+/// the command whose target is target (None for one that takes no --machine or --cwd); run_id is None for a stop
+/// before the run's state existed, and the note then names no way to resume. A herdr run's agents outlive the
+/// orchestrator, and the note gives the command that resumes the run with target's flags. An ACP run's (Target::acp)
+/// ended with it, and the CLI refuses to resume the app's runs (refuse_app_run), so the note sends the human to the
+/// app instead. A run serve started has the note appended to its START_LOG, which the app shows.
+fn interrupted_note(run_id: Option<&str>, target: Option<&Target>) -> String {
+    match (run_id, target.is_some_and(|t| t.acp)) {
+        (None, true) => "interrupted".to_string(),
+        (Some(_), true) => "interrupted; the role agents were ended; resume the run from the desktop app".to_string(),
+        (run_id, false) => {
+            let flags = target.map(Target::flags).unwrap_or_default();
+            let hint = run_id.map_or(String::new(), |id| format!("; resume with: {}", resume_command(id, &flags)));
+            format!("interrupted; the role agents keep running in herdr{hint}")
+        }
+    }
 }
 
 #[cfg(test)]

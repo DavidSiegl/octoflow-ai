@@ -170,10 +170,11 @@ fn the_resume_hint() {
         "octoflow resume a1b2c3 --machine box --cwd '~/my project'"
     );
     assert_eq!(
-        interrupted_note(Some("20260929-120000-a1b2c3"), &[]),
+        interrupted_note(Some("20260929-120000-a1b2c3"), None),
         "interrupted; the role agents keep running in herdr; resume with: octoflow resume a1b2c3"
     );
-    assert_eq!(interrupted_note(None, &target), "interrupted; the role agents keep running in herdr");
+    let resume = command(&["resume", "--machine", "box", "--cwd", "~/my project", "a1b2c3"]);
+    assert_eq!(interrupted_note(None, resume.target()), "interrupted; the role agents keep running in herdr");
     assert_eq!(
         command(&["run", "--machine", "box", "--cwd", "/p", "t"]).target().unwrap().flags(),
         target[..2].iter().cloned().chain(["--cwd".into(), "/p".into()]).collect::<Vec<_>>()
@@ -378,10 +379,21 @@ fn an_interrupted_run_names_its_resume_command() {
     let Err(Stop::Interrupted(Some(run_id))) = &ended else { panic!("not interrupted with its run") };
     let key = run_id.rsplit('-').next().unwrap();
     assert_eq!(
-        interrupted_note(Some(run_id), &[]),
+        interrupted_note(Some(run_id), None),
         format!("interrupted; the role agents keep running in herdr; resume with: octoflow resume {key}")
     );
     assert_eq!(cli.status(ended, &["run", "task"]), EXIT_INTERRUPTED);
+}
+
+#[test]
+fn an_interrupted_app_run_says_its_agents_ended_and_points_at_the_app() {
+    // The CLI refuses to resume the app's runs (refuse_app_run), and an ACP run's agents end with its orchestrator.
+    let run = command(&["run", "--acp", "--cwd", "/p", "task"]);
+    assert_eq!(
+        interrupted_note(Some("20260929-120000-a1b2c3"), run.target()),
+        "interrupted; the role agents were ended; resume the run from the desktop app"
+    );
+    assert_eq!(interrupted_note(None, run.target()), "interrupted");
 }
 
 #[test]
