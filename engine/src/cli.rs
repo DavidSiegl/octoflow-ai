@@ -141,8 +141,9 @@ pub(super) enum Stop {
     /// The error main prints, with exit status EXIT_ERROR.
     Failed(OrchestratorError),
     /// The Interrupt, raised by a Ctrl-C, a SIGTERM or a SIGHUP (exit status EXIT_INTERRUPTED); the id of the run it
-    /// stopped, None before the run's state was made, for the hint that resumes it.
-    Interrupted(Option<String>),
+    /// stopped and where that run's agents run (RunState::backend), None before the run's state was made, for the
+    /// note that says how to resume it (interrupted_note).
+    Interrupted(Option<(String, Backend)>),
 }
 
 /// The program: argv is its command line, the name it was invoked by first, which the hints that name a command give
@@ -265,9 +266,9 @@ fn ended_status(ended: Result<Ended, Stop>, command: &Command, print: &dyn Fn(&s
             let _ = writeln!(std::io::stderr(), "error: {e}");
             EXIT_ERROR
         }
-        Err(Stop::Interrupted(run_id)) => {
-            let target = command.target().map(Target::flags).unwrap_or_default();
-            let _ = writeln!(std::io::stderr(), "{}", interrupted_note(run_id.as_deref(), &target));
+        Err(Stop::Interrupted(run)) => {
+            let run = run.as_ref().map(|(id, backend)| (id.as_str(), *backend));
+            let _ = writeln!(std::io::stderr(), "{}", interrupted_note(run, command.target()));
             EXIT_INTERRUPTED
         }
     }
@@ -373,14 +374,14 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
         }
     };
     if interrupt.is_raised() {
-        return Err(Stop::Interrupted(Some(state.run_id)));
+        return Err(Stop::Interrupted(Some((state.run_id, state.backend))));
     }
-    let run_id = state.run_id.clone();
+    let (run_id, backend) = (state.run_id.clone(), state.backend);
     let commands = hint_commands(&command.target().map(Target::flags).unwrap_or_default());
     match (world.workflow)(world, state, pipeline, spec, &commands) {
         Ok(ran) => Ok(Ended::Ran(Box::new(ran))),
-        Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some(run_id))),
-        Err(Stopped::Failed(e) | Stopped::TakenOver(e)) => Err(stop(e, interrupt, Some(&run_id))),
+        Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some((run_id, backend)))),
+        Err(Stopped::Failed(e) | Stopped::TakenOver(e)) => Err(stop(e, interrupt, Some((&run_id, backend)))),
     }
 }
 
@@ -517,10 +518,10 @@ pub fn run_workflow(
 }
 
 /// What error e means for main: the Ctrl-C when the interrupt is pending, since a command it stopped fails for it,
-/// else the error itself. run_id is the run's, for the hint that resumes it.
-fn stop(e: OrchestratorError, interrupt: &Interrupt, run_id: Option<&str>) -> Stop {
+/// else the error itself. run is the run's id and backend, as Stop::Interrupted takes them.
+fn stop(e: OrchestratorError, interrupt: &Interrupt, run: Option<(&str, Backend)>) -> Stop {
     if interrupt.is_raised() {
-        Stop::Interrupted(run_id.map(String::from))
+        Stop::Interrupted(run.map(|(id, backend)| (id.to_string(), backend)))
     } else {
         Stop::Failed(e)
     }
@@ -580,12 +581,25 @@ pub fn resume_command(run_id: &str, target: &[String]) -> String {
     hint_commands(target).on_run("resume", run_id)
 }
 
-/// What to tell the human whose Ctrl-C, or a SIGTERM or SIGHUP, stopped the orchestrator, with the command that resumes the run of run_id,
-/// target being its --machine and --cwd flags; run_id is None for a Ctrl-C before the run's state existed, and the
-/// note names no command.
-fn interrupted_note(run_id: Option<&str>, target: &[String]) -> String {
-    let hint = run_id.map_or(String::new(), |id| format!("; resume with: {}", resume_command(id, target)));
-    format!("interrupted; the role agents keep running in herdr{hint}")
+/// What to tell the human whose Ctrl-C, or a SIGTERM or SIGHUP, stopped the orchestrator of run, its id and backend
+/// (Stop::Interrupted), for the command whose target is target (None for one that takes no --machine or --cwd).
+/// A herdr run's agents outlive the orchestrator, and the note gives the command that resumes the run with target's
+/// flags. An ACP run's agents ended with it, and the CLI resumes the app's runs only for serve (refuse_app_run), so the
+/// note sends the human to the app instead. run is None for a stop before the run's state existed: the note then
+/// names no way to resume, and words it by target's --acp. A run serve started has the note appended to its
+/// START_LOG, which the app shows.
+fn interrupted_note(run: Option<(&str, Backend)>, target: Option<&Target>) -> String {
+    match run {
+        None if target.is_some_and(|t| t.acp) => "interrupted".to_string(),
+        None => "interrupted; the role agents keep running in herdr".to_string(),
+        Some((_, Backend::Acp)) => {
+            "interrupted; the role agents were ended; resume the run from the desktop app".to_string()
+        }
+        Some((id, Backend::Herdr)) => {
+            let flags = target.map(Target::flags).unwrap_or_default();
+            format!("interrupted; the role agents keep running in herdr; resume with: {}", resume_command(id, &flags))
+        }
+    }
 }
 
 #[cfg(test)]

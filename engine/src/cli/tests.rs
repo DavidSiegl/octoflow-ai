@@ -124,9 +124,21 @@ fn a_ctrl_c_outside_the_workflow_is_the_interrupt() {
     assert_eq!(ran_status(ended, &command(&argv)), EXIT_INTERRUPTED);
     // Once it exists, before its Workflow starts: the note names it.
     let ended = run_on(&f, &["resume", "a1b2c3", "--cwd", "/proj"]);
-    let Err(Stop::Interrupted(Some(run_id))) = ended else { panic!("not interrupted with its run") };
-    assert_eq!(run_id, "20260929-120000-a1b2c3");
+    let Err(Stop::Interrupted(Some(run))) = ended else { panic!("not interrupted with its run") };
+    assert_eq!(run, ("20260929-120000-a1b2c3".to_string(), Backend::Herdr));
     assert!(f.herdr.state().calls.is_empty());
+}
+
+#[test]
+fn a_ctrl_c_before_an_app_runs_workflow_names_its_backend() {
+    let mut saved = saved_run("build", 1, &["spec", "build"]);
+    saved.backend = Backend::Acp;
+    let (f, _) = saved_on_host(saved);
+    f.interrupt.raise();
+    let Err(Stop::Interrupted(Some(run))) = run_on(&f, &["resume", "a1b2c3", "--acp", "--cwd", "/proj"]) else {
+        panic!("not interrupted with its run")
+    };
+    assert_eq!(run, ("20260929-120000-a1b2c3".to_string(), Backend::Acp));
 }
 
 #[test]
@@ -134,8 +146,8 @@ fn a_ctrl_c_in_the_workflow_names_the_run_it_stopped() {
     let (f, _) = saved_on_host(saved_run("build", 1, &["spec", "build"]));
     f.play("build", vec![then_interrupted(&f.interrupt, build_turn(1))]);
     let argv = ["resume", "a1b2c3", "--cwd", "/proj"];
-    let Err(Stop::Interrupted(Some(run_id))) = run_on(&f, &argv) else { panic!("the run was not interrupted") };
-    assert_eq!(run_id, "20260929-120000-a1b2c3");
+    let Err(Stop::Interrupted(Some(run))) = run_on(&f, &argv) else { panic!("the run was not interrupted") };
+    assert_eq!(run, ("20260929-120000-a1b2c3".to_string(), Backend::Herdr));
     assert_eq!(f.saved().get("error"), Some(&Value::from("interrupted")));
 }
 
@@ -170,10 +182,16 @@ fn the_resume_hint() {
         "octoflow resume a1b2c3 --machine box --cwd '~/my project'"
     );
     assert_eq!(
-        interrupted_note(Some("20260929-120000-a1b2c3"), &[]),
+        interrupted_note(Some(("20260929-120000-a1b2c3", Backend::Herdr)), None),
         "interrupted; the role agents keep running in herdr; resume with: octoflow resume a1b2c3"
     );
-    assert_eq!(interrupted_note(None, &target), "interrupted; the role agents keep running in herdr");
+    let resume = command(&["resume", "--machine", "box", "--cwd", "~/my project", "a1b2c3"]);
+    assert_eq!(interrupted_note(None, resume.target()), "interrupted; the role agents keep running in herdr");
+    assert_eq!(
+        interrupted_note(Some(("20260929-120000-a1b2c3", Backend::Herdr)), resume.target()),
+        "interrupted; the role agents keep running in herdr; resume with: octoflow resume a1b2c3 --machine box --cwd \
+         '~/my project'"
+    );
     assert_eq!(
         command(&["run", "--machine", "box", "--cwd", "/p", "t"]).target().unwrap().flags(),
         target[..2].iter().cloned().chain(["--cwd".into(), "/p".into()]).collect::<Vec<_>>()
@@ -375,13 +393,31 @@ fn an_interrupted_run_names_its_resume_command() {
     let cli = Cli::new();
     let interrupted = then_interrupted(&cli.f.interrupt, spec_turn());
     let ended = cli.played(&["task"], vec![("spec", vec![interrupted])]);
-    let Err(Stop::Interrupted(Some(run_id))) = &ended else { panic!("not interrupted with its run") };
+    let Err(Stop::Interrupted(Some((run_id, backend)))) = &ended else { panic!("not interrupted with its run") };
+    assert_eq!(*backend, Backend::Herdr, "the backend the run was bound to");
     let key = run_id.rsplit('-').next().unwrap();
     assert_eq!(
-        interrupted_note(Some(run_id), &[]),
+        interrupted_note(Some((run_id, *backend)), None),
         format!("interrupted; the role agents keep running in herdr; resume with: octoflow resume {key}")
     );
     assert_eq!(cli.status(ended, &["run", "task"]), EXIT_INTERRUPTED);
+}
+
+#[test]
+fn an_interrupted_app_run_says_its_agents_ended_and_points_at_the_app() {
+    // The CLI resumes the app's runs only for serve (refuse_app_run), and an ACP run's agents end with its
+    // orchestrator; the note follows the run's backend, whatever the command's --acp.
+    let run = command(&["run", "--acp", "--cwd", "/p", "task"]);
+    let ended = "interrupted; the role agents were ended; resume the run from the desktop app";
+    assert_eq!(interrupted_note(Some(("20260929-120000-a1b2c3", Backend::Acp)), run.target()), ended);
+    assert_eq!(interrupted_note(Some(("20260929-120000-a1b2c3", Backend::Acp)), None), ended);
+    assert_eq!(interrupted_note(None, run.target()), "interrupted");
+    // A herdr run that a hand-typed --acp resume was stopped on keeps its agents in herdr.
+    let resume = command(&["resume", "--acp", "--cwd", "/p", "a1b2c3"]);
+    assert_eq!(
+        interrupted_note(Some(("20260929-120000-a1b2c3", Backend::Herdr)), resume.target()),
+        "interrupted; the role agents keep running in herdr; resume with: octoflow resume a1b2c3 --cwd /p"
+    );
 }
 
 #[test]
