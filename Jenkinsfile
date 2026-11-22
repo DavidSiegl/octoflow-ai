@@ -247,19 +247,25 @@ pipeline {
             when { changeRequest target: 'main' }
             steps {
                 // The open pull requests are listed here, before the script fetches main, so that one missing from
-                // the list has merged into what it fetches. The token goes to gh alone, not to the script: gh runs
-                // outside the workspace, found on the build's PATH less the workspace's and relative directories, and
-                // told the repository by CHANGE_URL, so neither a tool the pull request's code left in .tools/bin nor
-                // its git config is in its way. Still exposed: this step's own shell, which Jenkins finds on the
-                // build's PATH, and any pull request whose own Jenkinsfile Jenkins runs.
-                withCredentials([string(credentialsId: 'GitHub-Agents', variable: 'GH_TOKEN')]) {
-                    sh '''
-                        list="$WORKSPACE/open-pull-requests.txt"
-                        trusted=$(printf '%s\\n' "$PATH" | tr : '\\n' | grep '^/' | grep -vF "$WORKSPACE" |
-                            paste -sd : -)
-                        cd / && PATH=$trusted gh pr list --repo "${CHANGE_URL%/pull/*}" --base "$CHANGE_TARGET" \\
-                            --state open --limit 1000 --json number --jq '.[].number' > "$list"
-                    '''
+                // the list has merged into what it fetches. The token's step takes nothing from the workspace: its
+                // PATH, worked out here in Groovy rather than by a shell found on the build's PATH, is the build's
+                // without relative directories or any under the workspace, so its shell, gh and every other command
+                // are looked up past .tools/bin; gh runs from / and is told the repository by CHANGE_URL, so the
+                // checkout's git config is not read; and ci/version-raised.sh, which the pull request can change,
+                // runs after, without the token. Not guaranteed: a directory outside the workspace that the build
+                // user can write to passes the filter, so a tool a pull request's code left there runs with the
+                // token (TODO.md); and a pull request whose own Jenkinsfile Jenkins runs controls all of this.
+                script {
+                    def trusted = env.PATH.split(':').findAll { it.startsWith('/') && !it.startsWith(env.WORKSPACE) }
+                    withEnv(["PATH=${trusted.join(':')}"]) {
+                        withCredentials([string(credentialsId: 'GitHub-Agents', variable: 'GH_TOKEN')]) {
+                            sh '''
+                                list="$WORKSPACE/open-pull-requests.txt"
+                                cd / && gh pr list --repo "${CHANGE_URL%/pull/*}" --base "$CHANGE_TARGET" \\
+                                    --state open --limit 1000 --json number --jq '.[].number' > "$list"
+                            '''
+                        }
+                    }
                 }
                 sh 'OPEN_PULL_REQUESTS="$WORKSPACE/open-pull-requests.txt" ci/version-raised.sh'
             }
