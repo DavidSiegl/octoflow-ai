@@ -94,25 +94,27 @@ impl Setup {
     }
 
     /// Start, in a thread of its own, an install of adapter for the current pins, unless it is installed, as
-    /// Installs::install does, followed by the removal of its old installs (Installs::remove_old); none starts while
-    /// one this Setup started runs. Returns at once; Setup::adapters tells how it goes. stopping is the Interrupt the
-    /// server raises when it stops, which stops the install. Errors: this Setup has no installs of adapter
-    /// (Setup::new), or the thread cannot be started.
+    /// Installs::install does, removing the old installs; none starts while one this Setup started runs. Returns at
+    /// once; Setup::adapters tells how it goes. stopping is the Interrupt the server raises when it stops, which stops
+    /// the install. Errors: this Setup has no installs of adapter (Setup::new), or the thread cannot be started.
     pub fn install_adapter(&self, adapter: Adapter, stopping: &Interrupt) -> Result<(), String> {
-        let Some(installing) = self.adapters.iter().find(|a| a.installs.adapter() == adapter) else {
+        let Some(target) = self.adapters.iter().find(|a| a.installs.adapter() == adapter) else {
             return Err(format!("this server installs no {} adapter", adapter.harness()));
         };
-        let mut latest = installing.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut latest = target.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if matches!(*latest, Some(Latest::Running)) {
             return Ok(());
         }
-        let (installing, stopping) = (installing.clone(), stopping.clone());
+        let (target, stopping) = (target.clone(), stopping.clone());
         let thread = std::thread::Builder::new().name(format!("install-{}", adapter.harness())).spawn(move || {
-            let ended = match installing.installs.install(&stopping) {
-                Ok(_) => Latest::Installed(installing.installs.remove_old().err().map(|e| e.0)),
-                Err(e) => Latest::Failed(e.0),
+            // A panic, as of a dependency, still ends the install, so that the next POST starts one again.
+            let install = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| target.installs.install(&stopping)));
+            let ended = match install {
+                Ok(Ok(install)) => Latest::Installed(install.leftover.map(|e| e.0)),
+                Ok(Err(e)) => Latest::Failed(e.0),
+                Err(_) => Latest::Failed(format!("the install of {}'s ACP adapter panicked", adapter.harness())),
             };
-            *installing.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ended);
+            *target.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ended);
         });
         thread.map_err(|e| format!("cannot start the install of {}'s ACP adapter: {e}", adapter.harness()))?;
         *latest = Some(Latest::Running);
@@ -148,6 +150,7 @@ impl Setup {
 
 /// One ACP adapter's installs, and the latest install of them a Setup started.
 struct AdapterInstalls {
+    /// The adapter's installs, which also say whose they are (Installs::adapter).
     installs: Installs,
     /// None until the Setup starts an install, then how the latest one goes.
     latest: Mutex<Option<Latest>>,
@@ -156,10 +159,11 @@ struct AdapterInstalls {
 /// How the latest install a Setup started of an adapter goes.
 #[derive(Clone)]
 enum Latest {
+    /// Its thread has not ended yet.
     Running,
     /// It failed, with this error (Installs::install's).
     Failed(String),
-    /// It is installed; with why old installs could not be removed (Installs::remove_old's error), if they could not.
+    /// It is installed; with why old installs could not all be removed (Install::leftover), if they could not.
     Installed(Option<String>),
 }
 

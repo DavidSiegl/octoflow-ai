@@ -168,7 +168,7 @@ fn an_install_downloads_node_installs_the_adapter_and_is_found_in_place() {
     let (installs, dist) = f.installs(pins, &[(NODE, &f.tarball)], &[]);
     assert_eq!(installs.installed(), None);
 
-    let installed = installs.install(&Interrupt::new()).unwrap();
+    let installed = installs.install(&Interrupt::new()).unwrap().installed;
 
     let dir = format!("{}/node-{NODE}-adapter-0.5.0", f.root());
     let expected = Installed {
@@ -253,12 +253,12 @@ fn a_damaged_install_is_not_found_and_an_install_replaces_it() {
     let f = Fixture::new();
     let pins = f.pins(NODE, &sha256_of(&f.tarball), "0.5.0");
     let (installs, dist) = f.installs(pins, &[(NODE, &f.tarball)], &[]);
-    let installed = installs.install(&Interrupt::new()).unwrap();
+    let installed = installs.install(&Interrupt::new()).unwrap().installed;
 
     for part in [&installed.node, &installed.script] {
         std::fs::remove_file(part).unwrap();
         assert_eq!(installs.installed(), None, "without {part}");
-        assert_eq!(installs.install(&Interrupt::new()).unwrap(), installed);
+        assert_eq!(installs.install(&Interrupt::new()).unwrap().installed, installed);
         assert_eq!(installs.installed(), Some(installed.clone()));
     }
     assert_eq!(dist.asked.lock().unwrap().len(), 3);
@@ -274,7 +274,7 @@ fn two_installs_at_once_make_one() {
     let (a, b) = std::thread::scope(|s| {
         let a = s.spawn(|| installs.install(&Interrupt::new()));
         let b = s.spawn(|| installs.install(&Interrupt::new()));
-        (a.join().unwrap().unwrap(), b.join().unwrap().unwrap())
+        (a.join().unwrap().unwrap().installed, b.join().unwrap().unwrap().installed)
     });
 
     assert_eq!(a, b);
@@ -294,8 +294,7 @@ fn a_raised_pin_installs_beside_the_old_install_which_stays_until_the_next_raise
 
     let (second, _) = f.installs(f.pins("1.0.1", &sha256_of(&middle), "0.6.0"), &tarballs, &[]);
     assert_eq!(second.installed(), None, "an install of other pins is not the current one");
-    let installed = second.install(&Interrupt::new()).unwrap();
-    second.remove_old().unwrap();
+    let installed = second.install(&Interrupt::new()).unwrap().installed;
 
     assert!(installed.script.contains("/node-1.0.1-adapter-0.6.0/"), "{}", installed.script);
     let first_name = format!("node-{NODE}-adapter-0.5.0");
@@ -307,15 +306,14 @@ fn a_raised_pin_installs_beside_the_old_install_which_stays_until_the_next_raise
     std::fs::File::open(format!("{}/{first_name}", f.root())).unwrap().set_modified(touched).unwrap();
     let (third, _) = f.installs(f.pins("1.0.2", &sha256_of(&newest), "0.7.0"), &tarballs, &[]);
     third.install(&Interrupt::new()).unwrap();
-    third.remove_old().unwrap();
 
     assert_eq!(f.entries(), [".lock", &first_name, "node-1.0.2-adapter-0.7.0"]);
     assert_eq!(second.installed(), None);
 }
 
-/// Anything else in the installs' directory, a file or a link as much as a directory, goes with the old installs.
+/// Anything else in the installs' directory, a file or a link as much as a directory, goes once an install is in place.
 #[test]
-fn removing_the_old_installs_removes_files_and_links_beside_them() {
+fn an_install_removes_files_and_links_beside_it() {
     let f = Fixture::new();
     let pins = f.pins(NODE, &sha256_of(&f.tarball), "0.5.0");
     let (installs, _) = f.installs(pins, &[(NODE, &f.tarball)], &[]);
@@ -323,16 +321,15 @@ fn removing_the_old_installs_removes_files_and_links_beside_them() {
     std::fs::write(format!("{}/stray", f.root()), "").unwrap();
     std::os::unix::fs::symlink(f.root(), format!("{}/loop", f.root())).unwrap();
 
-    installs.install(&Interrupt::new()).unwrap();
-    installs.remove_old().unwrap();
+    assert!(installs.install(&Interrupt::new()).unwrap().leftover.is_none());
 
     assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
 }
 
-/// An install in place is installed whether or not what is left of the others can be removed, which the next
-/// removal tries again.
+/// An install in place succeeds whether or not what is left of the others can be removed, which the next install
+/// tries again.
 #[test]
-fn an_old_install_that_cannot_be_removed_leaves_the_install_in_place() {
+fn an_old_install_that_cannot_be_removed_leaves_the_install_a_success() {
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
     let (installs, _) = f.installs(f.pins(NODE, &sha256_of(&f.tarball), "0.5.0"), &[(NODE, &f.tarball)], &[]);
@@ -341,14 +338,14 @@ fn an_old_install_that_cannot_be_removed_leaves_the_install_in_place() {
     std::fs::write(format!("{stuck}/file"), "").unwrap();
     std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o555)).unwrap();
 
-    let installed = installs.install(&Interrupt::new()).unwrap();
-    let removed = installs.remove_old();
+    let install = installs.install(&Interrupt::new());
     std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let error = removed.unwrap_err().0;
+    let install = install.unwrap();
+    let error = install.leftover.expect("stray is left").0;
     assert!(error.starts_with(&format!("cannot remove {}/stray: ", f.root())), "{error}");
-    assert_eq!(installs.installed(), Some(installed));
-    installs.remove_old().unwrap();
+    assert_eq!(installs.installed(), Some(install.installed));
+    assert!(installs.install(&Interrupt::new()).unwrap().leftover.is_none());
     assert_eq!(f.entries(), [".lock".to_string(), format!("node-{NODE}-adapter-0.5.0")]);
 }
 
@@ -429,11 +426,11 @@ fn codex_installs_beside_claude_and_neither_removes_the_other() {
     let f = Fixture::new();
     let sha256 = sha256_of(&f.tarball);
     let (claude, _) = f.installs(f.pins(NODE, &sha256, "0.5.0"), &[(NODE, &f.tarball)], &[]);
-    let claude_installed = claude.install(&Interrupt::new()).unwrap();
+    let claude_installed = claude.install(&Interrupt::new()).unwrap().installed;
     let codex_pins = pins_of(Adapter::Codex, NODE, &sha256, "2.0.0");
     let (codex, _) = f.installs_of(Adapter::Codex, codex_pins, &[(NODE, &f.tarball)], &[]);
 
-    let installed = codex.install(&Interrupt::new()).unwrap();
+    let installed = codex.install(&Interrupt::new()).unwrap().installed;
 
     let dir = format!("{}/node-{NODE}-adapter-2.0.0", f.root_of(Adapter::Codex));
     let script = format!("{dir}/adapter/node_modules/@agentclientprotocol/codex-acp/dist/index.js");
