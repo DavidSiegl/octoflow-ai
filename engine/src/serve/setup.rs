@@ -4,6 +4,7 @@
 //! again.
 
 use std::io;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::acp_adapter::Installs;
@@ -28,8 +29,9 @@ pub type CheckProject = dyn Fn(&str, &Interrupt) -> Vec<Check> + Send + Sync;
 pub struct Setup {
     /// How a project is checked.
     check: Box<CheckProject>,
-    /// The installs of each ACP adapter, in Adapter::ALL's order.
-    installs: Vec<Installs>,
+    /// The installs of each ACP adapter, in Adapter::ALL's order, each with its latest install of this Setup, which
+    /// a thread of its own makes.
+    adapters: Vec<Arc<AdapterInstalls>>,
     /// The marker's path (ConfigDir::setup_checked_path); its parent is created when the marker is written.
     marker: String,
 }
@@ -45,14 +47,13 @@ impl Setup {
 
     /// One that checks a project by check, installs the adapters of installs, and has its marker at path.
     pub fn new(check: Box<CheckProject>, installs: Vec<Installs>, marker: String) -> Setup {
-        Setup { check, installs, marker }
+        let adapters = installs.into_iter().map(|installs| Arc::new(AdapterInstalls { installs, latest: None.into() }));
+        Setup { check, adapters: adapters.collect(), marker }
     }
 
-    /// /setup's answer for the project: {"checks": [...], "passed", "adapters": [...]}, each check as {"name",
-    /// "level", "ok", "detail", "fix"}, its level as Level::as_str names it, and passed true when every Required one
-    /// is ok, which is when the dialog may write the marker. adapters are the ACP adapters the dialog offers to
-    /// install, each as {"agent", "installed", "megabytes"}: its harness's name (Adapter::harness), whether it is
-    /// installed for the current pins, and the disk an install takes (Adapter::megabytes). A check that fails is part
+    /// /setup's answer for the project: {"checks": [...], "passed", "adapters"}, each check as {"name", "level",
+    /// "ok", "detail", "fix"}, its level as Level::as_str names it, passed true when every Required one is ok, which
+    /// is when the dialog may write the marker, and adapters as Setup::adapters gives them. A check that fails is part
     /// of the answer, never an error.
     ///
     /// passed is not doctor's exit status (crate::cli::doctor::report_checks), which a failed NeededForPr check also
@@ -62,24 +63,62 @@ impl Setup {
         let checks = (self.check)(cwd, stopping);
         let passed = checks.iter().all(|c| c.ok || c.level != Level::Required);
         let checks = Value::Array(checks.iter().map(check_json).collect());
-        let adapters = self.installs.iter().map(|i| {
-            object([
-                ("agent", Value::from(i.adapter().harness())),
-                ("installed", Value::from(i.installed().is_some())),
-                ("megabytes", Value::from(i.adapter().megabytes())),
-            ])
-        });
-        object([("checks", checks), ("passed", Value::from(passed)), ("adapters", Value::Array(adapters.collect()))])
+        object([("checks", checks), ("passed", Value::from(passed)), ("adapters", self.adapters())])
     }
 
-    /// Install adapter for the current pins, unless it is installed, as Installs::install does; stopping is the
-    /// Interrupt the server raises when it stops, which stops it. Errors: Installs::install's, and this Setup has no
-    /// installs of adapter (Setup::new).
+    /// The ACP adapters the dialog offers to install, as a JSON array, each as {"agent", "installed", "megabytes",
+    /// "installing", "error", "warning"}: its harness's name (Adapter::harness), whether it is installed for the
+    /// current pins, the disk an install takes (Adapter::megabytes), whether an install this Setup started
+    /// (install_adapter) runs, the error the latest one failed with, and why the latest one that succeeded could not
+    /// remove the old installs; error and warning are null when there is none, and while an install runs. It checks
+    /// nothing else, so it answers at once.
+    pub fn adapters(&self) -> Value {
+        let adapters = self.adapters.iter().map(|a| {
+            let latest = a.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            let (installing, error, warning) = match latest {
+                None => (false, None, None),
+                Some(Latest::Running) => (true, None, None),
+                Some(Latest::Failed(why)) => (false, Some(why), None),
+                Some(Latest::Installed(leftover)) => (false, None, leftover),
+            };
+            object([
+                ("agent", Value::from(a.installs.adapter().harness())),
+                ("installed", Value::from(a.installs.installed().is_some())),
+                ("megabytes", Value::from(a.installs.adapter().megabytes())),
+                ("installing", Value::from(installing)),
+                ("error", Value::from(error)),
+                ("warning", Value::from(warning)),
+            ])
+        });
+        Value::Array(adapters.collect())
+    }
+
+    /// Start, in a thread of its own, an install of adapter for the current pins, unless it is installed, as
+    /// Installs::install does, removing the old installs; none starts while one this Setup started runs. Returns at
+    /// once; Setup::adapters tells how it goes. stopping is the Interrupt the server raises when it stops, which stops
+    /// the install. Errors: this Setup has no installs of adapter (Setup::new), or the thread cannot be started.
     pub fn install_adapter(&self, adapter: Adapter, stopping: &Interrupt) -> Result<(), String> {
-        match self.installs.iter().find(|i| i.adapter() == adapter) {
-            Some(installs) => installs.install(stopping).map(drop).map_err(|e| e.0),
-            None => Err(format!("this server installs no {} adapter", adapter.harness())),
+        let Some(target) = self.adapters.iter().find(|a| a.installs.adapter() == adapter) else {
+            return Err(format!("this server installs no {} adapter", adapter.harness()));
+        };
+        let mut latest = target.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(*latest, Some(Latest::Running)) {
+            return Ok(());
         }
+        let (target, stopping) = (target.clone(), stopping.clone());
+        let thread = std::thread::Builder::new().name(format!("install-{}", adapter.harness())).spawn(move || {
+            // A panic, as of a dependency, still ends the install, so that the next POST starts one again.
+            let install = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| target.installs.install(&stopping)));
+            let ended = match install {
+                Ok(Ok(install)) => Latest::Installed(install.leftover.map(|e| e.0)),
+                Ok(Err(e)) => Latest::Failed(e.0),
+                Err(_) => Latest::Failed(format!("the install of {}'s ACP adapter panicked", adapter.harness())),
+            };
+            *target.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ended);
+        });
+        thread.map_err(|e| format!("cannot start the install of {}'s ACP adapter: {e}", adapter.harness()))?;
+        *latest = Some(Latest::Running);
+        Ok(())
     }
 
     /// Whether the dialog need not open by itself: the marker is there and the adapter of DEFAULT_HARNESS, if it has
@@ -88,8 +127,8 @@ impl Setup {
     /// be told, as when the directory cannot be searched.
     pub fn checked(&self) -> Result<bool, String> {
         let marked = std::path::Path::new(&self.marker).try_exists().map_err(|e| self.failed("look for", &e))?;
-        let required = self.installs.iter().filter(|i| i.adapter().harness() == DEFAULT_HARNESS);
-        Ok(marked && required.into_iter().all(|i| i.installed().is_some()))
+        let required = self.adapters.iter().filter(|a| a.installs.adapter().harness() == DEFAULT_HARNESS);
+        Ok(marked && required.into_iter().all(|a| a.installs.installed().is_some()))
     }
 
     /// Write the marker, an empty file, creating its directory when missing; one already there stays. It does not
@@ -107,6 +146,25 @@ impl Setup {
     fn failed(&self, doing: &str, e: &io::Error) -> String {
         format!("cannot {doing} {}: {}", self.marker, os_error(e, None))
     }
+}
+
+/// One ACP adapter's installs, and the latest install of them a Setup started.
+struct AdapterInstalls {
+    /// The adapter's installs, which also say whose they are (Installs::adapter).
+    installs: Installs,
+    /// None until the Setup starts an install, then how the latest one goes.
+    latest: Mutex<Option<Latest>>,
+}
+
+/// How the latest install a Setup started of an adapter goes.
+#[derive(Clone)]
+enum Latest {
+    /// Its thread has not ended yet.
+    Running,
+    /// It failed, with this error (Installs::install's).
+    Failed(String),
+    /// It is installed; with why old installs could not all be removed (Install::leftover), if they could not.
+    Installed(Option<String>),
 }
 
 /// How long an ACP agent has to answer `initialize` in project_checks, and then to report its login when it declares

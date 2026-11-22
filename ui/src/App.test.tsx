@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AGENT_POLL_MS } from "./components/AgentPanes";
-import type { ForgottenRun } from "./api";
+import { INSTALL_POLL_MS } from "./components/SetupDialog";
+import type { AdapterInstall, ForgottenRun } from "./api";
 import { CONNECTION, FakeWindow, FakeEventSource, OPTIONS, RECORDED, stubServer, type FakeClose, type FakeForget, type FakeResume, type FakeSetup, type FakeStart } from "./test/fakes";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -496,16 +497,16 @@ describe("the setup dialog", () => {
     checks: [{ name: "claude", level: "required", ok: false, detail: "claude's ACP adapter is not installed", fix: "install it from the setup dialog" }],
     passed: false,
     adapters: [
-      { agent: "claude", installed: false, megabytes: 913 },
-      { agent: "codex", installed: true, megabytes: 649 },
+      { agent: "claude", installed: false, megabytes: 913, installing: false, error: null, warning: null },
+      { agent: "codex", installed: true, megabytes: 649, installing: false, error: null, warning: null },
     ],
   } as const;
   const CLAUDE_INSTALLED = {
     checks: [{ name: "claude", level: "required", ok: true, detail: "claude-agent-acp 0.101.0", fix: "" }],
     passed: true,
     adapters: [
-      { agent: "claude", installed: true, megabytes: 913 },
-      { agent: "codex", installed: true, megabytes: 649 },
+      { agent: "claude", installed: true, megabytes: 913, installing: false, error: null, warning: null },
+      { agent: "codex", installed: true, megabytes: 649, installing: false, error: null, warning: null },
     ],
   } as const;
   const CODEX_MISSING = {
@@ -515,8 +516,8 @@ describe("the setup dialog", () => {
     ],
     passed: true,
     adapters: [
-      { agent: "claude", installed: true, megabytes: 913 },
-      { agent: "codex", installed: false, megabytes: 649 },
+      { agent: "claude", installed: true, megabytes: 913, installing: false, error: null, warning: null },
+      { agent: "codex", installed: false, megabytes: 649, installing: false, error: null, warning: null },
     ],
   } as const;
   const INSTALL = "Install claude's ACP adapter (about 913 MB)";
@@ -650,62 +651,112 @@ describe("the setup dialog", () => {
     expect(within(dialog).queryByRole("button", { name: /Install/ })).not.toBeInTheDocument();
   });
 
+  /** A copy of report, which the dialog's fake server may then change, with claude's adapter as fields say. */
+  function withClaude(report: typeof CLAUDE_MISSING | typeof CLAUDE_INSTALLED, fields: Partial<AdapterInstall> = {}) {
+    const adapters = report.adapters.map((a) => (a.agent === "claude" ? { ...a, ...fields } : { ...a }));
+    return { ...report, checks: [...report.checks], adapters };
+  }
+  const POLLED = { timeout: 5 * INSTALL_POLL_MS + 1000 };
+
   it("installs codex's ACP adapter by its own button, offering none for claude's, which is installed", async () => {
     const setup: FakeSetup = { checked: false, report: { ...CODEX_MISSING, checks: [...CODEX_MISSING.checks], adapters: [...CODEX_MISSING.adapters] } };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     const button = await within(dialog).findByRole("button", { name: "Install codex's ACP adapter (about 649 MB)" });
     expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
-    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks], adapters: [...CLAUDE_INSTALLED.adapters] };
+    setup.report = withClaude(CLAUDE_INSTALLED);
     fireEvent.click(button);
-    await waitFor(() => expect(within(dialog).queryByRole("button", { name: /Install codex/ })).not.toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: /Install codex/ })).not.toBeInTheDocument(), POLLED);
     expect(setup.installed).toEqual(["codex"]);
   });
 
-  it("installs claude's ACP adapter, and checks again", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] } };
+  it("installs claude's ACP adapter, and checks again once its install ends", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING) };
     const fetch = await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     await within(dialog).findByText("fix: install it from the setup dialog");
-    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks], adapters: [...CLAUDE_INSTALLED.adapters] };
+    setup.report = withClaude(CLAUDE_INSTALLED);
     fireEvent.click(within(dialog).getByRole("button", { name: INSTALL }));
-    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false }, POLLED)).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("region", { name: "claude's ACP adapter" })).not.toBeInTheDocument();
     expect(setup.installed).toEqual(["claude"]);
     expect(setupCalls(fetch)).toHaveLength(2);
   });
 
-  it("shows that claude's ACP adapter is installing, with its button disabled", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] } };
-    await openWith(setup);
+  it("shows that claude's ACP adapter is installing, with its button disabled, until the install ends", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING), adapters: withClaude(CLAUDE_MISSING, { installing: true }).adapters };
+    const fetch = await openWith(setup);
+    const looks = () => fetch.mock.calls.filter(([url]) => new URL(url as string).pathname === "/setup/adapters").length;
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     const button = await within(dialog).findByRole("button", { name: INSTALL });
     fireEvent.click(button);
     const section = within(dialog).getByRole("region", { name: "claude's ACP adapter" });
     expect(within(section).getByText("Installing…")).toBeInTheDocument();
     expect(button).toBeDisabled();
-    await waitFor(() => expect(within(dialog).queryByText("Installing…")).not.toBeInTheDocument());
+    // Still running at the server's next answer.
+    await waitFor(() => expect(looks()).toBeGreaterThan(0), POLLED);
+    expect(within(section).getByText("Installing…")).toBeInTheDocument();
+    setup.report = withClaude(CLAUDE_INSTALLED);
+    setup.adapters = undefined;
+    await waitFor(() => expect(within(dialog).queryByText("Installing…")).not.toBeInTheDocument(), POLLED);
+    expect(setup.installed).toEqual(["claude"]);
+  });
+
+  it("shows an install that runs when the dialog opens, and checks again once it ends", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING, { installing: true }) };
+    const fetch = await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    const section = await within(dialog).findByRole("region", { name: "claude's ACP adapter" });
+    expect(within(section).getByText("Installing…")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: INSTALL })).toBeDisabled();
+    setup.report = withClaude(CLAUDE_INSTALLED);
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false }, POLLED)).toBeInTheDocument();
+    expect(within(dialog).queryByText("Installing…")).not.toBeInTheDocument();
+    expect(setup.installed).toBeUndefined();
+    expect(setupCalls(fetch)).toHaveLength(2);
   });
 
   it("shows why claude's ACP adapter could not be installed, and offers it again", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] }, installError: "node-v22.23.4-linux-x64.tar.gz: sha256 does not match SHASUMS256.txt" };
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING) };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
+    setup.adapters = withClaude(CLAUDE_MISSING, { error: "node-v22.23.4-linux-x64.tar.gz: sha256 does not match SHASUMS256.txt" }).adapters;
     fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
     const section = await within(dialog).findByRole("region", { name: "claude's ACP adapter" });
-    expect(await within(section).findByText(/sha256 does not match/)).toBeInTheDocument();
+    expect(await within(section).findByText(/sha256 does not match/, {}, POLLED)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: INSTALL }));
     await waitFor(() => expect(setup.installed).toEqual(["claude", "claude"]));
   });
 
-  it("stops showing a failed install once a round of checks finds claude's ACP adapter installed", async () => {
-    const setup: FakeSetup = { checked: false, report: { ...CLAUDE_MISSING, checks: [...CLAUDE_MISSING.checks], adapters: [...CLAUDE_MISSING.adapters] }, installError: "cannot download node: HTTP 503" };
+  it("shows why an install could not start", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING), startError: "cannot start the install of claude's ACP adapter: no threads" };
     await openWith(setup);
     const dialog = await screen.findByRole("dialog", { name: "setup" });
     fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
+    expect(await within(dialog).findByText(/no threads/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: INSTALL })).toBeEnabled();
+  });
+
+  it("shows the old install an install left beside claude's installed adapter", async () => {
+    const left = "cannot remove /data/claude-acp/node-22.1.0-adapter-0.9.0: Permission denied";
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING) };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    setup.report = withClaude(CLAUDE_INSTALLED, { warning: left });
+    fireEvent.click(await within(dialog).findByRole("button", { name: INSTALL }));
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false }, POLLED)).toBeInTheDocument();
+    const section = within(dialog).getByRole("region", { name: "claude's ACP adapter" });
+    expect(within(section).getByText(left, { exact: false })).toBeInTheDocument();
+  });
+
+  it("stops showing a failed install once a round of checks finds claude's ACP adapter installed", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING, { error: "cannot download node: HTTP 503" }) };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
     expect(await within(dialog).findByText("cannot download node: HTTP 503")).toBeInTheDocument();
-    setup.report = { ...CLAUDE_INSTALLED, checks: [...CLAUDE_INSTALLED.checks], adapters: [...CLAUDE_INSTALLED.adapters] };
+    // Installed by other means, as by another octoflow, the error it reports still.
+    setup.report = withClaude(CLAUDE_INSTALLED, { error: "cannot download node: HTTP 503" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
     expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false })).toBeInTheDocument();
     expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
@@ -716,6 +767,40 @@ describe("the setup dialog", () => {
     expect(within(dialog).queryByRole("button", { name: /Install claude/ })).not.toBeInTheDocument();
     await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false });
     expect(within(dialog).queryByText("cannot download node: HTTP 503")).not.toBeInTheDocument();
+  });
+
+  it("keeps following an install that a round's older answer does not know of", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING) };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    const button = await within(dialog).findByRole("button", { name: INSTALL });
+    let release = () => {};
+    setup.reportHeld = new Promise((resolve) => (release = resolve));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    // The round's report is taken before the install starts, and answers after the install's 202.
+    await waitFor(() => expect(within(dialog).getByText("Checking…")).toBeInTheDocument());
+    setup.adapters = withClaude(CLAUDE_MISSING, { installing: true }).adapters;
+    fireEvent.click(button);
+    await waitFor(() => expect(setup.installed).toEqual(["claude"]));
+    await within(within(dialog).getByRole("region", { name: "claude's ACP adapter" })).findByText("Installing…");
+    setup.reportHeld = undefined;
+    release();
+    await within(dialog).findByText("fix: install it from the setup dialog");
+    expect(within(dialog).getByText("Installing…")).toBeInTheDocument();
+    // Still followed: its end runs the checks again.
+    setup.report = withClaude(CLAUDE_INSTALLED);
+    setup.adapters = undefined;
+    expect(await within(dialog).findByText("claude-agent-acp 0.101.0", { exact: false }, POLLED)).toBeInTheDocument();
+    expect(within(dialog).queryByText("Installing…")).not.toBeInTheDocument();
+  });
+
+  it("stops following an install the server cannot tell of, saying why", async () => {
+    const setup: FakeSetup = { checked: false, report: withClaude(CLAUDE_MISSING, { installing: true }), adaptersError: "HTTP 500" };
+    await openWith(setup);
+    const dialog = await screen.findByRole("dialog", { name: "setup" });
+    expect(await within(dialog).findByText("cannot tell how the install goes: HTTP 500", {}, { timeout: 10 * INSTALL_POLL_MS + 2000 })).toBeInTheDocument();
+    expect(within(dialog).queryByText("Installing…")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: INSTALL })).toBeEnabled();
   });
 
   it("checks again", async () => {

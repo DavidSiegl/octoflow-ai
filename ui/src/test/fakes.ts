@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { AppWindow } from "../components/CloseGuard";
 import type {
+  AdapterInstall,
   CloseChoice,
   ClosedRun,
   ForgottenRun,
@@ -104,10 +105,15 @@ export interface FakeSetup {
   gateError?: string;
   /** The query's cwd of each POST /setup/gate, in order. */
   gateCwds?: (string | null)[];
-  /** What POST /setup/adapter answers: {"installed": true}, or a 502 with installError when given. */
-  installError?: string;
+  /** What POST /setup/adapter answers: 202 {"installing": true}, or a 500 with startError when given. */
+  startError?: string;
   /** The query's agent of each POST /setup/adapter, in order. */
   installed?: (string | null)[];
+  /** What /setup/adapters answers, the adapters of report unless given, or a 500 with adaptersError when given. */
+  adapters?: AdapterInstall[];
+  adaptersError?: string;
+  /** When given, /setup takes the report as it is when asked but answers only once this settles. */
+  reportHeld?: Promise<void>;
 }
 
 /** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load.
@@ -320,7 +326,9 @@ export function stubServer(
       if (setup.reportText !== undefined) {
         return new Response(setup.reportText, { status: 200 });
       }
-      return answer(200, setup.report ?? { checks: [], passed: true, adapters: [] });
+      const report = setup.report ?? { checks: [], passed: true, adapters: [] };
+      await setup.reportHeld;
+      return answer(200, report);
     }
     if (pathname === "/setup/gate" && init?.method === "POST") {
       setup.gateCwds = [...(setup.gateCwds ?? []), searchParams.get("cwd")];
@@ -328,7 +336,13 @@ export function stubServer(
     }
     if (pathname === "/setup/adapter" && init?.method === "POST") {
       setup.installed = [...(setup.installed ?? []), searchParams.get("agent")];
-      return setup.installError === undefined ? answer(200, { installed: true }) : answer(502, { error: setup.installError });
+      return setup.startError === undefined ? answer(202, { installing: true }) : answer(500, { error: setup.startError });
+    }
+    if (pathname === "/setup/adapters") {
+      if (setup.adaptersError !== undefined) {
+        return answer(500, { error: setup.adaptersError });
+      }
+      return answer(200, { adapters: setup.adapters ?? setup.report?.adapters ?? [] });
     }
     if (pathname === "/setup/checked" && init?.method === "POST") {
       if (setup.markError !== undefined) {

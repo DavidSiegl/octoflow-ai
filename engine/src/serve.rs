@@ -180,9 +180,11 @@ pub fn project_host(cwd: &str, stopping: &Interrupt) -> Result<Reached, Orchestr
 ///   cannot be told.
 /// - POST /setup/checked: records that it has (Setup::mark), whatever the checks say, and answers {"checked": true};
 ///   500 when the marker cannot be written.
-/// - POST /setup/adapter?agent=NAME: installs the ACP adapter of harness NAME (Setup::install_adapter), which takes
-///   minutes, and answers {"installed": true}; 400 for a NAME that has no adapter (crate::harness::Adapter), 502 for
-///   an install that fails.
+/// - /setup/adapters: {"adapters"}, the ACP adapters as /setup gives them (Setup::adapters), with no check run, for
+///   the dialog to follow an install by.
+/// - POST /setup/adapter?agent=NAME: starts an install of the ACP adapter of harness NAME (Setup::install_adapter),
+///   which takes minutes, unless one runs, and answers 202 {"installing": true} at once; /setup/adapters tells how
+///   it goes. 400 for a NAME that has no adapter (crate::harness::Adapter), 500 for an install that cannot start.
 /// - POST /setup/gate?cwd=DIR: sets the project up for `--quality-gate local` (ProjectRuns::set_up_gate) and answers
 ///   {"files": [{"path", "written"}, ...]}, written false for a file it kept; 400 for a cwd missing, 502 for a project
 ///   that cannot be reached or a setup that fails, as for a cwd in no git checkout.
@@ -507,10 +509,11 @@ const CLOSE_CHOICE: &str = "/close-choice";
 const WORKFLOW_CHECK: &str = "/workflow/check";
 const WORKFLOW_SAVE: &str = "/workflow/save";
 const WORKFLOW_DELETE: &str = "/workflow/delete";
-/// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks, the
-/// workflows a run can be started with, and one workflow to edit; and /setup/checked and /close-choice, which are
-/// POSTs too.
+/// The GET endpoints outside Endpoint, which reach no project (unreached_answer): the setup dialog's checks and its
+/// adapters' installs, the workflows a run can be started with, and one workflow to edit; and /setup/checked and
+/// /close-choice, which are POSTs too.
 const SETUP: &str = "/setup";
+const SETUP_ADAPTERS: &str = "/setup/adapters";
 const WORKFLOWS: &str = "/workflows";
 const WORKFLOW: &str = "/workflow";
 
@@ -628,10 +631,10 @@ fn get(shared: &Shared, request: Request, path: &str, query: &HashMap<String, St
     send_json(request, code, &body);
 }
 
-/// The answer to a GET of /setup, /setup/checked, /workflows, /workflow or /close-choice at path with the query's
-/// parameters, as RunServer's doc comment gives them; None for any other path. Unlike Endpoint's they reach no
-/// project: the setup checks check what one needs, and the workflows and the close choice are this machine's, where a
-/// run serve starts runs.
+/// The answer to a GET of /setup, /setup/adapters, /setup/checked, /workflows, /workflow or /close-choice at path
+/// with the query's parameters, as RunServer's doc comment gives them; None for any other path. Unlike Endpoint's
+/// they reach no project: the setup checks check what one needs, and the adapters, the workflows and the close choice
+/// are this machine's, where a run serve starts runs.
 fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>) -> Option<Answer> {
     Some(match path {
         SETUP => match query.get("cwd").map(String::as_str) {
@@ -639,6 +642,7 @@ fn unreached_answer(shared: &Shared, path: &str, query: &HashMap<String, String>
             Some("") => (400, error("parameter cwd is empty")),
             Some(cwd) => (200, shared.setup.checks(cwd, &shared.stopping)),
         },
+        SETUP_ADAPTERS => (200, object([("adapters", shared.setup.adapters())])),
         SETUP_CHECKED => match shared.setup.checked() {
             Ok(checked) => (200, object([("checked", Value::from(checked))])),
             Err(why) => (500, error(&why)),
@@ -807,8 +811,8 @@ fn post_checked(shared: &Shared, request: Request, query: &HashMap<String, Strin
     send_json(request, code, &body);
 }
 
-/// Answer a POST of /setup/adapter with the query's parameters, as target gives them, by installing the adapter its
-/// agent names.
+/// Answer a POST of /setup/adapter with the query's parameters, as target gives them, by starting an install of the
+/// adapter its agent names.
 fn post_setup_adapter(shared: &Shared, request: Request, query: &HashMap<String, String>) {
     if let Some((code, body)) = refusal(shared, &request, query) {
         return send_json(request, code, &body);
@@ -817,8 +821,8 @@ fn post_setup_adapter(shared: &Shared, request: Request, query: &HashMap<String,
     let (code, body) = match Adapter::named(agent) {
         None => (400, error(&format!("agent {agent:?} has no ACP adapter the app installs"))),
         Some(adapter) => match shared.setup.install_adapter(adapter, &shared.stopping) {
-            Ok(()) => (200, object([("installed", Value::from(true))])),
-            Err(why) => (502, error(&why)),
+            Ok(()) => (202, object([("installing", Value::from(true))])),
+            Err(why) => (500, error(&why)),
         },
     };
     send_json(request, code, &body);

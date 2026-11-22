@@ -197,11 +197,16 @@ export interface SetupCheck {
 }
 
 /** An ACP adapter installAdapter() installs: the agent it is for, as a harness name (claude, codex), whether it is
- * installed for the pins this octoflow carries, and the disk an install takes, in megabytes. */
+ * installed for the pins this octoflow carries, the disk an install takes, in megabytes, and how the latest install
+ * the server started goes: whether it runs, the error it failed with, and why it could not remove the old installs
+ * though it installed the adapter; error and warning are null when there is none, and while an install runs. */
 export interface AdapterInstall {
   agent: string;
   installed: boolean;
   megabytes: number;
+  installing: boolean;
+  error: string | null;
+  warning: string | null;
 }
 
 /** A project's setup checks, in the order the server made them; passed is true when every `required` one is ok.
@@ -482,13 +487,24 @@ export class Api {
     return body.files as GateFile[];
   }
 
-  /** Install, on this computer, the Node and the ACP adapter that agent's runs over ACP start, agent being an
-   * AdapterInstall's, at the versions this octoflow pins, unless they are installed. It downloads them, so it takes
-   * minutes. Rejects with the server's error message: status 400 for an agent without an adapter, 502 for an install
-   * that fails. */
+  /** Start installing, on this computer, the Node and the ACP adapter that agent's runs over ACP start, agent being
+   * an AdapterInstall's, at the versions this octoflow pins, unless they are installed or an install of them runs.
+   * It resolves once the install has started; it downloads them, so it takes minutes, which setupAdapters() follows.
+   * Rejects with the server's error message: status 400 for an agent without an adapter, 500 for an install that
+   * cannot start. */
   async installAdapter(agent: string): Promise<void> {
     const query = new URLSearchParams({ agent });
     await this.json(`${this.connection.url}/setup/adapter?${query}`, { method: "POST" });
+  }
+
+  /** The ACP adapters as setupChecks() gives them, at once, with no check run: what follows an install. Rejects as
+   * json does. */
+  async setupAdapters(): Promise<AdapterInstall[]> {
+    const body = (await this.json(`${this.connection.url}/setup/adapters`)) as { adapters?: unknown };
+    if (!Array.isArray(body.adapters)) {
+      throw new HttpError(200, "the answer has no adapters");
+    }
+    return body.adapters as AdapterInstall[];
   }
 
   /** What a run can be started with, from the configuration of this computer, where the server starts its runs, so
