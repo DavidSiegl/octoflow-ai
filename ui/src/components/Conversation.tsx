@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { AcpPermissionOption, AcpToolCall, AgentEvent, Api, Project } from "../api";
+import { useFollowEnd } from "../hooks";
 import { AGENT_POLL_MS } from "./AgentPanes";
 
 /** What the conversation shows for the events of a session, in the order they came: chunks of one kind that follow
@@ -35,11 +36,7 @@ interface Props {
 export function Conversation({ api, project, run, role }: Props) {
   const { events, answerable, problem, refresh } = useConversation(api, project, run, role);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    // Follow the end of the conversation, as a terminal does.
-    end.current?.scrollIntoView?.({ block: "end" });
-  }, [events]);
+  const list = useFollowEnd<HTMLOListElement>(events);
 
   const answers = new Map<number, { option: string; by: string }>();
   for (const e of events) {
@@ -68,7 +65,7 @@ export function Conversation({ api, project, run, role }: Props) {
       {!answerable && events.length > 0 && (
         <p className="note">The run is not running, so its agents cannot be answered here.</p>
       )}
-      <ol aria-label={`what the ${role} agent did`}>
+      <ol ref={list} aria-label={`what the ${role} agent did`}>
         {items(events).map((item) => (
           <li key={item.key} className={`item ${item.kind}`}>
             <ItemView
@@ -82,7 +79,6 @@ export function Conversation({ api, project, run, role }: Props) {
           </li>
         ))}
       </ol>
-      <div ref={end} />
       {waiting && answerable && (
         <MessageBox
           role={role}

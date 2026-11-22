@@ -60,6 +60,8 @@ function show(api: Api) {
 
 afterEach(() => {
   vi.useRealTimers();
+  // jsdom has no scrollIntoView; a test that watches for one puts it there.
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
 
 describe("the conversation of an agent over ACP", () => {
@@ -160,5 +162,37 @@ describe("the conversation of an agent over ACP", () => {
     expect(within(list).queryByText("Which limit?")).not.toBeInTheDocument();
     expect(within(list).getByText("Resumed its session in agy")).toBeInTheDocument();
     expect(within(list).getByText("The agent failed: not logged in")).toBeInTheDocument();
+  });
+
+  it("follows its end while the reader is there, stays where they scrolled up to, and leaves the page where it is", async () => {
+    vi.useFakeTimers();
+    const intoView = vi.fn();
+    Element.prototype.scrollIntoView = intoView;
+    const all = session(null);
+    const { api } = fakeApi([4, 7, 9, 10].map((n) => ({ session_start: 1, events: all.slice(0, n), answerable: true })));
+    const list = show(api);
+    // jsdom lays nothing out: each item is 100px high, in a list 200px high.
+    Object.defineProperty(list, "scrollHeight", { get: () => 100 * list.children.length });
+    Object.defineProperty(list, "clientHeight", { value: 200 });
+    const readAgain = () =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await readAgain();
+    expect(list.scrollTop).toBe(list.scrollHeight);
+
+    list.scrollTop = 0;
+    fireEvent.scroll(list);
+    await readAgain();
+    expect(list.scrollTop).toBe(0);
+
+    list.scrollTop = list.scrollHeight - list.clientHeight;
+    fireEvent.scroll(list);
+    await readAgain();
+    expect(list.scrollTop).toBe(list.scrollHeight);
+    expect(intoView).not.toHaveBeenCalled();
   });
 });

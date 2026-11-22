@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { EVENT_KINDS, type Api, type Project, type RunEvent } from "./api";
 import { applyEvent, NO_RUNS, type RunsState } from "./runs";
 
@@ -42,4 +42,37 @@ export function useNow(intervalMs = 1000): number {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
+}
+
+/** How far from its end, in pixels, a scrolled element still counts as at its end: the slack for the fractional
+ * scroll positions that zoom and high-density screens leave. */
+const AT_END_SLACK_PX = 16;
+
+/** A ref for a scrollable element that follows its end, as a terminal does, while the reader is there: each time
+ * content changes, the element is scrolled to its end if it was at its end before, and left where it is if the reader
+ * had scrolled away from it. Only the element scrolls, never the page around it. The element starts at its end, and
+ * must stay the same one while the component is mounted. */
+export function useFollowEnd<T extends HTMLElement>(content: unknown): RefObject<T | null> {
+  const ref = useRef<T>(null);
+  // True means the reader's last scroll, if any, left the element at its end; the scroll that following makes keeps it.
+  const atEnd = useRef(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+    const onScroll = () => {
+      atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_SLACK_PX;
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  // Before paint, so the new content never shows at the old position first.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && atEnd.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [content]);
+  return ref;
 }
