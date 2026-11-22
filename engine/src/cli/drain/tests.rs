@@ -258,8 +258,9 @@ impl Drain {
                 err.push_str(&format!("error: {e}\n"));
                 EXIT_ERROR
             }
-            Err(Stop::Interrupted(run_id)) => {
-                err.push_str(&format!("{}\n", interrupted_note(run_id.as_deref(), command.target())));
+            Err(Stop::Interrupted(run)) => {
+                let run = run.as_ref().map(|(id, backend)| (id.as_str(), *backend));
+                err.push_str(&format!("{}\n", interrupted_note(run, command.target())));
                 EXIT_INTERRUPTED
             }
         };

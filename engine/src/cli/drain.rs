@@ -187,8 +187,8 @@ fn drain_one(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut Queued) 
     let given = spec.file.clone();
     let (state, pipeline) =
         new_state(&args.run, cwd, Some(&given), world).map_err(|e| super::stop(e, interrupt, None))?;
-    let run_id = state.run_id.clone();
-    let stopped = |e: OrchestratorError| super::stop(e, interrupt, Some(&run_id));
+    let (run_id, backend) = (state.run_id.clone(), state.backend);
+    let stopped = |e: OrchestratorError| super::stop(e, interrupt, Some((&run_id, backend)));
     if !spec.update(&vec![(RUN_KEY, run_id.clone())], true, human).map_err(stopped)? {
         return Ok(None);
     }
@@ -200,9 +200,9 @@ fn drain_one(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut Queued) 
             Ok(Some(EXIT_ERROR))
         }
         Err(Stopped::Failed(_)) | Err(Stopped::Interrupted) if interrupt.is_raised() => {
-            Err(Stop::Interrupted(Some(run_id)))
+            Err(Stop::Interrupted(Some((run_id, backend))))
         }
-        Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some(run_id))),
+        Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some((run_id, backend)))),
         Err(Stopped::Failed(e)) => {
             // Printed first, so the run's error and its resume command survive a header write that fails too.
             world.say_err(&format!("error: {e}"));
