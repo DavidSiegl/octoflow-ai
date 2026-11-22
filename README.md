@@ -208,7 +208,8 @@ window:
   that makes instead.
 - **`.deb`:** it installs the app as `/usr/bin/octoflow`, with its [Tab completion](#tab-completion) for bash, zsh
   and fish, which works in each new shell with nothing to add to your startup files; bash's needs the
-  `bash-completion` package, which minimal and container images leave out.
+  `bash-completion` package, which minimal and container images leave out and the `.deb` recommends, so `apt`
+  installs it unless told not to (`--no-install-recommends`).
 - **macOS:** link the app's executable onto your `PATH`:
 
   ```bash
