@@ -824,9 +824,10 @@ impl<'a> Workflow<'a> {
     /// deleted, so the run's pr_url does not tell). An in-place run that fails leaves the checkout on its branch for
     /// resume, and close leaves it there too (cli::close's WorktreeFate), while that branch reaches origin only when
     /// the run publishes; taken as a base, it could not be fetched, or would get a pull request against another run's
-    /// work. A closed run's branch that origin has is a published one, and can be built on. The error says to check
-    /// out that run's base, after the run ends when it is running; for a run not closed, also to close it once done.
-    /// Errors also when origin cannot be asked.
+    /// work. A closed run's branch that origin has was published, and is taken (TODO.md, "A run's base can be a
+    /// closed run's branch prune deletes"). The error says to check out that run's base, after the run ends when it
+    /// is running; for a run not closed, also to close it once done. Errors also when origin cannot be asked, naming
+    /// the closed run whose branch it was asked about.
     fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
         let s = &self.state;
         if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
@@ -843,7 +844,13 @@ impl<'a> Workflow<'a> {
                 _ => "the branch it started from".to_string(),
             };
             let advice = if other.is_closed() {
-                if self.reaching_origin(|| self.host.remote_branch_commit(&s.cwd, &branch))?.is_some() {
+                let on_origin =
+                    self.reaching_origin(|| self.host.remote_branch_commit(&s.cwd, &branch)).map_err(|e| {
+                        OrchestratorError(format!(
+                            "could not ask origin whether it has {branch}, closed run {id}'s branch: {e}"
+                        ))
+                    })?;
+                if on_origin.is_some() {
                     continue;
                 }
                 format!("which origin does not have; check out {base}")

@@ -72,7 +72,7 @@ first step. Before anything else, `check_start` checks that the run can finish: 
 in the checkout while another one there is live (a worktree run neither refuses nor counts); in round 0 (before
 its first editing step), a worktree run's `open_worktree` checks for a branch and an `origin`, fetches the base
 branch and adds the worktree at `origin`'s (or finds it from before), a run that pushes or is gated checks that
-gitleaks runs, `check_gate` checks the working tree and `local_gate::preflight`, and for an in-place run `check_repo` fast-forwards the base branch; `open_worktree` and `check_repo` record the checked-out branch as the base by `take_base_branch`, which refuses the branch of another run that is not closed (an in-place `--no-pr` run records no base, and is not checked); in a later round,
+gitleaks runs, `check_gate` checks the working tree and `local_gate::preflight`, and for an in-place run `check_repo` fast-forwards the base branch; `open_worktree` and `check_repo` record the checked-out branch as the base by `take_base_branch`, which refuses the branch of another run that is not closed, or of a closed one that `origin` lacks by `git ls-remote` (an in-place `--no-pr` run records no base, and is not checked); in a later round,
 a worktree run's `check_worktree` refuses a run whose worktree is gone unless `pr_url` is set. Each fetch of the run, and its merge of `origin`'s base branch, goes through `reaching_origin` (`workflow/origin.rs`), which waits out a short
 outage of `origin`; each read of `origin` runs under `ORIGIN_READ` (`host.rs`), whose git and ssh limits end a
 stalled try in an error `reaching_origin` tries again on, as it does the host's kill of a try at `NETWORK_TIMEOUT`.

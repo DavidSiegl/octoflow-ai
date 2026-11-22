@@ -69,12 +69,30 @@ fn a_run_on_a_closed_runs_branch_origin_lacks_is_refused_before_fetching() {
 
 #[test]
 fn a_run_on_a_closed_runs_branch_origin_has_starts() {
+    for worktree in [false, true] {
+        let host = on_failed_runs_branch(true);
+        host.state().remote.insert(OTHER_BRANCH.into(), "c1".into());
+        let f = if worktree { worktree_run(host, None) } else { Fixture::on(host, new_state(), approved()) };
+        let mut wf = f.workflow(RunSettings::default());
+        assert_eq!(wf.run(), verdict(APPROVE), "worktree: {worktree}");
+        assert_eq!(wf.state().base_branch.as_deref(), Some(OTHER_BRANCH), "worktree: {worktree}");
+    }
+}
+
+#[test]
+fn a_run_on_a_closed_runs_branch_origin_cannot_be_asked_about_stops_before_fetching() {
     let host = on_failed_runs_branch(true);
-    host.state().remote.insert(OTHER_BRANCH.into(), "c1".into());
+    host.state().list_remote_error = Some("fatal: repository 'https://github.com/o/r/' not found".into());
     let f = Fixture::on(host, new_state(), approved());
-    let mut wf = f.workflow(RunSettings::default());
-    assert_eq!(wf.run(), verdict(APPROVE));
-    assert_eq!(wf.state().base_branch.as_deref(), Some(OTHER_BRANCH));
+    let message = failure(f.workflow(RunSettings::default()).run());
+    assert!(
+        message.starts_with(&format!(
+            "could not ask origin whether it has {OTHER_BRANCH}, closed run {OTHER_ID}'s branch: "
+        )) && message.contains("repository 'https://github.com/o/r/' not found"),
+        "{message}"
+    );
+    assert!(!f.host.state().git_calls.iter().any(|c| c[0] == "fetch"));
+    assert!(f.herdr.state().calls.is_empty());
 }
 
 #[test]

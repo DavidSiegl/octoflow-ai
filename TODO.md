@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **A run's base can be a closed run's branch prune deletes.** Review 278 (todo 92): `take_base_branch` takes a
+  closed run's branch that `origin` has as a new run's base, and the new run's pull request targets it, but
+  `prune_remote` (`engine/src/cli/prune.rs`) deletes `origin`'s branch of a merged pull request, or of one closed past
+  `CLOSED_BRANCH_GRACE`, without asking whether another run records it as its `base_branch`; GitHub then closes the
+  new run's pull request. Closed when prune keeps a branch another live run builds on, or the refusal covers it.
+
 - **The workflow's errors name commands as a literal `octoflow`, without the project's `--machine`/`--cwd`.**
   Review 267: `take_base_branch`'s "close that run with `octoflow close <key>`" ignores `cli::program_name()`, and
   for a project given by `--machine` or `--cwd` the command finds no such run where it is typed;
