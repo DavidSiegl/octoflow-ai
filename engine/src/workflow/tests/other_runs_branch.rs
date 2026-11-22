@@ -1,5 +1,5 @@
 //! A run started in a checkout left on another run's branch, as a failed in-place run leaves it, refuses to take
-//! that branch as its base until that run is closed.
+//! that branch as its base while that run is not closed, and once it is closed while origin does not have the branch.
 
 use super::one_run::{host_with_other_run, OTHER_ID};
 use super::worktree::worktree_run;
@@ -48,8 +48,30 @@ fn a_run_on_a_failed_runs_branch_is_refused_before_fetching() {
 }
 
 #[test]
-fn a_run_on_a_closed_runs_branch_starts() {
-    let f = Fixture::on(on_failed_runs_branch(true), new_state(), approved());
+fn a_run_on_a_closed_runs_branch_origin_lacks_is_refused_before_fetching() {
+    for worktree in [false, true] {
+        let host = on_failed_runs_branch(true);
+        host.state().fetch_error = Some(format!("fatal: couldn't find remote ref {OTHER_BRANCH}"));
+        let f = if worktree { worktree_run(host, None) } else { Fixture::on(host, new_state(), approved()) };
+        let message = failure(f.workflow(RunSettings::default()).run());
+        assert_eq!(
+            message,
+            format!(
+                "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which origin does not have; check out its \
+                 base branch, main"
+            ),
+            "worktree: {worktree}"
+        );
+        assert!(!f.host.state().git_calls.iter().any(|c| c[0] == "fetch"), "worktree: {worktree}");
+        assert!(f.herdr.state().calls.is_empty(), "worktree: {worktree}");
+    }
+}
+
+#[test]
+fn a_run_on_a_closed_runs_branch_origin_has_starts() {
+    let host = on_failed_runs_branch(true);
+    host.state().remote.insert(OTHER_BRANCH.into(), "c1".into());
+    let f = Fixture::on(host, new_state(), approved());
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(wf.state().base_branch.as_deref(), Some(OTHER_BRANCH));

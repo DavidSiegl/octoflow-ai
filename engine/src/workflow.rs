@@ -819,11 +819,14 @@ impl<'a> Workflow<'a> {
     /// Record branch, the one checked out in the project, as the run's base branch, unless the run has one: a run
     /// resumed after it switched to its own branch still targets the first one.
     ///
-    /// Errors, before recording: branch is the branch of another run of the project that is not closed. An in-place
-    /// run that fails leaves the checkout on its branch for resume, and that branch reaches origin only when the run
-    /// publishes; taken as a base, it could not be fetched, or would get a pull request against another run's work.
-    /// The error says to check out that run's base, after the run ends when it is running: close leaves an in-place
-    /// run's checkout where it is (cli::close's WorktreeFate), so closing alone would not help.
+    /// Errors, before recording: branch is the branch of another run of the project that is not closed, or of a
+    /// closed one whose branch origin does not have (asked of origin: a merged pull request's branch is often
+    /// deleted, so the run's pr_url does not tell). An in-place run that fails leaves the checkout on its branch for
+    /// resume, and close leaves it there too (cli::close's WorktreeFate), while that branch reaches origin only when
+    /// the run publishes; taken as a base, it could not be fetched, or would get a pull request against another run's
+    /// work. A closed run's branch that origin has is a published one, and can be built on. The error says to check
+    /// out that run's base, after the run ends when it is running; for a run not closed, also to close it once done.
+    /// Errors also when origin cannot be asked.
     fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
         let s = &self.state;
         if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
@@ -831,7 +834,7 @@ impl<'a> Workflow<'a> {
         }
         for run in self.other_runs()? {
             let other = run.shown();
-            if other.branch.as_deref() != Some(branch.as_str()) || other.is_closed() {
+            if other.branch.as_deref() != Some(branch.as_str()) {
                 continue;
             }
             let id = &other.run_id;
@@ -839,13 +842,22 @@ impl<'a> Workflow<'a> {
                 Some(b) if !b.is_empty() => format!("its base branch, {b}"),
                 _ => "the branch it started from".to_string(),
             };
-            let key = run_key(id);
-            let advice = match self.health_of(&run) {
-                Some((RUNNING, why)) => format!("which is running ({why}); wait for it to end, then check out {base}"),
-                _ => format!(
-                    "which is not closed; check out {base}, and close that run with `octoflow close {key}` once \
-                     you are done with it"
-                ),
+            let advice = if other.is_closed() {
+                if self.reaching_origin(|| self.host.remote_branch_commit(&s.cwd, &branch))?.is_some() {
+                    continue;
+                }
+                format!("which origin does not have; check out {base}")
+            } else {
+                match self.health_of(&run) {
+                    Some((RUNNING, why)) => {
+                        format!("which is running ({why}); wait for it to end, then check out {base}")
+                    }
+                    _ => format!(
+                        "which is not closed; check out {base}, and close that run with `octoflow close {}` once \
+                         you are done with it",
+                        run_key(id)
+                    ),
+                }
             };
             return Err(OrchestratorError(format!("{} is on {branch}, the branch of run {id}, {advice}", s.cwd)));
         }
