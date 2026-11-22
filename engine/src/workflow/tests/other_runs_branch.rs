@@ -51,6 +51,24 @@ fn a_run_on_a_failed_runs_branch_is_refused_before_fetching() {
 }
 
 #[test]
+fn a_run_on_a_desktop_app_runs_branch_is_told_to_close_it_from_the_app() {
+    let host = on_failed_runs_branch(false);
+    let path = format!("{}/state.json", super::one_run::other_dir());
+    let mut saved: Value = serde_json::from_str(&host.state().files[&path]).unwrap();
+    saved["backend"] = Value::from("acp");
+    saved["format"] = Value::from(crate::state::ACP_STATE_FORMAT);
+    host.state().files.insert(path, saved.to_string());
+    let f = Fixture::on(host, new_state(), approved());
+    assert_eq!(
+        failure(f.workflow(RunSettings::default()).run()),
+        format!(
+            "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is not closed; check out its base \
+             branch, main, and close that run from the desktop app once you are done with it"
+        )
+    );
+}
+
+#[test]
 fn a_run_on_a_closed_runs_branch_origin_lacks_is_refused_before_fetching() {
     for worktree in [false, true] {
         let host = on_failed_runs_branch(true);

@@ -375,8 +375,8 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
         return Err(Stop::Interrupted(Some(state.run_id)));
     }
     let run_id = state.run_id.clone();
-    let commands = run_commands(&command.target().map(Target::flags).unwrap_or_default());
-    match (world.workflow)(world, state, pipeline, spec, &commands) {
+    let hints = hint_commands(&command.target().map(Target::flags).unwrap_or_default());
+    match (world.workflow)(world, state, pipeline, spec, &hints) {
         Ok(ran) => Ok(Ended::Ran(Box::new(ran))),
         Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some(run_id))),
         Err(Stopped::Failed(e) | Stopped::TakenOver(e)) => Err(stop(e, interrupt, Some(&run_id))),
@@ -570,13 +570,13 @@ pub fn program_name() -> &'static str {
 
 /// How a hint words a command about a run of the project target names, target being its --machine and --cwd flags
 /// (Target::flags): as the program was invoked (program_name), with those flags.
-pub fn run_commands(target: &[String]) -> RunCommands {
+pub fn hint_commands(target: &[String]) -> RunCommands {
     RunCommands::new(program_name(), target)
 }
 
 /// The command that resumes the run run_id names, by its key, with target's --machine and --cwd flags.
 pub fn resume_command(run_id: &str, target: &[String]) -> String {
-    run_commands(target).on_run("resume", run_id)
+    hint_commands(target).on_run("resume", run_id)
 }
 
 /// What to tell the human whose Ctrl-C, or a SIGTERM or SIGHUP, stopped the orchestrator, with the command that resumes the run of run_id,

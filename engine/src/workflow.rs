@@ -92,7 +92,7 @@ pub struct Collaborators<'a> {
     pub indexes: &'a PackageIndexes,
 }
 
-/// How a run is to go: each setting but spec saved in the state, so that a resume starts from them.
+/// How a run is to go: each setting but spec and commands saved in the state, so that a resume starts from them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSettings {
     /// How many rounds the verdict steps' loops take at most, together: a verdict other than APPROVE in a round
@@ -833,8 +833,9 @@ impl<'a> Workflow<'a> {
     /// the run publishes; taken as a base, it could not be fetched, or would get a pull request against another run's
     /// work. A closed run's branch that origin has was published, and is taken (TODO.md, "A run's base can be a
     /// closed run's branch prune deletes"). The error says to check out that run's base, after the run ends when it
-    /// is running; for a run not closed, also to close it once done. Errors also when origin cannot be asked, naming
-    /// the closed run whose branch it was asked about.
+    /// is running; for a run not closed, also to close it once done: by the command RunSettings::commands words, or
+    /// from the desktop app for one of its runs. Errors also when origin cannot be asked, naming the closed run whose
+    /// branch it was asked about.
     fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
         let s = &self.state;
         if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
@@ -866,6 +867,11 @@ impl<'a> Workflow<'a> {
                     Some((RUNNING, why)) => {
                         format!("which is running ({why}); wait for it to end, then check out {base}")
                     }
+                    // The CLI refuses to close the desktop app's runs (cli::refuse_app_run).
+                    _ if other.backend == Backend::Acp => format!(
+                        "which is not closed; check out {base}, and close that run from the desktop app once you are \
+                         done with it"
+                    ),
                     _ => format!(
                         "which is not closed; check out {base}, and close that run with `{}` once you are done with it",
                         self.commands.on_run("close", id)

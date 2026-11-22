@@ -111,11 +111,13 @@ struct Drain {
     dir: TempDir,
     /// Each run's state as its Workflow::run got it, and the spec it was given.
     runs: RefCell<Vec<(RunState, Option<SpecFile>)>>,
+    /// How each run's hints word a command, as it was given (RunSettings::commands).
+    hints: RefCell<Vec<RunCommands>>,
 }
 
 impl Drain {
     fn new() -> Drain {
-        Drain { cli: Cli::new(), dir: TempDir::new(), runs: RefCell::new(vec![]) }
+        Drain { cli: Cli::new(), dir: TempDir::new(), runs: RefCell::new(vec![]), hints: RefCell::new(vec![]) }
     }
 
     fn dir(&self) -> String {
@@ -213,13 +215,15 @@ impl Drain {
     /// drain, the command line being argv.
     fn drain_argv(&self, outcomes: Vec<Outcome>, argv: &[&str]) -> Drained {
         let script = RefCell::new(VecDeque::from(outcomes));
-        let workflow = |_: &Connected, state: RunState, pipeline: Pipeline, spec: Option<SpecFile>, _: &RunCommands| {
-            self.runs.borrow_mut().push((state.clone(), spec));
-            let outcome = script.borrow_mut().pop_front().expect("a run scripted for each run drain starts");
-            let mut state = state;
-            let verdict = outcome(&mut state)?;
-            Ok(Ran { verdict, state, pipeline })
-        };
+        let workflow =
+            |_: &Connected, state: RunState, pipeline: Pipeline, spec: Option<SpecFile>, hints: &RunCommands| {
+                self.runs.borrow_mut().push((state.clone(), spec));
+                self.hints.borrow_mut().push(hints.clone());
+                let outcome = script.borrow_mut().pop_front().expect("a run scripted for each run drain starts");
+                let mut state = state;
+                let verdict = outcome(&mut state)?;
+                Ok(Ran { verdict, state, pipeline })
+            };
         let command = self.cli.command(argv);
         let ended = self.cli.with_workflow(&workflow as &RunWorkflow<'_>, |world| run_command(&command, world));
         assert!(script.borrow().is_empty(), "every scripted run ran");
@@ -646,6 +650,8 @@ fn an_interrupted_run_keeps_its_spec_ready_with_its_run() {
     assert_eq!(d.header("a"), (some(SPEC_READY), Some(run_id.clone()), None));
     let key = run_id.rsplit('-').next().unwrap();
     assert!(r.err.contains(&format!("resume with: octoflow resume {key} --machine m --cwd '~/p'")), "{}", r.err);
+    // The run's own hints, such as one to close another run, name the drain's project too.
+    assert_eq!(d.hints.borrow()[0].on_run("close", &run_id), format!("octoflow close {key} --machine m --cwd '~/p'"));
     // Its Run: line is a change drain made, printed though the drain was interrupted.
     assert_eq!(r.out, "a: ready-for-agent -> ready-for-agent\n");
 }

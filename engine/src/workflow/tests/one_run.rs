@@ -10,7 +10,7 @@ use crate::runs::local_host;
 
 pub(super) const OTHER_ID: &str = "20261009-220151-537935";
 
-fn other_dir() -> String {
+pub(super) fn other_dir() -> String {
     format!("/proj/.octoflow-ai/runs/{OTHER_ID}")
 }
 

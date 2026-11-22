@@ -1,4 +1,5 @@
-//! RunState: what a run has done so far, saved as state.json in its run directory.
+//! RunState: what a run has done so far, saved as state.json in its run directory; and how the human names a run,
+//! by its key (run_key) and in the commands a hint tells them to type about it (RunCommands).
 
 use indexmap::IndexMap;
 

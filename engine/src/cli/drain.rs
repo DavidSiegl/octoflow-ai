@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::args::DrainArgs;
 use super::refresh::{has_conflict, refresh_conflict};
 use super::start::{flagged_workflow, new_state};
-use super::{finish, prune, record_in_state, resume_command, run_commands, Connected, Ended, Stop};
+use super::{finish, hint_commands, prune, record_in_state, resume_command, Connected, Ended, Stop};
 use crate::constants::{EXIT_ERROR, EXIT_WAITING, RUNS_DIR, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::prompts::load_prompts;
@@ -147,7 +147,7 @@ fn drain_spec(args: &DrainArgs, world: &Connected, cwd: &str, spec: &mut QueuedS
     if !spec.update(&vec![(RUN_KEY, run_id.clone())], true, human).map_err(stopped)? {
         return Ok(None);
     }
-    match (world.workflow)(world, state, pipeline, Some(given), &run_commands(&args.run.target.flags())) {
+    match (world.workflow)(world, state, pipeline, Some(given), &hint_commands(&args.run.target.flags())) {
         Err(Stopped::TakenOver(e)) => {
             // Another orchestrator drives the run now; the next drain finds it by the Run: line and records its end.
             world.say_err(&format!("error: {e}"));
