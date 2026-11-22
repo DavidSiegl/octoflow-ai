@@ -7,9 +7,9 @@
 # beside it as THIRD-PARTY-LICENSES-NPM.html those of the npm packages its window bundles, which
 # ui/scripts/npm-licenses.js writes here to dist/octoflow-desktop-npm-licenses.html, the release's copy. The app's
 # version is the release's, as ci/release-version.sh reads it. The .deb also installs octoflow's Tab completion for
-# bash, zsh and fish, packaging/completions' scripts, and the build fails on a .deb without them or without the
-# licenses. Run build-binary.sh first. Jenkins's Package stage builds
-# the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
+# bash, zsh and fish, packaging/completions' scripts, and recommends bash-completion, whose loader bash's script
+# needs; the build fails on a .deb without the scripts, the licenses or that recommend. Run build-binary.sh first.
+# Jenkins's Package stage builds the Linux app with it, and .github/workflows/macos-binary.yml the macOS one.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -46,6 +46,11 @@ for completion in $deb_completions; do
     deb_files="${deb_files:+$deb_files, }\"/$completion\": \"../../packaging/completions/${completion##*/}\""
 done
 
+# The package the .deb recommends: bash reads deb_completions' bash script only through bash-completion's loader,
+# which minimal and container images leave out. A recommend, not a depend: apt installs it by default, and without
+# it only bash's completion is missing. The config below names it, and the check of the built .deb looks for it.
+deb_recommends="bash-completion"
+
 # Merged over tauri.conf.json, which bundles nothing, so that cargo test and tauri dev need no license files on
 # disk. signingIdentity "-" signs the macOS app ad hoc: macOS reports an unsigned app downloaded onto Apple
 # silicon as damaged, and an app signed ad hoc only as from an unidentified developer.
@@ -56,7 +61,7 @@ cat > "$config" <<EOF
   "bundle": {
     "active": true,
     "resources": ["THIRD-PARTY-LICENSES.html", "THIRD-PARTY-LICENSES-NPM.html"],
-    "linux": { "deb": { "files": { $deb_files } } },
+    "linux": { "deb": { "files": { $deb_files }, "recommends": ["$deb_recommends"] } },
     "macOS": { "signingIdentity": "-" }
   }
 }
@@ -289,6 +294,12 @@ if [ "$os" = linux ]; then
             printf '%s\n' "$files" | grep -Fqx -e "$completion" -e "./$completion" \
                 || { echo "build-desktop.sh: $deb has no $completion" >&2; exit 1; }
         done
+        recommends=$(dpkg-deb --field "$deb" Recommends) \
+            || { echo "build-desktop.sh: cannot read $deb's Recommends field" >&2; exit 1; }
+        # A comma-separated list, each entry maybe with a version or alternatives: the package's name is enough.
+        printf '%s\n' "$recommends" | tr ',|' '\n' | sed 's/^ *//; s/[ (].*//' | grep -Fqx "$deb_recommends" \
+            || { echo "build-desktop.sh: $deb does not recommend $deb_recommends; Recommends: $recommends" >&2
+                 exit 1; }
     done
     publish deb "$out/deb/Octoflow_${version}_"*.deb
     publish AppImage "$out/appimage/Octoflow_${version}_"*.AppImage
