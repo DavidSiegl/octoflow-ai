@@ -304,6 +304,7 @@ fn missing_binary() {
     let herdr = ProcessHerdr::with_runner(None, |_, _| Err(ProcessError::Start(std::io::ErrorKind::NotFound.into())));
     let e = herdr.call(&["agent", "list"]).unwrap_err();
     assert_eq!((e.code(), e.to_string()), (None, "herdr is not on PATH".to_string()));
+    assert!(matches!(e, HerdrError::Unreached(_)), "{e:?}");
     // And on a real PATH without it.
     let d = TempDir::new();
     let vars = environment(None, &[("PATH", &d.path())]);
@@ -319,11 +320,17 @@ fn a_herdr_that_cannot_be_run_or_read_names_the_command() {
     // A prompt's text stays out of the error.
     let e = herdr.prompt("spec-x", "a long prompt").unwrap_err().to_string();
     assert!(e.starts_with("herdr agent prompt spec-x: ") && !e.contains("long"), "{e}");
+    assert!(matches!(herdr.focus("x").unwrap_err(), HerdrError::Unreached(_)));
     let herdr = ProcessHerdr::with_runner(None, |_, _| Err(ProcessError::Io(std::io::ErrorKind::BrokenPipe.into())));
-    assert_eq!(herdr.focus("x").unwrap_err().code(), None);
+    assert!(matches!(herdr.focus("x").unwrap_err(), HerdrError::Unreached(_)));
+    // herdr ran and printed: reached, though what it printed cannot be read.
     let herdr = ProcessHerdr::with_runner(None, |_, _| Ok((0, b"\xff".to_vec(), vec![])));
     let e = herdr.focus("x").unwrap_err();
     assert!(e.to_string().starts_with("herdr agent focus x: printed what is not UTF-8"), "{e}");
+    assert!(matches!(e, HerdrError::Failed(_)), "{e:?}");
+    // A text herdr would take for its own option is refused without running herdr.
+    let e = herdr.prompt("spec-x", "--help").unwrap_err();
+    assert!(matches!(e, HerdrError::Failed(_)), "{e:?}");
 }
 
 #[test]
@@ -892,9 +899,9 @@ fn a_resumed_session_is_read_in_each_harness_s_syntax() {
 
 #[test]
 fn errors_and_directions_as_herdr_takes_them() {
-    let failed = HerdrError::Failed(OrchestratorError::new("herdr is not on PATH"));
-    assert_eq!((failed.code(), failed.to_string()), (None, "herdr is not on PATH".to_string()));
-    assert_eq!(OrchestratorError::from(failed).0, "herdr is not on PATH");
+    let unreached = HerdrError::Unreached(OrchestratorError::new("herdr is not on PATH"));
+    assert_eq!((unreached.code(), unreached.to_string()), (None, "herdr is not on PATH".to_string()));
+    assert_eq!(OrchestratorError::from(unreached).0, "herdr is not on PATH");
     assert_eq!((Direction::Right.as_str(), Direction::Down.as_str()), ("right", "down"));
 }
 

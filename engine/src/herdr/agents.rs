@@ -14,7 +14,7 @@ impl From<HerdrError> for AgentError {
     fn from(e: HerdrError) -> AgentError {
         match e {
             HerdrError::Herdr { .. } => AgentError::Refused(e.into()),
-            HerdrError::Failed(e) => AgentError::Failed(e),
+            HerdrError::Unreached(e) | HerdrError::Failed(e) => AgentError::Failed(e),
         }
     }
 }
@@ -140,6 +140,8 @@ impl<H: Herdr + ?Sized> Agents for H {
     fn whereabouts(&self, run: &RunState, role: &str) -> String {
         format!("pane {}", pane(run, role))
     }
+
+    fn settle(&self, _run: &RunState) {}
 }
 
 impl<W: Workspaces + ?Sized> RunPlaces for W {
