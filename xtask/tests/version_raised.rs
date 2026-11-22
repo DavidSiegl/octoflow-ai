@@ -226,23 +226,24 @@ fn a_target_without_a_package_version_fails() {
 }
 
 #[test]
-fn an_older_open_pull_request_that_raises_the_version_too_fails_the_raise_naming_it() {
-    let repo = Repo::new();
-    repo.open_pull_request(80, &[("docs/guide.md", "x")]);
-    repo.open_pull_request(90, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest("0.9.2"))]);
-    let output = repo.check("0.9.1");
-    assert!(!output.status.success());
-    let said = stderr(&output);
-    assert!(said.contains("pull request #90, older than this one (#100), raises the version to 0.9.2"), "{said}");
-    assert!(said.contains("once #90 merges, rebase onto main, raise engine/Cargo.toml's version past"), "{said}");
+fn an_older_open_pull_request_that_changes_what_is_released_fails_the_raise_naming_it() {
+    // Raised or not yet: it merges only once it has raised, so it holds the next version either way.
+    for version in ["0.9.2", "0.9.0"] {
+        let repo = Repo::new();
+        repo.open_pull_request(80, &[("docs/guide.md", "x")]);
+        repo.open_pull_request(90, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest(version))]);
+        let output = repo.check("0.9.1");
+        assert!(!output.status.success(), "{version}");
+        let said = stderr(&output);
+        assert!(said.contains("pull request #90, older than this one (#100), changes what is released"), "{said}");
+        assert!(said.contains("once #90 merges, rebase onto main, raise engine/Cargo.toml's version past"), "{said}");
+    }
 }
 
 #[test]
-fn a_raise_passes_beside_younger_unraised_or_unreleased_older_pull_requests() {
+fn a_raise_passes_beside_younger_or_unreleased_older_pull_requests() {
     let repo = Repo::new();
     repo.open_pull_request(110, &[("engine/src/main.rs", "x"), ("engine/Cargo.toml", &manifest("0.9.1"))]);
-    // Not raised yet: once it raises, its own Version stage compares it with main as this one leaves it.
-    repo.open_pull_request(90, &[("engine/src/main.rs", "y")]);
     repo.open_pull_request(80, &[("docs/guide.md", "x")]);
     let output = repo.check("0.9.1");
     assert_eq!((output.status.code(), stderr(&output)), (Some(0), String::new()));

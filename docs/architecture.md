@@ -499,7 +499,7 @@ is of its source, and each hidden test rejects its task's starting point and acc
   one, before GitHub's generated notes. A pull request build into `main` fails its Version stage unless the pull request
   raises the version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh` lists
   those paths), so that every merge into `main` that reaches users is released; and it fails a raise while an older
-  open pull request into `main` raises the version too, so that two never claim the same release.
+  open pull request into `main` changes what is released too, so that two open ones do not claim the same version.
 - `.github/workflows/automerge.yml`: keeps auto-merge on for a pull request into `main` from a branch of this
   repository, so it merges with a merge commit once Jenkins' required check passes; its header lists the pull
   requests it leaves to a human.

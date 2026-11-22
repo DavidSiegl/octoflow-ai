@@ -2,9 +2,9 @@
 # Exit 0 when the change of pull request $CHANGE_ID into $CHANGE_TARGET, a pull request build's HEAD, touches only
 # docs, tests, CI or repository tooling (NOT_RELEASED below), saying so on standard output; or when it raises the
 # release version, as ci/release-version.sh reads it, over $CHANGE_TARGET's, fetched from origin first, and no older
-# pull request in $OPEN_PULL_REQUESTS raises it too. Exit non-zero, saying why on standard error, when the version is
-# not raised, when a version cannot be read, when an older pull request (a lower number) changes released paths and
-# its head's version is greater than $CHANGE_TARGET's, naming the oldest such, or when its head cannot be fetched.
+# pull request in $OPEN_PULL_REQUESTS changes released paths too. Exit non-zero, saying why on standard error, when
+# the version is not raised, when a version cannot be read, when an older pull request (a lower number) changes
+# released paths, naming the oldest such, or when its head cannot be fetched.
 # Versions are compared as sort -V orders them, number by number, so 0.10.0 is greater than 0.9.0.
 #
 # OPEN_PULL_REQUESTS is a file of the open pull requests into $CHANGE_TARGET, drafts included, one number a line,
@@ -12,10 +12,11 @@
 #
 # Jenkins's Version stage runs it on a pull request build into main: the Release stage releases a merge into main
 # only when its version has no release yet, so a merge that kept main's version would go unreleased, which is what a
-# change to exempt paths alone should do; and two open pull requests that raise it would both claim the next
-# version. The oldest goes first; a younger one is built again by its owner once it has merged (CLAUDE.md,
-# Releases). An older one that has not raised yet does not count: once it does, its own Version stage compares it
-# with the target this one leaves.
+# change to exempt paths alone should do; and two open pull requests that change released paths would both claim the
+# next version. The oldest goes first; a younger one is built again by its owner once it has merged (CLAUDE.md,
+# Releases). An older one counts whether or not it has raised yet: it merges only once it has, and a younger one that
+# passed meanwhile could keep its green status, held as a draft, and merge onto the same version later. What this
+# cannot see is an older one that starts changing released paths after this build passed.
 set -eu
 : "${CHANGE_TARGET:?is unset; only a pull request build has a target}"
 : "${OPEN_PULL_REQUESTS:?is unset; it names the file of the open pull requests into the target}"
@@ -88,11 +89,9 @@ for number in $open; do
         echo "version-raised.sh: cannot fetch pull request #$number's head; build this one again" >&2
         exit 1
     }
-    releases "$ref" || continue
-    theirs=$(sh "$here/release-version.sh" "$ref")
-    if greater "$theirs"; then
-        echo "version-raised.sh: pull request #$number, older than this one (#$CHANGE_ID), raises the version to" \
-            "$theirs too, and goes first; once #$number merges, rebase onto $CHANGE_TARGET, raise" \
+    if releases "$ref"; then
+        echo "version-raised.sh: pull request #$number, older than this one (#$CHANGE_ID), changes what is released" \
+            "too, so it claims the next version first; once #$number merges, rebase onto $CHANGE_TARGET, raise" \
             "engine/Cargo.toml's version past $CHANGE_TARGET's new one, refresh Cargo.lock, and push" >&2
         exit 1
     fi

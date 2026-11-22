@@ -15,8 +15,8 @@ users only if it raises the version.
   `cargo update --workspace`: Jenkins's `--locked` cargo steps fail a build whose `Cargo.lock` is stale.
   `pyproject.toml` has no version: it holds only the quality gate's toolchain.
 - Don't create tags or releases by hand; Jenkins does that after the merge.
-- Jenkins's Version stage (`ci/version-raised.sh`) fails a raise while an older open pull request raises the version
-  too, naming it; once that one merges, rebase, raise past main's new version and push.
+- Jenkins's Version stage (`ci/version-raised.sh`) fails a raise while an older open pull request changes what is
+  released too, naming it; once that one merges, rebase, raise past main's new version and push.
 
 ## Formatting
 
