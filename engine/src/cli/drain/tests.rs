@@ -2,7 +2,7 @@
 //! through Connected's workflow.
 //!
 //! A case that asks whether drain swept gives the project a run whose sweep asks gh about a pull request no other step
-//! asks about (Drain::sweepable). a_spec_deleted_before_its_run_line_is_written_is_not_run runs drain_spec on a spec
+//! asks about (Drain::sweepable). a_spec_deleted_before_its_run_line_is_written_is_not_run runs drain_one on a spec
 //! deleted after it was read; a_spec_that_cannot_be_written_stops_the_drain_and_keeps_the_old_file blocks the file
 //! written aside with a directory of its name, which fails as a full disk would, for root too. That a relative DIR is
 //! the shell's goes untested: read_queue reads DIR with std::fs, relative to the process's directory, which a test
@@ -139,6 +139,26 @@ impl Drain {
 
     fn remove(&self, slug: &str) {
         std::fs::remove_file(self.path(slug)).unwrap();
+    }
+
+    /// The path of spec slug's ticket of file name name, without .md.
+    fn ticket_path(&self, slug: &str, name: &str) -> String {
+        format!("{}/{slug}/issues/{name}.md", self.dir())
+    }
+
+    fn ticket(&self, slug: &str, name: &str, text: &str) {
+        crate::host::tests::put(&self.ticket_path(slug, name), text);
+    }
+
+    fn ticket_text(&self, slug: &str, name: &str) -> String {
+        std::fs::read_to_string(self.ticket_path(slug, name)).unwrap()
+    }
+
+    /// The ticket's Status:, Run: and PR: values, None for each it lacks.
+    fn ticket_header(&self, slug: &str, name: &str) -> (Option<String>, Option<String>, Option<String>) {
+        let text = self.ticket_text(slug, name);
+        let field = |k| header_field(&text, k);
+        (field(STATUS_KEY), field(RUN_KEY), field(PR_KEY))
     }
 
     /// The spec's Status:, Run: and PR: values, None for each it lacks.
@@ -420,7 +440,7 @@ fn a_spec_deleted_before_its_run_line_is_written_is_not_run() {
     let d = Drain::new();
     d.spec("a", &ready("First"));
     let mut specs = read_queue(&d.dir()).unwrap();
-    // The human deletes the spec after drain read it, just before drain_spec writes its Run: line.
+    // The human deletes the spec after drain read it, just before drain_one writes its Run: line.
     d.remove("a");
     let args = match d.cli.command(&["drain", &d.dir(), "--cwd", "/proj"]) {
         crate::cli::Command::Drain(args) => args,
@@ -430,7 +450,7 @@ fn a_spec_deleted_before_its_run_line_is_written_is_not_run() {
         |_: &Connected, _: RunState, _: Pipeline, _: Option<SpecFile>, _: &RunCommands| -> Result<Ran, Stopped> {
             panic!("a run started")
         };
-    let ran = d.cli.with_workflow(&workflow, |world| drain_spec(&args, world, "/proj", &mut specs[0]));
+    let ran = d.cli.with_workflow(&workflow, |world| drain_one(&args, world, "/proj", &mut specs[0]));
     assert!(matches!(ran, Ok(None)));
     let log = d.cli.f.told.lines();
     let [line] = &log[..] else { panic!("{log:?}") };
@@ -505,7 +525,16 @@ fn a_gone_spec_change_line_ends_gone() {
     let d = Drain::new();
     let file = SpecFile { path: d.path("a"), text: ready("A") };
     let was = some(SPEC_READY);
-    let mut spec = QueuedSpec { slug: "a".into(), file, blockers: vec![], was, changed: false, gone: None };
+    let mut spec = Queued {
+        slug: "a".into(),
+        kind: Kind::Spec,
+        file,
+        blockers: vec![],
+        unread_blockers: vec![],
+        was,
+        changed: false,
+        gone: None,
+    };
     let told = crate::workflow::fixture::Told::default();
     assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW), (PR_KEY, PR_A)]), false, &told).unwrap());
     assert!(!spec.reread());
@@ -518,8 +547,16 @@ fn a_change_line_of_a_spec_without_a_status_says_so() {
     for was in [None, some("")] {
         let d = Drain::new();
         let file = SpecFile { path: d.path("a"), text: ready("A") };
-        let mut spec =
-            QueuedSpec { slug: "a".into(), file, blockers: vec![], was: was.clone(), changed: false, gone: None };
+        let mut spec = Queued {
+            slug: "a".into(),
+            kind: Kind::Spec,
+            file,
+            blockers: vec![],
+            unread_blockers: vec![],
+            was: was.clone(),
+            changed: false,
+            gone: None,
+        };
         let told = crate::workflow::fixture::Told::default();
         assert!(spec.update(&entries(&[(STATUS_KEY, SPEC_IN_REVIEW)]), false, &told).unwrap());
         assert_eq!(spec.change_line(), "a: no status -> in-review", "{was:?}");
@@ -1192,11 +1229,11 @@ fn a_refresh_that_fails_changes_no_spec() {
 
 #[test]
 fn bad_blockers_stop_the_drain_before_any_run() {
-    let cycle = "error: the specs' blockers form a cycle: b -> c -> b\n";
+    let cycle = "error: the blockers form a cycle: b -> c -> b\n";
     let cases: [(&[(&str, &str)], &str); 3] = [
         (&[("a", "Blocked by: nosuch")], "error: spec a is blocked by nosuch, which has no spec.md in"),
         (&[("a", "Blocked by: b"), ("b", "Blocked by: c"), ("c", "Blocked by: b")], cycle),
-        (&[("a", "Blocked by: a")], "error: the specs' blockers form a cycle: a -> a\n"),
+        (&[("a", "Blocked by: a")], "error: the blockers form a cycle: a -> a\n"),
     ];
     for (blockers, message) in cases {
         let d = Drain::new();
@@ -1460,3 +1497,5 @@ fn a_blocker_with_an_empty_status_waits_as_one_with_none() {
     assert_eq!(r.status, EXIT_WAITING);
     assert!(r.out.ends_with(&format!("b waits on:\n    a: no status  {PR_A}\n")), "{}", r.out);
 }
+
+mod tickets;
