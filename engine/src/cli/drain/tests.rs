@@ -258,9 +258,9 @@ impl Drain {
                 err.push_str(&format!("error: {e}\n"));
                 EXIT_ERROR
             }
-            Err(Stop::Interrupted(run_id)) => {
-                let target = command.target().map(crate::cli::Target::flags).unwrap_or_default();
-                err.push_str(&format!("{}\n", interrupted_note(run_id.as_deref(), &target)));
+            Err(Stop::Interrupted(run)) => {
+                let run = run.as_ref().map(|(id, backend)| (id.as_str(), *backend));
+                err.push_str(&format!("{}\n", interrupted_note(run, command.target())));
                 EXIT_INTERRUPTED
             }
         };
