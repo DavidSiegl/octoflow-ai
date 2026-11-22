@@ -187,7 +187,7 @@ fn each_verdict_is_recorded_once_per_step_and_round() {
 fn turn_with(fields: &[(&str, Option<&str>)]) -> String {
     let mut turn: Object = serde_json::from_str(
         r#"{"step": "build", "role": "build", "round": 1, "quality_round": 0, "file": "build-1.md", "agent": "codex",
-            "model": null, "session": "s1", "tokens": null, "human_paced": false,
+            "model": null, "unoffered_model": null, "session": "s1", "tokens": null, "human_paced": false,
             "started_at": "2026-10-03T04:00:00+00:00", "ended_at": null, "seconds": null}"#,
     )
     .unwrap();
@@ -252,6 +252,22 @@ fn an_agent_or_turn_record_without_a_field_its_engine_writes_is_refused() {
         let e = RunState::from_text(&saved_with(&[("turns", Some(&turn_with(&[(key, None)])))])).unwrap_err();
         assert_eq!(e.0, format!("run state r1 is invalid: missing field `{key}`"));
     }
+}
+
+#[test]
+fn a_model_not_offered_is_kept_by_the_agent_and_turn_records_and_reads_as_none_where_an_older_engine_saved_none() {
+    let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "claude",
+        "unoffered_model": {"asked": "haiku", "taken": null}}}"#;
+    let turns = turn_with(&[("unoffered_model", Some(r#""haiku""#))]);
+    let text = saved_with(&[("agents", Some(agents)), ("turns", Some(&turns))]);
+    let state = RunState::from_text(&text).unwrap();
+    let unoffered = UnofferedModel { asked: "haiku".into(), taken: None };
+    assert_eq!(state.agents["build"].unoffered_model, Some(unoffered));
+    assert_eq!(state.turns[0].unoffered_model.as_deref(), Some("haiku"));
+    assert_eq!(RunState::from_text(&state.to_text()).unwrap(), state);
+
+    let older = saved_with(&[("turns", Some(&turn_with(&[("unoffered_model", None)])))]);
+    assert_eq!(RunState::from_text(&older).unwrap().turns[0].unoffered_model, None);
 }
 
 #[test]

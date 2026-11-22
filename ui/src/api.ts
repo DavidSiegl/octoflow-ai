@@ -105,9 +105,13 @@ export interface Turn {
   /** The handoff file the turn writes, by its name in the run directory. */
   file: string;
   /** The harness, model and session the turn's agent ran in; all null for a quality analysis, which runs no agent,
-   * model also for the harness's own, and session for a turn that ended in another session than it started in. */
+   * model also for the harness's own, and session for a turn that ended in another session than it started in.
+   * model is the one the agent ran on, which is not the role's when its harness did not offer that (unoffered_model). */
   agent: string | null;
   model: string | null;
+  /** The role's model when the turn's agent was not offered it, and so ran on model instead, or on the harness's own
+   * where model is null; null when it ran on the role's. */
+  unoffered_model: string | null;
   session: string | null;
   /** The tokens of the answers the turn's agent gave, by kind (the engine's Tokens::to_json names the kinds), counted
    * once the run is done; "unknown" when the turn's session has no usage to count; null until the run is done, and

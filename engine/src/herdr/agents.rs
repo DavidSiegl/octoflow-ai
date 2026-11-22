@@ -109,7 +109,8 @@ impl<H: Herdr + ?Sized> Agents for H {
         let asking = !self.start_agent(name, pane, h.kind, &args.args)?;
         let mode = launch.permission_mode.filter(|m| !m.is_empty());
         let unpassed = mode.filter(|mode| h.permission_args(mode).is_none()).map(|mode| h.without_mode(mode));
-        Ok(Started { asking, unpassed: unpassed.into_iter().collect() })
+        // herdr reports nothing of the model a harness took from its flag, so the launch's is taken as given.
+        Ok(Started { asking, unpassed: unpassed.into_iter().collect(), unoffered_model: None })
     }
 
     fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {

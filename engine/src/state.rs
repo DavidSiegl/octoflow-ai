@@ -220,9 +220,24 @@ pub struct AgentRecord {
     /// so a record saved by an engine that did not keep it reads as false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub past_startup: bool,
+    /// The role's model (RunState::models) when its harness's session did not offer it, and the model the agent runs
+    /// on instead; None when it runs on the role's model, or the role names none. Saved only when set, so a record
+    /// saved by an engine that did not keep it reads as None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unoffered_model: Option<UnofferedModel>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
+}
+
+/// A model an agent was started on that its harness's session did not offer, so that it runs on another
+/// (AgentRecord::unoffered_model, Started::unoffered_model).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnofferedModel {
+    /// The model asked for, never empty.
+    pub asked: String,
+    /// The model the session runs on instead, as it named it; None when it named none.
+    pub taken: Option<String>,
 }
 
 /// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt from the run is.
@@ -255,9 +270,15 @@ pub struct TurnRecord {
     /// The harness the turn's agent ran in, never empty; None for a quality analysis, which runs no agent.
     #[serde(rename = "agent", deserialize_with = "optional_harness_name")]
     pub harness: Option<String>,
-    /// The role's model, as RunState::models has it; None for the harness's default and a quality analysis.
+    /// The model the turn's agent ran on: the role's (RunState::models), or when its session did not offer that one
+    /// (unoffered_model), the one the session named instead. None for the harness's default, for a session that named
+    /// none, and for a quality analysis.
     #[serde(deserialize_with = "Option::deserialize")]
     pub model: Option<String>,
+    /// The role's model when the turn's agent was not offered it, and so ran on model instead; None when it ran on
+    /// the role's, and in a record saved by an engine that did not keep it.
+    #[serde(default)]
+    pub unoffered_model: Option<String>,
     /// The agent's session for the whole turn; None when that is not known, as for a turn that ended in another
     /// session than it started in.
     #[serde(deserialize_with = "Option::deserialize")]
@@ -295,6 +316,7 @@ impl AgentRecord {
             session: None,
             unprompted: None,
             past_startup: false,
+            unoffered_model: None,
             unknown: Object::new(),
         }
     }

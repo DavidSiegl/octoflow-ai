@@ -108,7 +108,8 @@ until a resume finishes it. Its keys:
   of the whole run, and `restored_locked_files`, how many locked files later turns had changed.
 - `roles`: per role whose agent ran, its `harness` and `model` (`null` for the harness's default).
 - `turns`: `turns` of `state.json` in order, each with `step`, `role`, `harness` and `model` (`null` for a quality
-  analysis), `round`, `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`.
+  analysis; `model` is the one the agent ran on, not the role's of `roles` when its harness did not offer that, and
+  also `null` for the harness's default and for a session that did not name the model it took instead), `round`, `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`.
 - `quality_rounds`: per quality round, `round`, `quality_round`, `gate`, the failed `conditions` and
   `fingerprints_by_check`: for each check or linter, the first word of a finding's rule, and `tests` for failing
   tests, the fingerprints of the findings that failed the gate (the gate's own from `quality.json`, else

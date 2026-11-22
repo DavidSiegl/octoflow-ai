@@ -18,7 +18,7 @@ const WAITING: KeysOf<NonNullable<RunRecord["waiting"]>> = { reason: true, detai
 const VERDICT: KeysOf<StepVerdict> = { round: true, step: true, verdict: true };
 const PR: KeysOf<NonNullable<RunRecord["pr"]>> = { url: true, state: true, error: true };
 const TURN: KeysOf<Turn> = {
-  step: true, role: true, round: true, quality_round: true, file: true, agent: true, model: true, session: true,
+  step: true, role: true, round: true, quality_round: true, file: true, agent: true, model: true, unoffered_model: true, session: true,
   tokens: true, human_paced: true, started_at: true, ended_at: true, seconds: true,
 };
 

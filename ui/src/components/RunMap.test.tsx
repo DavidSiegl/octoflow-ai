@@ -18,7 +18,7 @@ function turn(step: string, round: number, file: string, start: number, end: num
   const quality = step === "quality";
   return {
     step, role: step, round, quality_round: 0, file, agent: quality ? null : "claude", model: quality ? null : "opus-5.5",
-    session: null, tokens: null, human_paced: false, started_at: ago(start), ended_at: end === null ? null : ago(end),
+    unoffered_model: null, session: null, tokens: null, human_paced: false, started_at: ago(start), ended_at: end === null ? null : ago(end),
     seconds: end === null ? null : start - end, ...extra,
   };
 }
@@ -128,6 +128,29 @@ describe("RunMap", () => {
       ["·", "build", "build-1.md · claude opus-5.5", "24m"],
       ["·", "spec", "spec.md · claude opus-5.5", "7m"],
     ]);
+  });
+
+  it("names the model a turn ran on, and the role's model its harness did not offer", () => {
+    const turns = [
+      turn("spec", 0, "spec.md", 3900, 3480, { model: "opus-5.5", unoffered_model: "haiku-5.5" }),
+      turn("build", 1, "build-1.md", 3470, null, { model: null, unoffered_model: "haiku-5.5" }),
+    ];
+    render(<RunMap record={record({ phase: "build", round: 1, verdicts: [], turns })} now={NOW} />);
+    const [spec, build] = stations();
+    expect(spec).toHaveAccessibleName("spec, Spec Collector, claude opus-5.5 (haiku-5.5 not offered), done");
+    expect(build).toHaveAccessibleName("build, Builder, claude (haiku-5.5 not offered), working");
+    const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.children[2]?.textContent)).toEqual([
+      "build-1.md · claude (haiku-5.5 not offered)",
+      "spec.md · claude opus-5.5 (haiku-5.5 not offered)",
+    ]);
+    // Why, as the run's log says it, on hovering the station or the turn.
+    expect(spec?.querySelector("title")?.textContent).toBe("claude offers no model haiku-5.5; starting it on opus-5.5");
+    expect(rows.map((row) => row.getAttribute("title"))).toEqual([
+      "claude offers no model haiku-5.5; starting it on its own",
+      "claude offers no model haiku-5.5; starting it on opus-5.5",
+    ]);
+    expect(stations()[3]?.querySelector("title")).toBeNull();
   });
 
   it("marks where a failed run stopped", () => {

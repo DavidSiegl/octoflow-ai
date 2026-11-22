@@ -8,9 +8,14 @@
 use std::cell::RefCell;
 
 use super::*;
+use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
+use crate::herdr::fake::FakeHerdr;
 use crate::host::fake::HOST_EPOCH;
+use crate::human::Human;
 use crate::json::object;
+use crate::state::UnofferedModel;
 use crate::test_support::GOLDEN_SUMMARY;
+use crate::workflow::{Collaborators, Workflow};
 
 /// The run's summary.md, if written.
 fn summary(f: &Fixture) -> Option<String> {
@@ -54,6 +59,94 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
         body.ends_with(&format!("<details>\n<summary>Run timings</summary>\n\n{timings}\n\n</details>\n")),
         "{body}"
     );
+}
+
+/// The fixture's FakeHerdr as the run's Agents, but for a session that does not offer the model asked of the role's
+/// agent, and names the one it runs on instead.
+struct Unoffering<'f> {
+    /// The fake that plays every agent, this role's included.
+    herdr: &'f FakeHerdr,
+    /// The role whose session does not offer the model asked of it.
+    role: &'static str,
+    /// The model that role's session runs on instead; None for a session that names none.
+    taken: Option<&'static str>,
+}
+
+impl RunPlaces for Unoffering<'_> {
+    fn place(&self, run: &RunState) -> Result<Option<String>, AgentError> {
+        self.herdr.place(run)
+    }
+    fn end(&self, run: &RunState) -> Result<(), AgentError> {
+        self.herdr.end(run)
+    }
+}
+
+impl Agents for Unoffering<'_> {
+    fn bind(&self, run: &mut RunState) {
+        self.herdr.bind(run)
+    }
+    fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
+        self.herdr.open(run, human)
+    }
+    fn close(&self, run: &RunState, human: &dyn Human) {
+        self.herdr.close(run, human)
+    }
+    fn next_record(&self, run: &RunState, role: &str, order: &[String], kind: &str) -> Result<AgentRecord, AgentError> {
+        self.herdr.next_record(run, role, order, kind)
+    }
+    fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError> {
+        let mut started = self.herdr.start(run, role, launch)?;
+        if role == self.role {
+            let asked = launch.model.expect("a model asked of the role").to_string();
+            started.unoffered_model = Some(UnofferedModel { asked, taken: self.taken.map(String::from) });
+        }
+        Ok(started)
+    }
+    fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
+        self.herdr.wait_ready(run, role, seconds)
+    }
+    fn find(&self, run: &RunState, role: &str) -> Result<Option<Seen>, AgentError> {
+        self.herdr.find(run, role)
+    }
+    fn prompt(&self, run: &RunState, role: &str, text: &str) -> Result<(), AgentError> {
+        self.herdr.prompt(run, role, text)
+    }
+    fn wait_taken(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
+        self.herdr.wait_taken(run, role, seconds)
+    }
+    fn show(&self, run: &RunState, role: &str) -> Result<(), AgentError> {
+        self.herdr.show(run, role)
+    }
+    fn await_human(&self, run: &RunState, role: &str, why: Waiting) {
+        self.herdr.await_human(run, role, why)
+    }
+    fn whereabouts(&self, run: &RunState, role: &str) -> String {
+        self.herdr.whereabouts(run, role)
+    }
+    fn settle(&self, run: &RunState) {
+        self.herdr.settle(run)
+    }
+}
+
+#[test]
+fn a_turn_whose_session_did_not_offer_the_roles_model_records_the_one_it_ran_on() {
+    for taken in [Some("sonnet"), None] {
+        let f = Fixture::new(approved());
+        let agents = Unoffering { herdr: &f.herdr, role: "review", taken };
+        let models = IndexMap::from([("build".to_string(), "haiku".to_string()), ("review".into(), "opus".into())]);
+        let settings = settings(|s| s.agents.models = models);
+        let collaborators = Collaborators { agents: &agents, ..f.collaborators() };
+        let mut wf = Workflow::new(collaborators, f.state.clone(), settings).expect("Workflow::new takes the settings");
+
+        assert_eq!(wf.run(), verdict(APPROVE));
+
+        let turns = &wf.state().turns;
+        let model_of =
+            |step: &str| turns.iter().find(|t| t.step == step).map(|t| (t.model.clone(), t.unoffered_model.clone()));
+        assert_eq!(model_of("build"), Some((Some("haiku".to_string()), None)), "{taken:?}");
+        assert_eq!(model_of("review"), Some((taken.map(String::from), Some("opus".to_string()))), "{taken:?}");
+        assert_eq!(wf.state().models.get("review").map(String::as_str), Some("opus"), "{taken:?}");
+    }
 }
 
 #[test]

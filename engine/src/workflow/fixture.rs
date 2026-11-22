@@ -407,6 +407,7 @@ pub(crate) fn record(step: &str, file: &str, start: Option<i64>, end: Option<i64
         ("file", Value::from(file)),
         ("agent", Value::from("claude")),
         ("model", Value::Null),
+        ("unoffered_model", Value::Null),
         ("human_paced", Value::Bool(false)),
         ("started_at", time(start)),
         ("ended_at", time(end)),
