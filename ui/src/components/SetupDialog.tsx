@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Api, GateFile, Project, SetupCheck, SetupReport } from "../api";
+import type { AdapterInstall, Api, GateFile, Project, SetupCheck, SetupReport } from "../api";
 import { Dialog } from "./Dialog";
 
 interface Props {
@@ -20,13 +20,15 @@ type Outcome = { report: SetupReport } | { error: string } | null;
 /** What setting up the quality gate gave: the files it looked after, the error it failed with, or null while it runs. */
 type GateOutcome = { files: GateFile[] } | { error: string } | null;
 
-/** What installing an ACP adapter gave: the error it failed with, or null while it runs. */
-type InstallOutcome = { error: string } | null;
+/** How often the dialog asks how an install of an ACP adapter goes, while one runs, in milliseconds. */
+export const INSTALL_POLL_MS = 500;
 
 /** What the project needs for a run, checked where its agents run, grouped by how much each check matters, a failed
  * one with its fix; a button that sets the project up for the local quality gate, showing which files it wrote
- * and which it kept; and, for each ACP adapter the report offers and has not installed, a button that installs it,
- * after which the checks run again. Closing it records that setup was checked when every required check passed,
+ * and which it kept; and, for each ACP adapter the report offers and has not installed, a button that starts an
+ * install of it on the server. An install the server runs, started here or before the dialog opened, shows as
+ * installing, followed every INSTALL_POLL_MS until it ends; then the checks run again if it installed the adapter,
+ * and the error it failed with, or the old installs it left, shows. Closing it records that setup was checked when every required check passed,
  * which keeps the app from opening it by itself as Api.setupChecked says; a failure to record that is shown, and
  * closing once more closes without it. */
 export function SetupDialog({ api, project, onClose }: Props) {
@@ -39,20 +41,19 @@ export function SetupDialog({ api, project, onClose }: Props) {
   const [markError, setMarkError] = useState<string | null>(null);
   // The quality gate's setup: undefined until asked for, then as GateOutcome says.
   const [gate, setGate] = useState<GateOutcome | undefined>(undefined);
-  // The latest install of each ACP adapter, by agent, as InstallOutcome says; an agent is missing until its install
-  // is asked for, and again once it succeeds or a round reports its adapter installed.
-  const [installs, setInstalls] = useState<Record<string, InstallOutcome>>({});
+  // The ACP adapters as the server last told them, by the latest round's report or by following an install; empty
+  // before the first report.
+  const [adapters, setAdapters] = useState<AdapterInstall[]>([]);
+  // The agents whose install was asked for here and has not yet started on the server.
+  const [starting, setStarting] = useState<string[]>([]);
   useEffect(() => {
     let current = true;
     api.setupChecks(project).then(
       (report) => {
-        if (!current) {
-          return;
+        if (current) {
+          setAnswered({ round, outcome: { report } });
+          setAdapters(report.adapters);
         }
-        setAnswered({ round, outcome: { report } });
-        // An install that failed, here or before another window installed it, is past once the adapter is there.
-        const installed = new Set(report.adapters.filter((a) => a.installed).map((a) => a.agent));
-        setInstalls((all) => withoutKeys(all, (agent, o) => o !== null && installed.has(agent)));
       },
       (error: Error) => current && setAnswered({ round, outcome: { error: error.message } }),
     );
@@ -60,6 +61,42 @@ export function SetupDialog({ api, project, onClose }: Props) {
       current = false;
     };
   }, [api, project, round]);
+  // Follow the installs that run until each ends, starting again when which run changes.
+  const installing = adapters.filter((a) => a.installing).map((a) => a.agent);
+  const followed = installing.join(" ");
+  useEffect(() => {
+    if (followed === "") {
+      return;
+    }
+    let current = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const look = () => {
+      // A look that fails leaves the adapters as they were, and looks again.
+      api.setupAdapters().then(
+        (next) => {
+          if (!current) {
+            return;
+          }
+          setAdapters(next);
+          const agents = followed.split(" ");
+          if (next.some((a) => agents.includes(a.agent) && !a.installing && a.installed)) {
+            setRound((r) => r + 1);
+          }
+          timer = setTimeout(look, INSTALL_POLL_MS);
+        },
+        () => {
+          if (current) {
+            timer = setTimeout(look, INSTALL_POLL_MS);
+          }
+        },
+      );
+    };
+    timer = setTimeout(look, INSTALL_POLL_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [api, followed]);
   const outcome = answered.round === round ? answered.outcome : null;
   const close = () => {
     if (markError !== null || !(outcome && "report" in outcome && outcome.report.passed)) {
@@ -79,22 +116,17 @@ export function SetupDialog({ api, project, onClose }: Props) {
       (error: Error) => setGate({ error: error.message }),
     );
   };
+  // The install's start is the server's from here: it answers at once, and following the adapters shows the rest.
   const install = (agent: string) => {
-    setInstalls((all) => ({ ...all, [agent]: null }));
+    const changed = (fields: Partial<AdapterInstall>) =>
+      setAdapters((all) => all.map((a) => (a.agent === agent ? { ...a, ...fields } : a)));
+    setStarting((all) => [...all, agent]);
     api.installAdapter(agent).then(
-      () => {
-        setInstalls((all) => withoutKeys(all, (a) => a === agent));
-        setRound((r) => r + 1);
-      },
-      (error: Error) => setInstalls((all) => ({ ...all, [agent]: { error: error.message } })),
-    );
+      () => changed({ installing: true, error: null, warning: null }),
+      (error: Error) => changed({ error: error.message }),
+    ).finally(() => setStarting((all) => all.filter((a) => a !== agent)));
   };
-  // The adapters with a button: each the report offers and has not installed, and each with an install asked for,
-  // which outlives a round in progress; the report's megabytes where it has them.
-  const offered = outcome && "report" in outcome ? outcome.report.adapters : [];
-  const megabytes = new Map(offered.map((a) => [a.agent, a.megabytes]));
-  const shown = [...offered.filter((a) => !a.installed).map((a) => a.agent), ...Object.keys(installs)];
-  const agents = [...new Set(shown)];
+  const busy = (a: AdapterInstall) => a.installing || starting.includes(a.agent);
   return (
     <Dialog label="setup" title="Setup" project={project} className="setup">
       {outcome === null && <p className="loading">Checking…</p>}
@@ -105,8 +137,8 @@ export function SetupDialog({ api, project, onClose }: Props) {
           <CheckGroup key={level} heading={heading} checks={outcome.report.checks.filter((c) => c.level === level)} />
         ))}
       {gate !== undefined && <GateSetup outcome={gate} />}
-      {Object.entries(installs).map(([agent, o]) => (
-        <AdapterInstall key={agent} agent={agent} outcome={o} />
+      {adapters.map((a) => (
+        <AdapterInstallation key={a.agent} adapter={a} busy={busy(a)} />
       ))}
       {markError !== null && <p className="problem">Could not record that setup was checked: {markError}</p>}
       <footer>
@@ -116,16 +148,13 @@ export function SetupDialog({ api, project, onClose }: Props) {
         <button type="button" onClick={setUpGate} disabled={gate === null || marking}>
           Set up the quality gate
         </button>
-        {agents.map((agent) => (
-          <button
-            key={agent}
-            type="button"
-            onClick={() => install(agent)}
-            disabled={installs[agent] === null || marking}
-          >
-            Install {agent}'s ACP adapter{megabytes.has(agent) && ` (about ${megabytes.get(agent)} MB)`}
-          </button>
-        ))}
+        {adapters
+          .filter((a) => !a.installed)
+          .map((a) => (
+            <button key={a.agent} type="button" onClick={() => install(a.agent)} disabled={busy(a) || marking}>
+              Install {a.agent}'s ACP adapter (about {a.megabytes} MB)
+            </button>
+          ))}
         <button type="button" onClick={close} disabled={marking}>
           Close
         </button>
@@ -185,18 +214,20 @@ function GateSetup({ outcome }: { outcome: GateOutcome }) {
   );
 }
 
-/** record without the entries drop picks. */
-function withoutKeys<T>(record: Record<string, T>, drop: (key: string, value: T) => boolean): Record<string, T> {
-  return Object.fromEntries(Object.entries(record).filter(([k, v]) => !drop(k, v)));
-}
-
-/** What installing agent's ACP adapter gave: the error it failed with, or that it runs. */
-function AdapterInstall({ agent, outcome }: { agent: string; outcome: InstallOutcome }) {
+/** How the latest install of an ACP adapter goes, when there is something to say: that it runs (busy), the error it
+ * failed with while the adapter is still not installed, or the old installs it could not remove; nothing else. */
+function AdapterInstallation({ adapter, busy }: { adapter: AdapterInstall; busy: boolean }) {
+  const failed = !busy && !adapter.installed && adapter.error !== null;
+  const left = !busy && adapter.warning !== null;
+  if (!busy && !failed && !left) {
+    return null;
+  }
   return (
-    <section aria-label={`${agent}'s ACP adapter`}>
-      <h3>{agent}'s ACP adapter</h3>
-      {outcome === null && <p className="loading">Installing…</p>}
-      {outcome && <p className="problem">{outcome.error}</p>}
+    <section aria-label={`${adapter.agent}'s ACP adapter`}>
+      <h3>{adapter.agent}'s ACP adapter</h3>
+      {busy && <p className="loading">Installing…</p>}
+      {failed && <p className="problem">{adapter.error}</p>}
+      {left && <p>Installed, but an old install is left, which the next install removes: {adapter.warning}</p>}
     </section>
   );
 }

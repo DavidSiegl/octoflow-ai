@@ -621,20 +621,79 @@ fn adapters_served(installs: Vec<Installs>) -> Served {
     Served::fake_with(&Arc::new(ServeHost::default()), &[], Options { setup, ..Options::default() })
 }
 
+/// The entry of agent in /setup/adapters once its install no longer runs, waiting up to 10 seconds for it to end.
+fn settled(served: &Served, agent: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let reply = served.get("/setup/adapters", &[]);
+        assert_eq!(reply.status, Some(200), "{}", reply.body);
+        let adapters = reply.json()["adapters"].as_array().cloned().unwrap_or_default();
+        let entry = adapters.into_iter().find(|a| a["agent"] == agent).expect("agent is offered");
+        if entry["installing"] == false {
+            return entry;
+        }
+        assert!(Instant::now() < deadline, "the install of {agent} still runs");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn setup_offers_each_adapter_and_installs_the_one_named() {
     let data_home = Project::new();
     adapter_installs(&data_home)[1].install_fake("");
     let served = adapters_served(adapter_installs(&data_home));
     let reply = served.get(&Served::query("/setup", &[]), &[]);
+    let none = Value::Null;
     let offered = serde_json::json!([
-        {"agent": "claude", "installed": false, "megabytes": Adapter::Claude.megabytes()},
-        {"agent": "codex", "installed": true, "megabytes": Adapter::Codex.megabytes()},
+        {"agent": "claude", "installed": false, "megabytes": Adapter::Claude.megabytes(),
+         "installing": false, "error": none, "warning": none},
+        {"agent": "codex", "installed": true, "megabytes": Adapter::Codex.megabytes(),
+         "installing": false, "error": none, "warning": none},
     ]);
     assert_eq!(reply.json()["adapters"], offered);
+    assert_eq!(served.get("/setup/adapters", &[]).json()["adapters"], offered);
     // Installed already, the install has nothing to download.
     let reply = served.post("/setup/adapter?agent=codex", "");
-    assert_eq!((reply.status, reply.body.as_str()), (Some(200), r#"{"installed":true,"warning":null}"#));
+    assert_eq!((reply.status, reply.body.as_str()), (Some(202), r#"{"installing":true}"#));
+    assert_eq!(settled(&served, "codex"), offered[1]);
+}
+
+/// POST /setup/adapter answers before the install ends, which /setup/adapters then reports as running; a POST while it
+/// runs starts no second one.
+#[test]
+fn an_install_runs_in_the_background() {
+    let data_home = Project::new();
+    adapter_installs(&data_home)[1].install_fake("");
+    let lock = std::fs::File::create(format!("{}/octoflow-ai/codex-acp/.lock", data_home.root())).unwrap();
+    lock.lock().unwrap();
+    let served = adapters_served(adapter_installs(&data_home));
+
+    for _ in 0..2 {
+        let reply = served.post("/setup/adapter?agent=codex", "");
+        assert_eq!(reply.status, Some(202), "{}", reply.body);
+        let adapters = served.get("/setup/adapters", &[]).json()["adapters"].clone();
+        assert_eq!(adapters[1]["installing"], true, "{adapters}");
+        assert_eq!(adapters[0]["installing"], false, "{adapters}");
+    }
+    drop(lock);
+
+    assert_eq!(settled(&served, "codex")["error"], Value::Null);
+}
+
+#[test]
+fn an_install_that_fails_is_reported() {
+    let data_home = Project::new();
+    std::fs::create_dir_all(format!("{}/octoflow-ai", data_home.root())).unwrap();
+    let root = format!("{}/octoflow-ai/codex-acp", data_home.root());
+    std::fs::write(&root, "a file where the installs' directory should be").unwrap();
+    let served = adapters_served(adapter_installs(&data_home));
+
+    assert_eq!(served.post("/setup/adapter?agent=codex", "").status, Some(202));
+    let entry = settled(&served, "codex");
+
+    let error = entry["error"].as_str().unwrap_or_default();
+    assert!(error.starts_with(&format!("cannot create {root}: ")), "{entry}");
+    assert_eq!((entry["installed"].clone(), entry["warning"].clone()), (Value::Bool(false), Value::Null));
 }
 
 /// The adapter is installed though an old install is left: a success, with the leftover as its warning.
@@ -649,12 +708,13 @@ fn an_install_whose_old_installs_cannot_be_removed_succeeds_with_a_warning() {
     std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o555)).unwrap();
     let served = adapters_served(adapter_installs(&data_home));
 
-    let reply = served.post("/setup/adapter?agent=codex", "");
+    assert_eq!(served.post("/setup/adapter?agent=codex", "").status, Some(202));
+    let entry = settled(&served, "codex");
     std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    assert_eq!(reply.status, Some(200));
-    let warning = reply.json()["warning"].as_str().unwrap_or_default().to_string();
-    assert!(warning.starts_with("cannot remove ") && warning.contains("/stray: "), "{}", reply.body);
+    let warning = entry["warning"].as_str().unwrap_or_default();
+    assert!(warning.starts_with("cannot remove ") && warning.contains("/stray: "), "{entry}");
+    assert_eq!((entry["installed"].clone(), entry["error"].clone()), (Value::Bool(true), Value::Null));
 }
 
 #[test]

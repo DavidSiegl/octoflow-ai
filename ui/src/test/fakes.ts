@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { AppWindow } from "../components/CloseGuard";
 import type {
+  AdapterInstall,
   CloseChoice,
   ClosedRun,
   ForgottenRun,
@@ -104,10 +105,12 @@ export interface FakeSetup {
   gateError?: string;
   /** The query's cwd of each POST /setup/gate, in order. */
   gateCwds?: (string | null)[];
-  /** What POST /setup/adapter answers: {"installed": true}, or a 502 with installError when given. */
-  installError?: string;
+  /** What POST /setup/adapter answers: 202 {"installing": true}, or a 500 with startError when given. */
+  startError?: string;
   /** The query's agent of each POST /setup/adapter, in order. */
   installed?: (string | null)[];
+  /** What /setup/adapters answers, the adapters of report unless given. */
+  adapters?: AdapterInstall[];
 }
 
 /** The workflows a stubbed server offers unless told otherwise: `default`, `tdd`, and `broken`, which does not load.
@@ -328,7 +331,10 @@ export function stubServer(
     }
     if (pathname === "/setup/adapter" && init?.method === "POST") {
       setup.installed = [...(setup.installed ?? []), searchParams.get("agent")];
-      return setup.installError === undefined ? answer(200, { installed: true }) : answer(502, { error: setup.installError });
+      return setup.startError === undefined ? answer(202, { installing: true }) : answer(500, { error: setup.startError });
+    }
+    if (pathname === "/setup/adapters") {
+      return answer(200, { adapters: setup.adapters ?? setup.report?.adapters ?? [] });
     }
     if (pathname === "/setup/checked" && init?.method === "POST") {
       if (setup.markError !== undefined) {

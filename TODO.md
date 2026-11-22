@@ -83,10 +83,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   the user decides whether a turn records its waited seconds and the run view shows a standing wait, and that is
   built or dropped.
 
-- **POST /setup/adapter holds one HTTP request for the whole install, up to NPM_TIMEOUT.** Review 262: closing and
-  reopening the setup dialog loses "Installing…" and offers Install again (a second click waits on the lock, then
-  succeeds). Whether WKWebView or WebKitGTK time out an idle fetch is unchecked; the macOS by-hand install of ticket 07
-  answers it. Closed by an install the server runs in the background, with its progress in /setup's answer.
 - **No test runs the pinned Node's real npm.** Review 263: the tests' fake npm (`acp_adapter/tests.rs`) knows only the
   npm rules someone added to it after they broke an install, so a config rule it does not know (as 0.93.5's
   double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
