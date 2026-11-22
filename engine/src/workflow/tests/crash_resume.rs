@@ -33,6 +33,7 @@ use crate::env::ConfigDir;
 use crate::host::fake::FakeClock;
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE};
+use crate::state::RunCommands;
 use crate::workflow_file::find_workflow;
 
 /// The run's state.json, which every scenario's run writes.
@@ -184,12 +185,12 @@ impl World {
             acp: false,
         };
         if !resume {
-            return run_workflow(&world, self.f.state.clone(), self.pipeline.clone(), None);
+            return run_workflow(&world, self.f.state.clone(), self.pipeline.clone(), None, &RunCommands::default());
         }
         let argv = ["resume", "--force", "a1b2c3"].map(std::ffi::OsString::from);
         let Ok(Command::Resume(args)) = parse_args(argv, &config) else { panic!("resume --force does not parse") };
         let (state, pipeline) = resumed_state(&args, "/proj", &world).map_err(Stopped::Failed)?;
-        run_workflow(&world, state, pipeline, None)
+        run_workflow(&world, state, pipeline, None, &RunCommands::default())
     }
 
     /// What the run has left behind so far.

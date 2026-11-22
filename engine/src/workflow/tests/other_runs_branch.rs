@@ -5,6 +5,7 @@ use super::one_run::{host_with_other_run, OTHER_ID};
 use super::worktree::worktree_run;
 use super::*;
 use crate::runs::local_host;
+use crate::state::RunCommands;
 
 const OTHER_BRANCH: &str = "orchestrator/another-task-537935";
 
@@ -33,12 +34,14 @@ fn a_run_on_a_failed_runs_branch_is_refused_before_fetching() {
         // As origin answers for a branch that only reaches it when its run publishes.
         host.state().fetch_error = Some(format!("fatal: couldn't find remote ref {OTHER_BRANCH}"));
         let f = if worktree { worktree_run(host, None) } else { Fixture::on(host, new_state(), approved()) };
-        let message = failure(f.workflow(RunSettings::default()).run());
+        // The hint is typed as the human invokes the program, in the project the human named.
+        let commands = RunCommands::new("of", &["--cwd".into(), "~/my proj".into()]);
+        let message = failure(f.workflow(RunSettings { commands, ..RunSettings::default() }).run());
         assert_eq!(
             message,
             format!(
                 "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is not closed; check out its base \
-                 branch, main, and close that run with `octoflow close 537935` once you are done with it"
+                 branch, main, and close that run with `of close 537935 --cwd '~/my proj'` once you are done with it"
             ),
             "worktree: {worktree}"
         );

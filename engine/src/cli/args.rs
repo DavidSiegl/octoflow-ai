@@ -15,7 +15,7 @@ use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SP
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::{
     CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
-    EXIT_ERROR, EXIT_WAITING, HARNESS_NAMES, METRICS_FILE, REMOTE, ROLE_LABELS,
+    EXIT_ERROR, EXIT_WAITING, HARNESS_NAMES, METRICS_FILE, PROGRAM, REMOTE, ROLE_LABELS,
 };
 use crate::env::ConfigDir;
 use crate::harness::harness;
@@ -229,7 +229,7 @@ impl Target {
 ///
 /// The error is a usage error (exit status 2, its text naming the problem, for clap's print), or the help a --help
 /// or the version a --version asked for (exit status 0). The usage error and the help name the program as
-/// super::program_name does, the version as super::PROGRAM. config is where the workflow files that --workflow offers
+/// super::program_name does, the version as PROGRAM. config is where the workflow files that --workflow offers
 /// are.
 pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) -> Result<Command, clap::Error> {
     let mut p = parser(config);
@@ -520,7 +520,7 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(
             "Also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
         ));
-    clap::Command::new(super::PROGRAM)
+    clap::Command::new(PROGRAM)
         .about(
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
              Spec Collector -> Builder -> Reviewer, all in Claude Code.",

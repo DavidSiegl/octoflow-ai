@@ -56,12 +56,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   it may. Closed when the agent's PATH is shown to hold only root-owned directories, or both stages run `gh` by a
   root-owned absolute path.
 
-- **The workflow's errors name commands as a literal `octoflow`, without the project's `--machine`/`--cwd`.**
-  Review 267: `take_base_branch`'s "close that run with `octoflow close <key>`" ignores `cli::program_name()`, and
-  for a project given by `--machine` or `--cwd` the command finds no such run where it is typed;
-  `cli::resume_command` adds both for the CLI's own hints. `workflow` cannot call into `cli`, which depends on it.
-  Closed when the workflow is given the program name and the target flags (or a hint builder) by its caller.
-
 - **"The run has the quality gate" is spelt two ways.** Raised by cross-review 268 (F6): `step_prompt.rs` tests
   `quality_job.is_some()`, while `gate_switch.rs`, `cli.rs` (resume's gate check) and `cli/listing.rs` test
   `quality_job.as_deref().is_some_and(|j| !j.is_empty())`; within a run they agree (workflow.rs sets quality_job from

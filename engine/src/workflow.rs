@@ -34,7 +34,7 @@ use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_ti
 use crate::quality::parse_gate;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
-use crate::state::{run_key, AgentStart, Backend, RunState, SavedRun};
+use crate::state::{AgentStart, Backend, RunCommands, RunState, SavedRun};
 use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
 use crate::workflow_file::{run_pipeline, workflow_definition};
 use serde_json::Value;
@@ -118,6 +118,9 @@ pub struct RunSettings {
     /// (Pipeline::seeded_start): written as the contract step's file before the run's first state.json, where a
     /// resume, which is given none, finds it. None for every other run.
     pub spec: Option<SpecFile>,
+    /// How the run's hints word a command for the human to type, such as the one that closes another run; not saved,
+    /// since a resume may be typed with other flags than the run's start.
+    pub commands: RunCommands,
 }
 
 impl Default for RunSettings {
@@ -131,6 +134,7 @@ impl Default for RunSettings {
             max_quality_rounds: DEFAULT_MAX_QUALITY_ROUNDS,
             pipeline: None,
             spec: None,
+            commands: RunCommands::default(),
         }
     }
 }
@@ -215,6 +219,8 @@ pub struct Workflow<'a> {
     prompts: Prompts,
     /// RunSettings::spec.
     spec: Option<SpecFile>,
+    /// RunSettings::commands.
+    commands: RunCommands,
     /// This orchestrator as state.json's owner records it, {"host", "pid", "started_at"}: the run is this one's
     /// while the saved owner equals it.
     me: Object,
@@ -296,6 +302,7 @@ impl<'a> Workflow<'a> {
             pipeline: Rc::new(pipeline),
             prompts,
             spec: settings.spec,
+            commands: settings.commands,
             me,
             last_write: 0.0,
             told_unpassed: HashSet::new(),
@@ -860,9 +867,8 @@ impl<'a> Workflow<'a> {
                         format!("which is running ({why}); wait for it to end, then check out {base}")
                     }
                     _ => format!(
-                        "which is not closed; check out {base}, and close that run with `octoflow close {}` once \
-                         you are done with it",
-                        run_key(id)
+                        "which is not closed; check out {base}, and close that run with `{}` once you are done with it",
+                        self.commands.on_run("close", id)
                     ),
                 }
             };

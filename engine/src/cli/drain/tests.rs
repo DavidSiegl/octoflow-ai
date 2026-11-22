@@ -30,7 +30,7 @@ use crate::pipeline::Pipeline;
 use crate::pipeline::DONE;
 use crate::pull_request::conflict_warning;
 use crate::spec_file::SpecFile;
-use crate::state::RunState;
+use crate::state::{RunCommands, RunState};
 use crate::test_support::{built_in_as_file, TempDir};
 use crate::workflow::fixture::{build_turn, review_turn};
 use serde_json::Value;
@@ -213,7 +213,7 @@ impl Drain {
     /// drain, the command line being argv.
     fn drain_argv(&self, outcomes: Vec<Outcome>, argv: &[&str]) -> Drained {
         let script = RefCell::new(VecDeque::from(outcomes));
-        let workflow = |_: &Connected, state: RunState, pipeline: Pipeline, spec: Option<SpecFile>| {
+        let workflow = |_: &Connected, state: RunState, pipeline: Pipeline, spec: Option<SpecFile>, _: &RunCommands| {
             self.runs.borrow_mut().push((state.clone(), spec));
             let outcome = script.borrow_mut().pop_front().expect("a run scripted for each run drain starts");
             let mut state = state;
@@ -421,9 +421,10 @@ fn a_spec_deleted_before_its_run_line_is_written_is_not_run() {
         crate::cli::Command::Drain(args) => args,
         other => panic!("{other:?}"),
     };
-    let workflow = |_: &Connected, _: RunState, _: Pipeline, _: Option<SpecFile>| -> Result<Ran, Stopped> {
-        panic!("a run started")
-    };
+    let workflow =
+        |_: &Connected, _: RunState, _: Pipeline, _: Option<SpecFile>, _: &RunCommands| -> Result<Ran, Stopped> {
+            panic!("a run started")
+        };
     let ran = d.cli.with_workflow(&workflow, |world| drain_spec(&args, world, "/proj", &mut specs[0]));
     assert!(matches!(ran, Ok(None)));
     let log = d.cli.f.told.lines();

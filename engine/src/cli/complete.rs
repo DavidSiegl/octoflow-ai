@@ -14,7 +14,7 @@ use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 use clap_complete::CompleteEnv;
 
 use super::args::parser;
-use super::PROGRAM;
+use crate::constants::PROGRAM;
 use crate::env::ConfigDir;
 use crate::host::{Host, ProcessHost};
 use crate::interrupt::Interrupt;
