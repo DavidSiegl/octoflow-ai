@@ -398,6 +398,15 @@ Drain stops rather than polls. A spec whose blocker's pull request is open waits
 the human's, and every run starts from `origin`'s base branch, so a dependent spec cannot run until its blocker has
 merged.
 
+**Tickets.** A spec that is `ready-for-agent` when drain starts and has tickets under `issues/` is drained ticket
+by ticket: drain reads it and its tickets into one queue, the tickets after their spec in number order, and runs
+each ready ticket as `run --spec <ticket>` would, so that each ends in a pull request of its own. The spec is never
+run; it records only whether its tickets are all settled. A ticket blocked by another waits for that ticket's pull
+request to merge, as specs do, rather than building on its open branch: a run stacked on an unmerged branch would
+open a pull request that holds its blocker's change too. A ticket's status is read by its first word, since the
+tracker notes why after it, and a merged ticket is written `resolved (PR #<n> merged)` in the tracker's words
+rather than `done`.
+
 **What one drain does, in order.** It first asks `gh` about each `in-review` spec's pull request: merged makes it
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`
 line as `refresh` does, and a `ready-for-human` spec whose run approved or finished, with its pull request open,
@@ -408,7 +417,9 @@ the spec for a later drain. A `ready-for-agent` spec with a `Run:` line is one a
 if finished, sets the spec's status, and one that makes it `in-review` has its
 pull request asked about at once, so a pull request merged meanwhile makes it `done` in this drain; if not
 finished, drain stops and says what to do: wait for it, `resume` it, or delete the `Run:` line to start the spec
-over. Then drain sweeps the branches of earlier runs once, and runs each spec whose blockers are all `done`.
+over. Tickets are followed the same way, and a spec whose tickets are each `resolved` or `wontfix` then turns
+`done`, so its dependants can run in this drain. Then drain sweeps the branches of earlier runs once, and runs each
+spec whose blockers are all `done`, and each ticket whose blockers are all `resolved`.
 
 **Specs edited while drain runs.** Drain reads each spec again before choosing the next and before each header
 edit, so your edits are kept, except the `Status:`, `Run:` and `PR:` lines of the spec it is running, which are

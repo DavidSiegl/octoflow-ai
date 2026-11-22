@@ -1,7 +1,7 @@
-//! The specs drain runs: DIR/<slug>/spec.md, each with a header of
-//! `<key>: <entry>` lines before its first `## ` heading (header_field, with_header_field), read into a queue ordered
-//! by slug whose blockers are checked (read_queue), and each spec's header changes written back as drain makes them
-//! (QueuedSpec).
+//! What drain runs: the specs in DIR, DIR/<slug>/spec.md, and the tickets of each ready spec that has them,
+//! DIR/<slug>/issues/<NN>-<name>.md. Each has a header of `<key>: <entry>` lines before its first `## ` heading
+//! (header_field, with_header_field); they are read into one queue whose blockers are checked (read_queue), and each
+//! one's header changes are written back as drain makes them (Queued).
 
 use std::collections::HashSet;
 
@@ -10,9 +10,12 @@ use crate::human::Human;
 use crate::paths::{file_name, replace_local_file};
 use crate::spec_file::{read_spec_file, SpecFile};
 
-/// The keys of the spec header's lines that drain reads. It writes all but BLOCKED_BY_KEY. Blocked by: is a
-/// comma-separated list of the specs that must be SPEC_DONE first, each by its slug or a path ending in
-/// <slug>/spec.md; Run: names the run drain started for the spec, and PR: that run's pull request.
+use super::{SPEC_DONE, SPEC_READY, TICKET_RESOLVED};
+
+/// The keys of the header lines that drain reads. It writes all but BLOCKED_BY_KEY. Blocked by: is a comma-separated
+/// list of what must be finished first (Queued::finished): a spec's names specs, each by its slug or a path ending in
+/// <slug>/spec.md (blocker_slugs); a ticket's names tickets, each by its number, or <slug>/<number> for a ticket of
+/// another spec (ticket_blockers). Run: names the run drain started for it, and PR: that run's pull request.
 pub const STATUS_KEY: &str = "Status";
 pub const BLOCKED_BY_KEY: &str = "Blocked by";
 pub const RUN_KEY: &str = "Run";
@@ -90,18 +93,86 @@ pub fn with_header_field(text: &str, key: &str, entry: &str) -> Result<String, O
     Ok(lines.concat())
 }
 
-/// The slugs a Blocked by: line's value names, in order; none for a spec without the line, or whose value is one of
-/// NO_BLOCKERS.
-pub fn blocker_slugs(line: Option<&str>) -> Vec<String> {
+/// The entries of a Blocked by: line's value, in order, blanks at their ends removed; none without the line, or when
+/// its value is one of NO_BLOCKERS.
+fn blocker_entries(line: Option<&str>) -> Vec<&str> {
     let line = line.unwrap_or("");
     if NO_BLOCKERS.contains(&line.trim().to_lowercase().as_str()) {
         return vec![];
     }
-    line.split(',')
-        .map(str::trim)
-        .filter(|e| !e.is_empty())
+    line.split(',').map(str::trim).filter(|e| !e.is_empty()).collect()
+}
+
+/// The slugs a spec's Blocked by: line's value names, in order (BLOCKED_BY_KEY).
+pub fn blocker_slugs(line: Option<&str>) -> Vec<String> {
+    blocker_entries(line)
+        .into_iter()
         .map(|e| if e.ends_with("/spec.md") { file_name(dirname(e)) } else { e }.to_string())
         .collect()
+}
+
+/// The number a ticket's file name without .md starts with, as in 03-close-dialog or 03; None for a name that does
+/// not start with digits followed by a hyphen or nothing, which is no ticket.
+pub fn ticket_number(stem: &str) -> Option<u64> {
+    let digits = stem.len() - stem.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let rest = &stem[digits..];
+    (digits > 0 && (rest.is_empty() || rest.starts_with('-'))).then(|| stem[..digits].parse().ok()).flatten()
+}
+
+/// The slugs that the Blocked by: line's value of the ticket whose slug is ticket names, each among queue, in order
+/// (BLOCKED_BY_KEY); own is its spec's slug. An entry's first word counts, so an explanation may follow it:
+/// `02 (same file)`. A number names a ticket of its own spec; <slug>/<number> one of spec slug's, or that spec itself
+/// when its tickets are not in queue (read_queue), which then must be SPEC_DONE first. Errors: an entry names neither,
+/// naming the ticket and the entry; spec_dir is for the message.
+fn ticket_blockers(
+    ticket: &str,
+    own: &str,
+    line: Option<&str>,
+    queue: &[Queued],
+    spec_dir: &str,
+) -> Result<Vec<String>, OrchestratorError> {
+    let mut slugs = vec![];
+    for entry in blocker_entries(line) {
+        let missing =
+            || OrchestratorError(format!("ticket {ticket} is blocked by {entry}, which names no ticket in {spec_dir}"));
+        let word = entry.split_whitespace().next().unwrap_or_default();
+        let (spec, number) = word.rsplit_once('/').unwrap_or((own, word));
+        let Some(number) = ticket_number(number) else { return Err(missing()) };
+        let of_spec = Kind::Ticket(spec.to_string());
+        let loaded = queue.iter().any(|q| q.kind == of_spec);
+        let found = if loaded {
+            queue.iter().find(|q| q.kind == of_spec && ticket_number(file_name(&q.slug)) == Some(number))
+        } else {
+            queue.iter().find(|q| q.slug == spec && spec != own)
+        };
+        slugs.push(found.ok_or_else(missing)?.slug.clone());
+    }
+    Ok(slugs)
+}
+
+/// The tickets in spec_dir/issues, each its file name without .md and its path, in number order (ticket_number), then
+/// by name; none without that directory. A name that is no ticket's, or not UTF-8, is left out. Errors: the directory
+/// exists but cannot be listed.
+fn ticket_files(spec_dir: &str) -> Result<Vec<(String, String)>, OrchestratorError> {
+    let dir = format!("{spec_dir}/issues");
+    let listing = |e: std::io::Error| OrchestratorError(format!("cannot list the tickets in {dir}: {}", strerror(&e)));
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(listing(e)),
+    };
+    let mut tickets = vec![];
+    for entry in entries {
+        let Ok(name) = entry.map_err(listing)?.file_name().into_string() else { continue };
+        let Some(stem) = name.strip_suffix(".md") else { continue };
+        let Some(number) = ticket_number(stem) else { continue };
+        let path = format!("{dir}/{name}");
+        if std::path::Path::new(&path).is_file() {
+            tickets.push((number, stem.to_string(), path));
+        }
+    }
+    tickets.sort();
+    Ok(tickets.into_iter().map(|(_, stem, path)| (stem, path)).collect())
 }
 
 /// path's directory: up to its last slash, trailing slashes removed unless it is
@@ -116,16 +187,31 @@ fn dirname(path: &str) -> &str {
     }
 }
 
-/// A spec that drain found, DIR/<slug>/spec.md, with what drain has done to it.
+/// What a file drain found is to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QueuedSpec {
+pub enum Kind {
+    /// A spec drain runs whole: it has no tickets.
+    Spec,
+    /// A spec with tickets, which drain never runs: while it is SPEC_READY, drain runs its tickets instead, and makes
+    /// it SPEC_DONE once each is TICKET_RESOLVED or TICKET_WONTFIX. Its tickets are in the queue only when it was
+    /// SPEC_READY as drain read it (read_queue).
+    Ticketed,
+    /// A ticket of the Ticketed spec whose slug this is.
+    Ticket(String),
+}
+
+/// A spec or ticket that drain found, with what drain has done to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Queued {
+    /// A spec's directory name; a ticket's spec's slug, a slash, and its file name without .md.
     pub slug: String,
+    pub kind: Kind,
     /// Its path as drain found it, and its text as drain last read it, with drain's changes to its header since, line
     /// endings as in the file.
     pub file: SpecFile,
-    /// The slugs on its Blocked by: line, each one of a spec drain found.
+    /// The slugs its Blocked by: line names (BLOCKED_BY_KEY), each of one drain found.
     pub blockers: Vec<String>,
-    /// Its status as drain first read it.
+    /// Its status as drain first read it (Queued::status).
     pub was: Option<String>,
     /// True once drain has changed its header, or would have but for --dry-run.
     pub changed: bool,
@@ -134,15 +220,36 @@ pub struct QueuedSpec {
     pub gone: Option<String>,
 }
 
-impl QueuedSpec {
-    /// Its Status: line's value as drain last read or set it, which a gone spec keeps; None without one.
-    pub fn status_as_read(&self) -> Option<String> {
-        header_field(&self.file.text, STATUS_KEY)
+impl Queued {
+    /// The one drain read from file, of kind, with blockers, as yet unchanged.
+    fn new(slug: String, kind: Kind, file: SpecFile, blockers: Vec<String>) -> Queued {
+        let mut queued = Queued { slug, kind, file, blockers, was: None, changed: false, gone: None };
+        queued.was = queued.status();
+        queued
     }
 
-    /// Its Status: line's value now; None without one, or once it is gone.
+    /// Its status as drain last read or set it, which a gone one keeps; None without a Status: line.
+    pub fn status_as_read(&self) -> Option<String> {
+        self.status_of(header_field(&self.file.text, STATUS_KEY))
+    }
+
+    /// Its status now; None without a Status: line, or once it is gone. A spec's is its Status: line's value, a
+    /// ticket's that value's first word (status_word), as the tracker notes why after it.
     pub fn status(&self) -> Option<String> {
-        self.field(STATUS_KEY)
+        self.status_of(self.field(STATUS_KEY))
+    }
+
+    fn status_of(&self, value: Option<String>) -> Option<String> {
+        match self.kind {
+            Kind::Ticket(_) => value.map(|v| status_word(&v).to_string()),
+            _ => value,
+        }
+    }
+
+    /// Whether what it blocks may start: a spec is SPEC_DONE, a ticket TICKET_RESOLVED.
+    pub fn finished(&self) -> bool {
+        let finished = if matches!(self.kind, Kind::Ticket(_)) { TICKET_RESOLVED } else { SPEC_DONE };
+        self.status().as_deref() == Some(finished)
     }
 
     /// The run id on its Run: line; None without one, or once it is gone.
@@ -210,16 +317,23 @@ impl QueuedSpec {
     }
 }
 
+/// A Status: value's first word, as drain reads a ticket's (Queued::status): `resolved` of `resolved (PR #7 merged)`.
+pub fn status_word(value: &str) -> &str {
+    value.split_whitespace().next().unwrap_or_default()
+}
+
 /// A spec's status as drain writes it: "no status" for a spec without a Status: line, or with an empty one.
 pub(super) fn status_text(value: Option<String>) -> String {
     value.filter(|s| !s.is_empty()).unwrap_or_else(|| "no status".to_string())
 }
 
-/// Every spec_dir/<slug>/spec.md on this machine, ordered by slug. A name in spec_dir that is not UTF-8 is left out.
+/// Every spec_dir/<slug>/spec.md on this machine, ordered by slug, each SPEC_READY one with tickets (ticket_files)
+/// followed by them, in number order (Kind). A name in spec_dir that is not UTF-8 is left out.
 ///
-/// Errors, naming the specs: spec_dir cannot be listed, a spec cannot be read (read_spec_file), a Blocked by: line
-/// names a slug that has no spec.md, or the blockers form a cycle.
-pub fn read_queue(spec_dir: &str) -> Result<Vec<QueuedSpec>, OrchestratorError> {
+/// Errors, naming the specs or tickets: spec_dir or a spec's issues directory cannot be listed, a spec or ticket
+/// cannot be read (read_spec_file), a Blocked by: line names a slug that has no spec.md or no ticket
+/// (ticket_blockers), or the blockers form a cycle.
+pub fn read_queue(spec_dir: &str) -> Result<Vec<Queued>, OrchestratorError> {
     let listing =
         |e: std::io::Error| OrchestratorError(format!("cannot list the specs in {spec_dir}: {}", strerror(&e)));
     let mut names: Vec<String> = std::fs::read_dir(spec_dir)
@@ -231,20 +345,29 @@ pub fn read_queue(spec_dir: &str) -> Result<Vec<QueuedSpec>, OrchestratorError> 
         .flatten()
         .collect();
     names.sort();
-    let mut specs: Vec<QueuedSpec> = Vec::new();
+    let mut queue: Vec<Queued> = Vec::new();
     for name in names {
         // One slash between DIR and the name, none added after an empty DIR or one ending in a slash.
         let sep = if spec_dir.is_empty() || spec_dir.ends_with('/') { "" } else { "/" };
-        let path = format!("{spec_dir}{sep}{name}/spec.md");
-        if std::path::Path::new(&path).is_file() {
+        let dir = format!("{spec_dir}{sep}{name}");
+        let path = format!("{dir}/spec.md");
+        if !std::path::Path::new(&path).is_file() {
+            continue;
+        }
+        let file = read_spec_file(&path)?;
+        let blockers = blocker_slugs(header_field(&file.text, BLOCKED_BY_KEY).as_deref());
+        let ready = header_field(&file.text, STATUS_KEY).as_deref() == Some(SPEC_READY);
+        let tickets = ticket_files(&dir)?;
+        let kind = if tickets.is_empty() { Kind::Spec } else { Kind::Ticketed };
+        queue.push(Queued::new(name.clone(), kind, file, blockers));
+        for (stem, path) in tickets.into_iter().filter(|_| ready) {
             let file = read_spec_file(&path)?;
-            let blockers = blocker_slugs(header_field(&file.text, BLOCKED_BY_KEY).as_deref());
-            let was = header_field(&file.text, STATUS_KEY);
-            specs.push(QueuedSpec { slug: name, file, blockers, was, changed: false, gone: None });
+            queue.push(Queued::new(format!("{name}/{stem}"), Kind::Ticket(name.clone()), file, vec![]));
         }
     }
-    let slugs: HashSet<&str> = specs.iter().map(|s| s.slug.as_str()).collect();
-    for spec in &specs {
+    let slugs: HashSet<&str> =
+        queue.iter().filter(|q| !matches!(q.kind, Kind::Ticket(_))).map(|q| q.slug.as_str()).collect();
+    for spec in queue.iter().filter(|q| !matches!(q.kind, Kind::Ticket(_))) {
         let missing: Vec<&str> = spec.blockers.iter().map(String::as_str).filter(|b| !slugs.contains(b)).collect();
         if !missing.is_empty() {
             return Err(OrchestratorError(format!(
@@ -254,14 +377,20 @@ pub fn read_queue(spec_dir: &str) -> Result<Vec<QueuedSpec>, OrchestratorError> 
             )));
         }
     }
-    let blockers: Vec<(&str, &[String])> = specs.iter().map(|s| (s.slug.as_str(), s.blockers.as_slice())).collect();
+    for i in 0..queue.len() {
+        if let Kind::Ticket(spec) = &queue[i].kind {
+            let line = header_field(&queue[i].file.text, BLOCKED_BY_KEY);
+            queue[i].blockers = ticket_blockers(&queue[i].slug, spec, line.as_deref(), &queue, spec_dir)?;
+        }
+    }
+    let blockers: Vec<(&str, &[String])> = queue.iter().map(|q| (q.slug.as_str(), q.blockers.as_slice())).collect();
     if let Some(cycle) = blocker_cycle(&blockers) {
         return Err(OrchestratorError(format!("the specs' blockers form a cycle: {}", cycle.join(" -> "))));
     }
-    Ok(specs)
+    Ok(queue)
 }
 
-/// A cycle among the specs, each by its slug with the slugs that block it, in order, as the slugs along it with the
+/// A cycle among the specs and tickets, each by its slug with the slugs that block it, in order, as the slugs along it with the
 /// first again at the end; None when there is none. Every blocker must be a slug of blockers.
 pub fn blocker_cycle(blockers: &[(&str, &[String])]) -> Option<Vec<String>> {
     fn cycle_from<'b>(

@@ -503,6 +503,19 @@ PR: https://github.com/o/r/pull/7
   missing blocker, or blockers in a cycle, stop drain before it runs anything.
 - `Run:` and `PR:` are written by drain.
 
+A ready spec with tickets, `DIR/<slug>/issues/<NN>-<name>.md`, is drained ticket by ticket instead: each
+`ready-for-agent` ticket gets its own run and pull request, in number order, and the spec itself is never run.
+A ticket's header works as a spec's, with these differences:
+
+- `Status:` is read by its first word, so a note may follow it. A merged pull request makes the ticket
+  `resolved (PR #<n> merged)`, and the spec turns `done` once each of its tickets is `resolved` or `wontfix`.
+- `Blocked by:` lists tickets that must be `resolved` first: `02` for one of the same spec, `<slug>/02` for one of
+  another spec's. When that other spec is not `ready-for-agent`, drain does not read its tickets, and the entry
+  waits for the spec to be `done` instead. An entry's first word counts, so `02 (same file)` works. The spec's own
+  `Blocked by:` holds back all of its tickets.
+- A ticket waits while its spec is not `ready-for-agent`. A spec that is not `ready-for-agent` when drain starts
+  has its tickets left alone, and a spec without numbered tickets runs whole, as above.
+
 Drain stops rather than polls: a spec whose blocker's pull request is still open waits for the next drain. If
 the specs directory is inside the checkout, ignore it in git, or use `--worktree`, since the header edits would
 otherwise dirty the tree. See [Draining specs](docs/design.md#draining-specs) for what a drain does in order and

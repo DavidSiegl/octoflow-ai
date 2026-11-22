@@ -11,7 +11,9 @@ use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches};
 
 use crate::cli::doctor::{dotted, GIT_MIN_VERSION, HERDR_MIN_VERSION};
-use crate::cli::drain::{DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SPEC_READY};
+use crate::cli::drain::{
+    DRAIN_DIR, SPEC_DONE, SPEC_FOR_HUMAN, SPEC_IN_REVIEW, SPEC_READY, TICKET_RESOLVED, TICKET_WONTFIX,
+};
 use crate::cli::listing::RUN_RECORD_VERSION;
 use crate::constants::{
     CLOSED_BRANCH_GRACE, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
@@ -34,7 +36,7 @@ pub enum Command {
     Runs(Target, RunsCommand),
     /// `workflows`: list the workflows, or print the one named, a name or a file's path, as a workflow file.
     Workflows(Option<String>),
-    /// `drain`: run each ready spec in a directory, one after another.
+    /// `drain`: run each ready spec in a directory, or a ready spec's ready tickets, one after another.
     Drain(DrainArgs),
     /// `refresh`: clear a resolved conflict from the pull request of the run named, by its id or key, or of every
     /// finished run with one when None.
@@ -149,7 +151,8 @@ pub struct DrainArgs {
     /// The flags each run drain starts is given, as run --spec runs its spec: their task and spec None, and no_pr
     /// false, since each run opens a pull request.
     pub run: RunArgs,
-    /// The directory of specs, on this machine, each DIR/<slug>/spec.md; DRAIN_DIR unless given.
+    /// The directory of specs, on this machine, each DIR/<slug>/spec.md with its tickets (drain::queue); DRAIN_DIR
+    /// unless given.
     pub dir: String,
     /// --dry-run: print what would change and run, and write, run and delete nothing.
     pub dry_run: bool,
@@ -448,7 +451,10 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              request has merged, and refreshes the runs of {SPEC_IN_REVIEW} and {SPEC_FOR_HUMAN} specs as the refresh \
              command does, moving a {SPEC_FOR_HUMAN} spec whose approved pull request no longer conflicts to \
              {SPEC_IN_REVIEW}. Exits 0 once no spec is {SPEC_READY}, and {EXIT_WAITING} when the ones left have \
-             blockers that are not {SPEC_DONE}."
+             blockers that are not {SPEC_DONE}. A {SPEC_READY} spec with tickets, DIR/<slug>/issues/<NN>-<name>.md, \
+             is not run itself: each of its {SPEC_READY} tickets is, in number order, once the tickets on its Blocked \
+             by: line are {TICKET_RESOLVED}, moving as a spec does but to `{TICKET_RESOLVED} (PR #<n> merged)`; the \
+             spec is marked {SPEC_DONE} once each ticket is {TICKET_RESOLVED} or {TICKET_WONTFIX}."
         ))
         .args(target_args())
         .args(settings_args())
@@ -459,8 +465,8 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
                 .help(format!("The directory of specs, on this machine; default {DRAIN_DIR}")),
         )
         .arg(Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).help(
-            "Print the changes to the specs' status and the specs it would run, in order, and write, run and delete \
-             nothing",
+            "Print the changes to the specs' and tickets' status and the specs and tickets it would run, in order, and \
+             write, run and delete nothing",
         ))
         // Hidden and refused by check_spec_args, as for resume.
         .arg(Arg::new("spec").long("spec").num_args(0..=1).default_missing_value("").hide(true));
