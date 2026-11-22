@@ -48,6 +48,14 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `CLOSED_BRANCH_GRACE`, without asking whether another run records it as its `base_branch`; GitHub then closes the
   new run's pull request. Closed when prune keeps a branch another live run builds on, or the refusal covers it.
 
+- **A GitHub token reaches tools in directories the build user can write outside the workspace.** Review 276 (todo
+  91): the Version stage's `gh pr list` and the Release stage's `gh release create` take PATH entries outside
+  `$WORKSPACE` on trust, so a `gh` a pull request's tests leave in, say, `~/.local/bin` lasts into later builds and
+  runs with `GH_TOKEN`, main's Release included. Whether the Jenkins agent's PATH has such a directory could not be
+  checked from here (its systemInfo page is admin-only); the Go tools installed in `~/.local` on 2026-11-11 suggest
+  it may. Closed when the agent's PATH is shown to hold only root-owned directories, or both stages run `gh` by a
+  root-owned absolute path.
+
 - **The workflow's errors name commands as a literal `octoflow`, without the project's `--machine`/`--cwd`.**
   Review 267: `take_base_branch`'s "close that run with `octoflow close <key>`" ignores `cli::program_name()`, and
   for a project given by `--machine` or `--cwd` the command finds no such run where it is typed;
