@@ -33,6 +33,7 @@ pub mod proofs;
 pub mod pull_request;
 pub mod pypi;
 pub mod quality;
+pub mod run_commands;
 pub mod runs;
 pub mod serve;
 pub mod spec_file;

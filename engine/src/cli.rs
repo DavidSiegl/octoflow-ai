@@ -27,9 +27,10 @@ use crate::human::Notify;
 use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
 use crate::pipeline::Pipeline;
+use crate::run_commands::RunCommands;
 use crate::runs::{local_host, pid_alive};
 use crate::spec_file::{read_spec_file, SpecFile};
-use crate::state::{run_dir, Backend, RunCommands, RunState};
+use crate::state::{run_dir, Backend, RunState};
 use crate::workflow::{Collaborators, DesktopNotify, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
 use serde_json::Value;
 
@@ -375,8 +376,8 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
         return Err(Stop::Interrupted(Some(state.run_id)));
     }
     let run_id = state.run_id.clone();
-    let hints = hint_commands(&command.target().map(Target::flags).unwrap_or_default());
-    match (world.workflow)(world, state, pipeline, spec, &hints) {
+    let commands = hint_commands(&command.target().map(Target::flags).unwrap_or_default());
+    match (world.workflow)(world, state, pipeline, spec, &commands) {
         Ok(ran) => Ok(Ended::Ran(Box::new(ran))),
         Err(Stopped::Interrupted) => Err(Stop::Interrupted(Some(run_id))),
         Err(Stopped::Failed(e) | Stopped::TakenOver(e)) => Err(stop(e, interrupt, Some(&run_id))),

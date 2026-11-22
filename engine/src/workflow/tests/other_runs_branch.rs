@@ -4,8 +4,8 @@
 use super::one_run::{host_with_other_run, OTHER_ID};
 use super::worktree::worktree_run;
 use super::*;
+use crate::run_commands::RunCommands;
 use crate::runs::local_host;
-use crate::state::RunCommands;
 
 const OTHER_BRANCH: &str = "orchestrator/another-task-537935";
 
