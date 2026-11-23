@@ -43,7 +43,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 ## Open issues
 
 - **The open handoff file can keep a partial write.** Raised by cross-review 286 (not recorded, outside its diff):
-  the server gives a run file's mtime in whole seconds (`RunsView::files`, `engine/src/serve/runs.rs`), and
+  the server gives a run file's mtime in whole seconds (`ProjectRuns::files`, `engine/src/serve/runs.rs`), and
   `HandoffFile` (`ui/src/components/HandoffFile.tsx`) reads the file again only when the mtime changes, so a second
   write within the same second as the one read never shows, and the panel can keep a partial first write until the
   agent writes again. Closing it means a finer mtime (milliseconds or nanoseconds) in the files event, or the size
