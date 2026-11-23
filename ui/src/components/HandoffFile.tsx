@@ -12,22 +12,25 @@ interface Props {
 
 type Loaded = { text: string } | { error: string } | null;
 
-/** The file rendered as Markdown, raw HTML in it dropped; fetched again whenever its mtime changes. */
+/** The file rendered as Markdown, raw HTML in it dropped; fetched again whenever its mtime changes. A newer version
+ * keeps the older text on show until it arrives; another file shows as loading until it arrives. */
 export function HandoffFile({ api, project, run, file }: Props) {
-  // What was fetched, by the request it answers, so a file selected since shows as loading, not as the last one.
-  const [loaded, setLoaded] = useState<{ request: string; content: Loaded }>({ request: "", content: null });
-  const request = JSON.stringify([project, run, file.name, file.mtime]);
+  // What was last fetched, by the file it is of but not the version: a newer version of the file on show replaces
+  // the text only once it arrives, so the panel neither flashes nor changes height, while another file selected since
+  // shows as loading, never as the last one.
+  const [loaded, setLoaded] = useState<{ file: string; content: Loaded }>({ file: "", content: null });
+  const shown = JSON.stringify([project, run, file.name]);
   useEffect(() => {
     let current = true;
     api.fileText(project, run, file.name).then(
-      (text) => current && setLoaded({ request, content: { text } }),
-      (error: Error) => current && setLoaded({ request, content: { error: error.message } }),
+      (text) => current && setLoaded({ file: shown, content: { text } }),
+      (error: Error) => current && setLoaded({ file: shown, content: { error: error.message } }),
     );
     return () => {
       current = false;
     };
-  }, [api, project, run, file.name, request]);
-  const content = loaded.request === request ? loaded.content : null;
+  }, [api, project, run, file.name, file.mtime, shown]);
+  const content = loaded.file === shown ? loaded.content : null;
   if (content === null) {
     return <p className="loading">Loading {file.name}…</p>;
   }

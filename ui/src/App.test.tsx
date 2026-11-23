@@ -237,7 +237,8 @@ describe("the run detail", () => {
 
     files["spec.md"] = "# Add a token-bucket rate limiter\n\n- **20** requests a second\n";
     act(() => source.replayOne("the spec was edited"));
-    expect(await within(detail).findByText("20")).toBeInTheDocument();
+    // The old text stays on show until the new arrives, and has a "20" of its own in its table.
+    expect(await within(detail).findByText("20", { selector: "strong" })).toBeInTheDocument();
     expect(fetch.mock.calls.length).toBe(fetches + 1);
 
     fireEvent.click(within(detail).getByRole("button", { name: /build-1\.md/ }));
