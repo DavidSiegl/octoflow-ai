@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunRecord, Turn } from "../api";
+import { useNow } from "../hooks";
 import { formatAge, formatRound, prLabel, progress, type Stage, type StageState } from "../runs";
 import { along, armOutline, armSlots, armTip, HEAD, MAP_HEIGHT, MAP_WIDTH, spine, type ArmPose } from "../runMap";
 
 interface Props {
   record: RunRecord;
-  /** The time, in milliseconds since the epoch, a running turn's length is counted to. */
-  now: number;
 }
 
 /** The run as an octopus: the head is the run, each stage of its progress an arm ending in a station, left to right,
  * with its verdict steps' loops drawn below; then a line on what runs now and the run's turns, newest first. Moves
  * unless the viewer prefers reduced motion, and says everything at rest. */
-export function RunMap({ record, now }: Props) {
+export function RunMap({ record }: Props) {
   const stages = progress(record);
   const svg = useRef<SVGSVGElement>(null);
   const reduced = useReducedMotion();
@@ -202,7 +201,7 @@ export function RunMap({ record, now }: Props) {
           </g>
         )}
       </svg>
-      <p className="now">{nowLine(record, now)}</p>
+      <NowLine record={record} />
       <ol className="feed" aria-label="turns">
         {[...record.turns].reverse().map((turn) => (
           <FeedRow
@@ -468,6 +467,13 @@ function turnStep(turn: Turn): string {
  * such a turn was cut short. */
 function runDriven(record: RunRecord): boolean {
   return record.health === "running" && !record.error;
+}
+
+/** nowLine of record, counted to the clock. The rest of the map changes only with the record, so the clock's tick
+ * re-renders this line alone, not the octopus. */
+function NowLine({ record }: { record: RunRecord }) {
+  const now = useNow();
+  return <p className="now">{nowLine(record, now)}</p>;
 }
 
 /** What the run does now, in a line: where it failed, how it ended, or its running turn and for how long. */

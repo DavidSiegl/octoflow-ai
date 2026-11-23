@@ -1,5 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunRecord, Step, Turn } from "../api";
 import { RunMap } from "./RunMap";
 
@@ -46,8 +46,17 @@ function stations(): HTMLElement[] {
 }
 
 describe("RunMap", () => {
+  // The map counts a running turn's length to the clock: NOW, which only Date is faked to.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("gives each stage a station in order, named with who holds it and its state", () => {
-    render(<RunMap record={record()} now={NOW} />);
+    render(<RunMap record={record()} />);
     expect(stations().map((s) => s.getAttribute("aria-label"))).toEqual([
       "spec, Spec Collector, claude opus-5.5, done",
       "build, Builder, claude opus-5.5, working, 2 rounds",
@@ -58,7 +67,7 @@ describe("RunMap", () => {
   });
 
   it("shows the harness and model of each stage's last turn, a rounds badge and the last verdict", () => {
-    render(<RunMap record={record()} now={NOW} />);
+    render(<RunMap record={record()} />);
     const [spec, build, , review] = stations();
     expect(spec && within(spec).getByText("claude opus-5.5")).toBeInTheDocument();
     expect(build && within(build).getByText("×2")).toBeInTheDocument();
@@ -72,7 +81,7 @@ describe("RunMap", () => {
       id, role: id, role_label: id.toUpperCase(), loop_to: null, quality_gated: false,
     }));
     const turns = steps.map((st, i) => turn(st.id, 1, `${st.id}.md`, 900 - i * 100, 850 - i * 100, { model: "claude-opus-4-5-20251101" }));
-    render(<RunMap record={record({ steps, pull_request: false, phase: "done", health: null, turns })} now={NOW} />);
+    render(<RunMap record={record({ steps, pull_request: false, phase: "done", health: null, turns })} />);
     // d's station has e's beside it, about 106 units away; a's, at the left edge, has 180 units of room.
     const [a, , , d] = stations();
     expect(d?.querySelector(".harness")?.textContent).toMatch(/^claude .*…$/);
@@ -86,39 +95,39 @@ describe("RunMap", () => {
     // "Spec Collector" is wider than the gap to the build station, but "Builder" and "claude" leave it the rest.
     const steps = STEPS.map((st) => ({ ...st, quality_gated: false }));
     const turns = record().turns.filter((t) => t.step !== "quality").map((t) => ({ ...t, agent: "claude", model: null }));
-    render(<RunMap record={record({ steps, pull_request: false, turns })} now={NOW} />);
+    render(<RunMap record={record({ steps, pull_request: false, turns })} />);
     const [spec, build] = stations();
     expect(spec?.querySelector(".holder")?.textContent).toBe("Spec Collector");
     expect(build?.querySelector(".holder")?.textContent).toBe("Builder");
   });
 
   it("draws a verdict step's loop, solid once a verdict took it", () => {
-    const { container, rerender } = render(<RunMap record={record()} now={NOW} />);
+    const { container, rerender } = render(<RunMap record={record()} />);
     expect(screen.getByText("changes → build")).toBeInTheDocument();
     expect(container.querySelector(".loop.taken")).not.toBeNull();
-    rerender(<RunMap record={record({ verdicts: [], phase: "spec", round: 0, turns: [] })} now={NOW} />);
+    rerender(<RunMap record={record({ verdicts: [], phase: "spec", round: 0, turns: [] })} />);
     expect(screen.getByText("loops to build")).toBeInTheDocument();
     expect(container.querySelector(".loop.taken")).toBeNull();
   });
 
   it("names the pull request at publish", () => {
     const pr = { url: "https://github.com/o/r/pull/408", state: "OPEN", error: null };
-    render(<RunMap record={record({ phase: "done", health: null, verdict: "APPROVE", pr })} now={NOW} />);
+    render(<RunMap record={record({ phase: "done", health: null, verdict: "APPROVE", pr })} />);
     expect(stations().at(-1)).toHaveAccessibleName("publish, #408, done");
     expect(screen.getByText("done · APPROVE · pull request open")).toBeInTheDocument();
   });
 
   it("asks the human when the run waits on them", () => {
-    const { rerender } = render(<RunMap record={record({ waiting: { reason: "interview", detail: "spec" } })} now={NOW} />);
+    const { rerender } = render(<RunMap record={record({ waiting: { reason: "interview", detail: "spec" } })} />);
     expect(screen.getByText("your answer?")).toBeInTheDocument();
-    rerender(<RunMap record={record({ waiting: { reason: "blocked", detail: "which key?" } })} now={NOW} />);
+    rerender(<RunMap record={record({ waiting: { reason: "blocked", detail: "which key?" } })} />);
     expect(screen.getByText("blocked")).toBeInTheDocument();
-    rerender(<RunMap record={record({ waiting: { reason: "stale", detail: "octoflow resume fea142" } })} now={NOW} />);
+    rerender(<RunMap record={record({ waiting: { reason: "stale", detail: "octoflow resume fea142" } })} />);
     expect(screen.queryByText("blocked")).not.toBeInTheDocument();
   });
 
   it("says what runs now, then lists the turns newest first", () => {
-    render(<RunMap record={record()} now={NOW} />);
+    render(<RunMap record={record()} />);
     expect(screen.getByText("build · claude opus-5.5 · running 19m")).toBeInTheDocument();
     const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
     expect(rows.map((row) => [...row.children].map((cell) => cell.textContent))).toEqual([
@@ -135,7 +144,7 @@ describe("RunMap", () => {
       turn("spec", 0, "spec.md", 3900, 3480, { model: "opus-5.5", unoffered_model: "haiku-5.5" }),
       turn("build", 1, "build-1.md", 3470, null, { model: null, unoffered_model: "haiku-5.5" }),
     ];
-    render(<RunMap record={record({ phase: "build", round: 1, verdicts: [], turns })} now={NOW} />);
+    render(<RunMap record={record({ phase: "build", round: 1, verdicts: [], turns })} />);
     const [spec, build] = stations();
     expect(spec).toHaveAccessibleName("spec, Spec Collector, claude opus-5.5 (haiku-5.5 not offered), done");
     expect(build).toHaveAccessibleName("build, Builder, claude (haiku-5.5 not offered), working");
@@ -154,7 +163,7 @@ describe("RunMap", () => {
   });
 
   it("marks where a failed run stopped", () => {
-    const { container } = render(<RunMap record={record({ error: "boom", health: null })} now={NOW} />);
+    const { container } = render(<RunMap record={record({ error: "boom", health: null })} />);
     expect(screen.getByText("failed at build")).toBeInTheDocument();
     expect(stations()[1]).toHaveAttribute("data-state", "failed");
     expect(container.querySelector(".head.failed")).not.toBeNull();
@@ -162,7 +171,7 @@ describe("RunMap", () => {
 
   it("marks the turn the run failed in, not an earlier step's", () => {
     const ended = record().turns.slice(0, 4);
-    render(<RunMap record={record({ phase: "publish", error: "push refused", health: null, turns: ended })} now={NOW} />);
+    render(<RunMap record={record({ phase: "publish", error: "push refused", health: null, turns: ended })} />);
     const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
     expect(rows.map((row) => row.firstChild?.textContent)).toEqual(["·", "·", "·", "·"]);
   });
@@ -170,26 +179,26 @@ describe("RunMap", () => {
   it("marks no turn when the run failed before its step's new turn started", () => {
     // Back in build after the review's changes, the Builder would not start: build-1.md ended well in round 1.
     const ended = record().turns.slice(0, 4);
-    render(<RunMap record={record({ error: "herdr refused", health: null, turns: ended })} now={NOW} />);
+    render(<RunMap record={record({ error: "herdr refused", health: null, turns: ended })} />);
     const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
     expect(rows.map((row) => row.firstChild?.textContent)).toEqual(["·", "·", "·", "·"]);
   });
 
   it("marks a failed run's turn that never ended as failed, not running", () => {
-    render(<RunMap record={record({ error: "boom", health: null })} now={NOW} />);
+    render(<RunMap record={record({ error: "boom", health: null })} />);
     const [newest] = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
     expect([...(newest?.children ?? [])].map((cell) => cell.textContent)).toEqual(["✕", "build", "build-2.md · claude opus-5.5", ""]);
   });
 
   it("does not count up a turn of a stale run, which nothing drives", () => {
-    render(<RunMap record={record({ health: "stale" })} now={NOW} />);
+    render(<RunMap record={record({ health: "stale" })} />);
     expect(screen.getByText("build · claude opus-5.5 · stale")).toBeInTheDocument();
     const [newest] = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
     expect([newest?.firstChild?.textContent, newest?.lastChild?.textContent]).toEqual(["–", "unfinished"]);
   });
 
   it("keeps eight arms, the spare ones curled", () => {
-    const { container } = render(<RunMap record={record()} now={NOW} />);
+    const { container } = render(<RunMap record={record()} />);
     expect(container.querySelectorAll(".arm")).toHaveLength(8);
     expect(container.querySelectorAll(".arm.spare")).toHaveLength(3);
   });
@@ -199,7 +208,7 @@ describe("RunMap", () => {
     const cancel = vi.fn();
     vi.stubGlobal("requestAnimationFrame", request);
     vi.stubGlobal("cancelAnimationFrame", cancel);
-    const { unmount } = render(<RunMap record={record()} now={NOW} />);
+    const { unmount } = render(<RunMap record={record()} />);
     expect(request).toHaveBeenCalled();
     unmount();
     expect(cancel).toHaveBeenCalledWith(7);
@@ -207,7 +216,7 @@ describe("RunMap", () => {
     request.mockClear();
     const reduce = mediaQuery(true);
     vi.stubGlobal("matchMedia", () => reduce);
-    const { container } = render(<RunMap record={record()} now={NOW} />);
+    const { container } = render(<RunMap record={record()} />);
     expect(request).not.toHaveBeenCalled();
     expect(container.querySelector("[data-pulse]")).toBeNull();
     expect(stations()).toHaveLength(5);
@@ -219,7 +228,7 @@ describe("RunMap", () => {
     vi.stubGlobal("cancelAnimationFrame", cancel);
     const reduce = mediaQuery(false);
     vi.stubGlobal("matchMedia", () => reduce);
-    const { container } = render(<RunMap record={record()} now={NOW} />);
+    const { container } = render(<RunMap record={record()} />);
     expect(container.querySelector("[data-pulse]")).not.toBeNull();
     act(() => reduce.set(true));
     expect(cancel).toHaveBeenCalledWith(9);
