@@ -95,9 +95,9 @@ for the runs that start after it.
   orchestrator's commands share one connection to (OpenSSH's `ControlMaster`), unless its server refuses a second
   session; see
   [Running the agents on another machine](docs/design.md#running-the-agents-on-another-machine)
-- For `--quality-gate local`: a project on a Linux x86_64 machine, which the gate is built for, with curl, tar,
-  setsid, ps, sha256sum (or shasum) and gitleaks, and the tools the project's `gate.toml` has the gate run, its test
-  commands and linters, all on `PATH`
+- For `--quality-gate local`: a project on a Linux x86_64 machine, which the gate is built for, with git 2.34+,
+  curl, tar, setsid, ps, sha256sum (or shasum) and gitleaks, and the tools the project's `gate.toml` has the gate
+  run, its test commands and linters, all on `PATH`
   ([the local gate](docs/quality-gate.md#the-local-gate))
 
 ## Install

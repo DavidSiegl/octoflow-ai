@@ -15,6 +15,13 @@ TESTING.md
 # What `cargo llvm-cov ... --output-path coverage-rust.xml` and the quality gate's --out write
 coverage-rust.xml
 quality.md
+/quality.json
+
+# What the Jenkinsfile keeps in its workspace: CARGO_HOME, with the crates registry, and the tools
+# ci/install-tools.sh installs. The gate judges every file git neither tracks nor ignores as one the change adds
+# (octoflow-gate 0.16.0), so these would be judged as the change's own.
+/.cargo-home/
+/.tools/
 
 # The desktop app's dependencies and build output, the schemas `tauri build` generates, and the third-party
 # licenses packaging/build-desktop.sh copies in for it to bundle

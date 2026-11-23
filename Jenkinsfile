@@ -13,7 +13,8 @@ pipeline {
     environment {
         UV_NO_PROGRESS = '1'
         // For the Test, UI, Gate and Package stages: crates are fetched into the workspace, which cleanWs empties, so
-        // no build compiles sources an earlier build left behind.
+        // no build compiles sources an earlier build left behind. .gitignore ignores it, and .tools/ below, so the
+        // Gate stage does not judge them as files the change adds.
         CARGO_HOME     = "${env.WORKSPACE}/.cargo-home"
         // Temporary files on the agent's mounted volume, beside the workspace, rather than in /tmp. The tests and the
         // gate build Rust in temporary directories and run what they build: the test fixtures' build scripts and test
