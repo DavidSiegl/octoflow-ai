@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The open handoff file can keep a partial write.** Raised by cross-review 286 (not recorded, outside its diff):
+  the server gives a run file's mtime in whole seconds (`RunsView::files`, `engine/src/serve/runs.rs`), and
+  `HandoffFile` (`ui/src/components/HandoffFile.tsx`) reads the file again only when the mtime changes, so a second
+  write within the same second as the one read never shows, and the panel can keep a partial first write until the
+  agent writes again. Closing it means a finer mtime (milliseconds or nanoseconds) in the files event, or the size
+  beside it as a second key.
 - **A herdr pane slides under a reader who scrolled up, once its window is full.** Raised by cross-review 284 (F1):
   `AgentPane` (`ui/src/components/AgentPanes.tsx`) reads only the agent's last `AGENT_LINES` (200) lines and replaces
   its text on every read, so once the agent has printed more, each new line drops one off the top. `useFollowEnd`
