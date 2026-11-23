@@ -15,7 +15,7 @@ TESTING.md
 # What `cargo llvm-cov ... --output-path coverage-rust.xml` and the quality gate's --out write
 coverage-rust.xml
 quality.md
-quality.json
+/quality.json
 
 # What the Jenkinsfile keeps in its workspace: CARGO_HOME, with the crates registry, and the tools
 # ci/install-tools.sh installs. The gate judges every file git neither tracks nor ignores as one the change adds
