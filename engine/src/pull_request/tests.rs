@@ -188,6 +188,16 @@ fn no_conflicts_no_warning_and_long_sections_are_truncated() {
     assert!(body.chars().count() < 65536 && body.contains("truncated"));
 }
 
+#[test]
+fn a_run_without_a_spec_has_no_spec_section() {
+    let s = state(|_| {});
+    let body = |spec: &str| pr_body(&s, spec, "r", &one("VERDICT: APPROVE"), &GateEvidence::default());
+    for blank in ["", " \n\t\n"] {
+        assert!(!body(blank).contains("<summary>Spec</summary>"), "{blank:?}");
+    }
+    assert!(body("# The spec").contains("<details open>\n<summary>Spec</summary>\n\n# The spec\n\n</details>"));
+}
+
 fn evidence(round: u32, q: u32, text: &str, unjudged: bool) -> GateEvidence {
     GateEvidence { last: Some(QualityFile { round, quality_round: q, text: text.into() }), unjudged }
 }

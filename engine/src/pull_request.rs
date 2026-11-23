@@ -250,8 +250,8 @@ fn review_details(state: &RunState, reviews: &[(String, String)]) -> Vec<String>
 }
 
 /// The pull request's body: the conflict warning and the note on a gate turned off where they apply, how the run
-/// ended, its provenance as a table, the spec, the last report, the last quality file, the reviews and the run's
-/// timings. reviews are the verdict files of the last round, as review_details takes them. quality is what the gate
+/// ended, its provenance as a table, the spec (left out when spec is blank: a run with no contract step has none), the
+/// last report, the last quality file, the reviews and the run's timings. reviews are the verdict files of the last round, as review_details takes them. quality is what the gate
 /// said of the change, as provenance takes it. state must have a verdict, as every run that publishes has.
 pub fn pr_body(
     state: &RunState,
@@ -279,7 +279,9 @@ pub fn pr_body(
     }
     parts.push(head);
     parts.push(table.join("\n"));
-    parts.push(details("Spec", spec, true));
+    if !spec.trim().is_empty() {
+        parts.push(details("Spec", spec, true));
+    }
     parts.push(details(&format!("Builder report (round {})", s.round), report, false));
     if let Some(last) = &quality.last {
         let label = if quality.unjudged {
