@@ -354,7 +354,7 @@ project only when given `--cwd`.
 | `--max-quality-rounds N` | With the gate: quality rounds per review round before the Reviewer gets the change anyway (default 3). |
 | `--force` | `resume` only: take over a run that still looks alive. |
 | `--dry-run` | `prune`, `drain`, `close` and `forget`: print what would happen, and change nothing. |
-| `--all` | `close` and `forget`, in place of a run: every finished, failed and stale run, or every closed run. |
+| `--all` | `close` and `forget`: in place of a run, every finished, failed and stale run, or every closed run. |
 | `--json`, `--pr-state` | `list` only: print the runs as one JSON document; with it, ask `gh` for each run's pull request state. |
 | `--setup-gate`, `--pin-gate VERSION` | `doctor` only: write the local gate's starter files into the project, and with `--pin-gate` a `ci/gate.pin`; see [Requirements](#requirements). |
 
