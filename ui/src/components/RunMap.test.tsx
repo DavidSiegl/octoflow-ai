@@ -1,5 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunRecord, Step, Turn } from "../api";
 import { RunMap } from "./RunMap";
 
@@ -46,13 +46,10 @@ function stations(): HTMLElement[] {
 }
 
 describe("RunMap", () => {
-  // The map counts a running turn's length to the clock: NOW, which only Date is faked to.
+  // The map counts a running turn's length to the clock: NOW, which only Date is faked to (setup.ts restores it).
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
-  });
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it("gives each stage a station in order, named with who holds it and its state", () => {

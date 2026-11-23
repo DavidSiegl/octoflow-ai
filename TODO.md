@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The run detail's two ages tick on separate clocks.** Raised by cross-review 287 (F1): `Status`
+  (`ui/src/components/RunDetail.tsx`) and `NowLine` (`ui/src/components/RunMap.tsx`) each call `useNow`
+  (`ui/src/hooks.ts`), each with its own `setInterval`, so each second the heartbeat age and the running turn's length
+  update in two commits a few ms apart, and near a second boundary one can have advanced while the other has not.
+  Never off by more than a tick. Closing it means one shared clock that every `useNow` subscribes to
+  (`useSyncExternalStore` over a single interval), which moves the overview's table with them too.
 - **The open handoff file can keep a partial write.** Raised by cross-review 286 (not recorded, outside its diff):
   the server gives a run file's mtime in whole seconds (`ProjectRuns::files`, `engine/src/serve/runs.rs`), and
   `HandoffFile` (`ui/src/components/HandoffFile.tsx`) reads the file again only when the mtime changes, so a second

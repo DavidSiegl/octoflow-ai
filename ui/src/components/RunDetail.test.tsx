@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Api, RunRecord } from "../api";
 import { RunDetail } from "./RunDetail";
 
@@ -87,10 +87,6 @@ function record(): RunRecord {
 }
 
 describe("the run detail", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("ages its heartbeat and running turn every second without rendering the file, the agent or the octopus again", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
@@ -106,14 +102,15 @@ describe("the run detail", () => {
     });
     expect(screen.getByRole("heading", { name: "The spec" })).toBeInTheDocument();
     expect(screen.getByText(/beat 1s ago/)).toBeInTheDocument();
-    const turnAge = nowLine();
+    expect(nowLine()).toBe("build · claude · running 30s");
     const before = { ...renders };
 
+    // One tick, shorter than the conversation's AGENT_POLL_MS, so only the clock has run.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByText(/beat 4s ago/)).toBeInTheDocument();
-    expect(nowLine()).not.toBe(turnAge);
+    expect(screen.getByText(/beat 2s ago/)).toBeInTheDocument();
+    expect(nowLine()).toBe("build · claude · running 31s");
     expect(renders).toEqual(before);
   });
 });
