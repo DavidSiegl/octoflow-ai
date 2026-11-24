@@ -44,15 +44,32 @@ impl Run {
     }
 }
 
-/// Run a copy of ci/actions-pinned.sh in a checkout holding each (path, contents) of files.
-fn check(files: &[(&str, &str)]) -> Run {
+/// Run a copy of ci/actions-pinned.sh in a git checkout tracking each (path, contents) of tracked, with each of
+/// untracked written beside them but not added.
+fn check_tracked(tracked: &[(&str, &str)], untracked: &[(&str, &str)]) -> Run {
     let dir = tempfile::Builder::new().prefix("xtask-actions-pinned-test-").tempdir().expect("a temporary directory");
-    for (path, contents) in [("ci/actions-pinned.sh", script().as_str())].into_iter().chain(files.iter().copied()) {
-        let path = dir.path().join(path);
-        fs::create_dir_all(path.parent().expect("a parent")).expect("made");
-        fs::write(&path, contents).expect("written");
-    }
+    let write = |files: &[(&str, &str)]| {
+        for (path, contents) in files {
+            let path = dir.path().join(path);
+            fs::create_dir_all(path.parent().expect("a parent")).expect("made");
+            fs::write(&path, contents).expect("written");
+        }
+    };
+    let git = |args: &[&str]| {
+        let status = Command::new("git").arg("-C").arg(dir.path()).args(args).status().expect("git runs");
+        assert!(status.success(), "git {args:?}: {status}");
+    };
+    git(&["init", "-q"]);
+    write(&[("ci/actions-pinned.sh", script().as_str())]);
+    write(tracked);
+    git(&["add", "-A"]);
+    write(untracked);
     run(dir.path())
+}
+
+/// Run a copy of ci/actions-pinned.sh in a git checkout tracking each (path, contents) of files.
+fn check(files: &[(&str, &str)]) -> Run {
+    check_tracked(files, &[])
 }
 
 fn script() -> String {
@@ -136,23 +153,26 @@ fn every_workflow_and_local_action_is_read_and_nothing_else() {
         "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v4\n    - uses: actions/cache@{SHA}\n"
     );
     let action = "runs:\n  using: composite\n  steps:\n    - uses: a/b@v1\n";
-    let run = check(&[
-        (".github/workflows/a.yaml", &workflow(&["- uses: actions/checkout@v7"])),
-        (".github/workflows/b.yml", &workflow(&[&format!("- uses: actions/checkout@{SHA}")])),
-        (".github/actions/setup/action.yml", &composite),
-        (".github/actions/other/action.yaml", action),
-        // A local action outside .github, which a workflow names by ./ci/actions/x or ./.
-        ("ci/actions/x/action.yml", action),
-        ("action.yml", action),
-        // Neither a workflow nor an action GitHub runs: a file of another kind, a workflow below the top level, and
-        // what git, cargo, npm and the issue tracker keep.
-        (".github/dependabot.yml", "uses: a/b@v1\n"),
-        (".github/workflows/notes.md", "uses: a/b@v1\n"),
-        (".github/workflows/sub/c.yml", &workflow(&["- uses: a/b@v1"])),
-        ("ui/node_modules/p/action.yml", action),
-        ("target/x/action.yml", action),
-        (".scratch/x/action.yml", action),
-    ]);
+    let run = check_tracked(
+        &[
+            (".github/workflows/a.yaml", &workflow(&["- uses: actions/checkout@v7"])),
+            (".github/workflows/b.yml", &workflow(&[&format!("- uses: actions/checkout@{SHA}")])),
+            (".github/actions/setup/action.yml", &composite),
+            (".github/actions/other/action.yaml", action),
+            // A local action outside .github, which a workflow names by ./ci/actions/x or ./.
+            ("ci/actions/x/action.yml", action),
+            ("action.yml", action),
+            // Neither a workflow nor an action GitHub runs: a file of another kind and a workflow below the top level.
+            (".github/dependabot.yml", "uses: a/b@v1\n"),
+            (".github/workflows/notes.md", "uses: a/b@v1\n"),
+            (".github/workflows/sub/c.yml", &workflow(&["- uses: a/b@v1"])),
+        ],
+        &[
+            // Not the repository's: what a build or a tool puts in the checkout, such as a crate's own action.
+            (".cargo-home/registry/src/c-1.0/.github/actions/setup/action.yml", action),
+            (".github/workflows/untracked.yml", &workflow(&["- uses: a/b@v1"])),
+        ],
+    );
     run.assert_unpinned(&[
         ".github/actions/other/action.yaml:4",
         ".github/actions/setup/action.yml:4",
@@ -185,6 +205,25 @@ fn a_reusable_workflow_a_flow_style_step_and_crlf_lines_are_read() {
         ".github/workflows/ci.yml:9",
         ".github/workflows/ci.yml:11",
     ]);
+}
+
+#[test]
+fn a_comment_after_a_key_hides_nothing_under_it() {
+    let text = "on: push\njobs: # all jobs\n  build:\n    steps: # each step\n      - uses: a/step@v1\n";
+    let action = "runs: # composite\n  using: composite\n  steps:\n    - uses: a/action@v1\n";
+    check(&[(".github/workflows/ci.yml", text), ("action.yml", action)])
+        .assert_unpinned(&[".github/workflows/ci.yml:5", "action.yml:4"]);
+}
+
+#[test]
+fn a_job_or_steps_in_one_line_flow_style_is_read_where_github_runs_it() {
+    let text = format!(
+        "on: push\njobs:\n  call: {{uses: o/r/.github/workflows/w.yml@v1}}\n  pinned: {{uses: o/r/w.yml@{SHA}}}\n  \
+         build:\n    steps:\n      - uses: a/b@{SHA}\n        with:\n          steps: [{{uses: a/input@v1}}]\n"
+    );
+    let action = "runs:\n  using: composite\n  steps: [{uses: a/composite@v1}]\n";
+    check(&[(".github/workflows/ci.yml", &text), ("action.yml", action)])
+        .assert_unpinned(&[".github/workflows/ci.yml:3", "action.yml:3"]);
 }
 
 #[test]

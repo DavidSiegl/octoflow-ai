@@ -2,8 +2,9 @@
 # Check, from the repository's top level, that every `uses:` GitHub runs names its action by a commit sha, 40
 # lower-case hex digits after the @, and write the verdict to target/actions-pinned/junit.xml as a JUnit report of one
 # test, actions-pinned.by-sha, which fails naming the file:line of each `uses:` that does not. It reads the workflows
-# (.github/workflows/*.yml, *.yaml, the top level only, as GitHub does) and every action.yml or action.yaml in the
-# repository outside .git, target, node_modules and .scratch, wherever a workflow's ./ may name it. A local action
+# (.github/workflows/*.yml, *.yaml, the top level only, as GitHub does) and every action.yml or action.yaml git tracks,
+# wherever a workflow's ./ may name it; only tracked files, so that what a build or a tool puts in the checkout (the
+# Jenkinsfile's CARGO_HOME, whose crates ship actions of their own) is not judged. A local action
 # (./...) and a docker:// image pinned by digest (@sha256: and 64 hex digits) pass too: neither can be moved under the
 # name the workflow gives. A tag, a branch, a short sha or no ref at all fails. Exits 0 whether or not one fails, the
 # gate judging the report, as ci/rustfmt.sh does; exits non-zero, with no report, when the files could not be read.
@@ -17,8 +18,9 @@
 # A `uses:` GitHub runs is a step's (a key of an item of a `steps:` list, in a workflow's job or a composite action's
 # runs) or a job's (a key of a job under the top-level `jobs:`, calling a reusable workflow); a key named uses anywhere
 # else, such as a with: input, and a line of a block or multi-line scalar (a run: | script) is not one. It reads block
-# style, and a flow mapping that opens and closes on one line (- {uses: ...}); a flow collection spread over lines is
-# not read (TODO.md, "actions-pinned.sh does not read a flow collection spread over lines").
+# style, and a step or job written as a flow mapping that opens and closes on one line (- {uses: ...}, steps: [...],
+# <job>: {uses: ...}); a flow collection spread over lines, or one holding the jobs: or a job's keys, is not read
+# (TODO.md, "actions-pinned.sh does not read every flow-style workflow").
 set -eu
 
 # -P: as ci/rustfmt.sh does, so that the files are named from the top level.
@@ -47,7 +49,7 @@ unpinned='
             at = index(ref, "@")
             if (at > 0 && hex(substr(ref, at + 1), 40)) return
         }
-        print name ":" FNR ": uses: " ref
+        print FILENAME ":" FNR ": uses: " ref
     }
 
     # Whether a uses: key at this place is one GitHub runs: that of a step, the open key being steps, or that of a
@@ -77,7 +79,7 @@ unpinned='
         }
     }
 
-    FNR == 1 { name = substr(FILENAME, 3); depth = 0; scalar = -1 }
+    FNR == 1 { depth = 0; scalar = -1 }
     {
         line = $0
         sub(/\r$/, "", line)
@@ -106,22 +108,27 @@ unpinned='
         gsub(/^["\047]|["\047]$/, "", k)
         v = substr(text, RLENGTH + 1)
         sub(/^[ \t]+/, "", v)
+        # A comment, after blanks or alone, is no value: jobs: # all jobs opens a mapping.
+        sub(/(^|[ \t]+)#.*$/, "", v)
         if (k == "uses" && runs()) judge(v)
-        if (k == "steps" && v ~ /^\[/) flow(v, 2)
+        # A steps: list in flow style, of a job or a composite action; a job in flow style.
+        if (k == "steps" && v ~ /^\[/ && ((depth == 2 && key[1] == "jobs") || (depth == 1 && key[1] == "runs")))
+            flow(v, 2)
+        if (v ~ /^\{/ && depth == 1 && key[1] == "jobs" && col[1] == 0) flow(v, 1)
         depth++
         key[depth] = k
         col[depth] = at
-        sub(/[ \t]+#.*$/, "", v)
         # A value on the line of the key itself, other than an anchor or tag, is a scalar or a flow collection, and the
         # deeper lines after it belong to it, not to keys of their own.
         if (v != "" && v !~ /^[&!][^ \t]*$/) scalar = at
     }
 '
-# The workflows GitHub reads, at the top level of .github/workflows, and every action a ./ can name, outside what
-# git, cargo, npm and the issue tracker keep.
-find . \( -name .git -o -name target -o -name node_modules -o -name .scratch \) -prune -o -type f \
-    \( \( -path './.github/workflows/*' ! -path './.github/workflows/*/*' \( -name '*.yml' -o -name '*.yaml' \) \) \
-    -o -name action.yml -o -name action.yaml \) -exec awk "$unpinned" {} + > "$out/unsorted"
+# The workflows GitHub reads, at the top level of .github/workflows, and every action a ./ can name. :(glob): a * that
+# does not cross a slash. -r: no awk at all, which would read standard input, when git tracks none.
+# Listed to a file first, not piped, so that set -e stops a git that fails (sh has no pipefail).
+git ls-files -z -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' \
+    ':(glob)**/action.yaml' > "$out/files"
+xargs -0 -r awk "$unpinned" < "$out/files" > "$out/unsorted"
 # Sorted by file, then numerically by line: find lists the files in no set order.
 sort -t: -k1,1 -k2,2n "$out/unsorted" > "$out/unpinned"
 
