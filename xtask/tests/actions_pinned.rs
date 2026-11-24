@@ -290,6 +290,8 @@ fn a_top_level_not_in_block_style_or_a_key_this_check_cannot_compare_fails_as_no
         (".github/workflows/anchored-jobs.yml", "on: push\n&j jobs:\n  call:\n    uses: o/r/w.yml@v1\n"),
         (".github/workflows/bom.yml", "\u{feff}jobs:\n  call:\n    uses: o/r/w.yml@v1\n"),
         (".github/workflows/json.yml", json),
+        // The same, on the line of the document's start marker.
+        (".github/workflows/marked.yml", &format!("--- {json}")),
         (".github/workflows/script.yml", &script),
         (".github/workflows/steps.yml", &keys),
     ]);
@@ -297,6 +299,7 @@ fn a_top_level_not_in_block_style_or_a_key_this_check_cannot_compare_fails_as_no
         ".github/workflows/anchored-jobs.yml:2",
         ".github/workflows/bom.yml:3",
         ".github/workflows/json.yml:1",
+        ".github/workflows/marked.yml:1",
         ".github/workflows/steps.yml:6",
         ".github/workflows/steps.yml:8",
         ".github/workflows/steps.yml:9",
@@ -304,6 +307,7 @@ fn a_top_level_not_in_block_style_or_a_key_this_check_cannot_compare_fails_as_no
     let stderr = run.stderr();
     for said in [
         "json.yml:1: the document in flow style",
+        "marked.yml:1: the document in flow style",
         "anchored-jobs.yml:2: the document with an anchor, tag or alias",
         "steps.yml:6: a step with an explicit key (?)",
         "steps.yml:8: a step with a merge key (<<)",

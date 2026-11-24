@@ -102,6 +102,9 @@ unpinned='
         if (scalar >= 0 && at > scalar) next
         scalar = -1
         text = substr(line, at + 1)
+        # The document start marker, which can carry the document on its own line ("--- {...}"): what follows it is
+        # the top level.
+        if (at == 0 && sub(/^---([ \t]+|$)/, "", text) && text == "") next
         # A list item: its content starts after "- ", a column deeper.
         item = 0
         while (text ~ /^-([ \t]|$)/) {
