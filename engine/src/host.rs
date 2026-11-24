@@ -415,18 +415,18 @@ pub trait Host {
         self.check(&["sh", "-c", script, "_", path], Some(text), DEFAULT_TIMEOUT).map(drop)
     }
 
-    /// Make a file at path holding text, making its directory if it is missing, but only if nothing is at path yet:
-    /// true when it was made, false when something was there, which is left as it is. Of several processes making
-    /// one path at once, on this host or another reaching it, exactly one gets true, and a reader never sees the file
-    /// half written. Errors: the file cannot be written, or the host cannot be reached.
+    /// Make a file at path holding text, but only if nothing is at path yet: true when it was made, false when
+    /// something was there, which is left as it is. Of several processes making one path at once, on this host or
+    /// another reaching it, exactly one gets true (O_EXCL, which NFS keeps from version 3 on). A reader may find the
+    /// file empty or partly written while it is being written. Errors: path's directory is missing, the file cannot
+    /// be written (it is then not left there), or the host cannot be reached.
     fn create_new(&self, path: &str, text: &str) -> Result<bool, OrchestratorError> {
-        // Written aside, then hard-linked into place: link(2) fails on a path already taken, atomically, and the text
-        // is whole before the link makes it visible.
+        // noclobber makes the redirection O_EXCL. `command` keeps a failed exec's redirection from ending the shell
+        // before the path is looked at, as it would for a special built-in.
         const TAKEN: i32 = 4;
         let script = format!(
-            "t=\"$1.tmp.$$\"; mkdir -p -- \"$(dirname -- \"$1\")\" && cat > \"$t\" || {{ rm -f -- \"$t\"; exit 1; }}; \
-             if e=$(ln -- \"$t\" \"$1\" 2>&1); then rm -f -- \"$t\"; exit 0; fi; rm -f -- \"$t\"; \
-             if [ -e \"$1\" ] || [ -L \"$1\" ]; then exit {TAKEN}; fi; printf '%s\\n' \"$e\" >&2; exit 1"
+            "set -C; command exec 3>\"$1\" || {{ if [ -e \"$1\" ] || [ -L \"$1\" ]; then exit {TAKEN}; fi; exit 1; }}; \
+             cat >&3 || {{ rm -f -- \"$1\"; exit 1; }}"
         );
         let proc = self.run(&["sh", "-c", &script, "_", path], Some(text), DEFAULT_TIMEOUT)?;
         match proc.status {
@@ -434,6 +434,12 @@ pub trait Host {
             TAKEN => Ok(false),
             _ => Err(OrchestratorError(format!("making {path}: {}", proc.stderr.trim()))),
         }
+    }
+
+    /// Set the mtime of the file at path to the host's now; a path with nothing there is left so. Errors: the file
+    /// cannot be touched, or the host cannot be reached.
+    fn touch(&self, path: &str) -> Result<(), OrchestratorError> {
+        self.check(&["touch", "-c", "--", path], None, DEFAULT_TIMEOUT).map(drop)
     }
 
     /// Move the file at path to new_path, replacing what is there.

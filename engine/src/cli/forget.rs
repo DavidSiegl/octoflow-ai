@@ -2,14 +2,13 @@
 
 use super::prune::awaits_prune;
 use super::{refuse_app_run, Connected};
-use crate::constants::EXIT_ERROR;
+use crate::constants::{EXIT_ERROR, HEARTBEAT_SECONDS};
 use crate::error::OrchestratorError;
 use crate::host::{Host, RunScope};
 use crate::interrupt::Interrupt;
-use crate::json::{object, ValueExt};
+use crate::json::object;
 use crate::state::{find_run, run_dir, SavedRun};
 use serde_json::Value;
-use std::time::Duration;
 
 /// What forgetting works with: the CLI's Connected, or serve's project (crate::serve::runs::ProjectRuns::forget_all).
 pub struct Forgetter<'a> {
@@ -106,8 +105,8 @@ impl<'a> Forgetter<'a> {
 /// or without one of every closed run, keeping their metrics (Host::forget_run), and print what became of each; with
 /// dry_run, print what would go and change nothing. A run that is not closed, or whose branch prune has yet to delete,
 /// is refused alone and left by a sweep, as is a run whose state cannot be read; a run whose directory cannot be
-/// deleted does not stop a sweep. A raised Interrupt starts no further run. A forget that deletes first waits for any
-/// other of the project to end (FORGET_LOCK).
+/// deleted does not stop a sweep. A raised Interrupt starts no further run. A forget that deletes is refused while
+/// another of the project runs (FORGET_LOCK).
 ///
 /// Returns the exit status: EXIT_ERROR when a run of a sweep failed, else 0. Errors: the project's runs cannot be read;
 /// for run_ref, no run or several match it, or it is left as decide says, or forgetting it fails; the forget lock
@@ -123,7 +122,7 @@ pub fn forget_command(
         let runs = forget_all(&forgetter, cwd, if dry_run { Sweep::DryRun } else { Sweep::All })?;
         return Ok(if runs.iter().any(|run| matches!(run.outcome, Outcome::Failed(_))) { EXIT_ERROR } else { 0 });
     };
-    let _lock = if dry_run { None } else { Some(ForgetLock::take(&forgetter, cwd)?) };
+    let _lock = if dry_run { None } else { ForgetLock::take(&forgetter, cwd)? };
     let runs = world.with.host.run_states(cwd)?;
     let run = find_run(&runs, run_ref, cwd)?;
     let run_id = &run.shown().run_id;
@@ -142,15 +141,16 @@ pub fn forget_command(
 /// Forget the closed runs of the project at cwd that sweep names, as forget_command says, printing a line per run
 /// forgotten (or to be), skipped or failed, then a count of each outcome. The runs are every run of the project
 /// world's scope reads (RunScope), in run id order, or a Sweep::Listed's, in its order. A raised Interrupt starts no further run.
-/// A sweep but a dry run holds the project's forget lock throughout, first waiting for any other forget of the project
-/// to end (FORGET_LOCK).
+/// A sweep but a dry run holds the project's forget lock throughout, and is refused while another forget of the
+/// project holds it (FORGET_LOCK).
 ///
 /// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::All, the
 /// project's runs cannot be read at the start (a Sweep::Listed run that cannot be read at its turn is Outcome::Failed);
-/// the forget lock cannot be taken (ForgetLock::take).
+/// the forget lock cannot be taken (ForgetLock::take), or another forget took it over mid-sweep, which stops the sweep
+/// (ForgetLock::renew).
 pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunForgotten>, OrchestratorError> {
     let dry_run = matches!(sweep, Sweep::DryRun);
-    let _lock = if dry_run { None } else { Some(ForgetLock::take(world, cwd)?) };
+    let lock = if dry_run { None } else { ForgetLock::take(world, cwd)? };
     // Every run of the project, read once here; none for a Sweep::Listed, whose runs are read at their turns.
     let mut every = match sweep {
         Sweep::DryRun | Sweep::All => world.scope.states(world.host, cwd)?,
@@ -165,6 +165,9 @@ pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunF
     for (i, run_id) in ids.into_iter().enumerate() {
         if world.interrupt.is_raised() {
             break;
+        }
+        if let Some(lock) = &lock {
+            lock.renew()?;
         }
         let outcome = match every.get(i) {
             Some(run) => sweep_one(world, cwd, run, dry_run),
@@ -244,18 +247,15 @@ fn forget(world: &Forgetter, cwd: &str, run_id: &str, dry_run: bool) -> Result<(
 
 /// The project's forget lock, relative to the project. Every forget that deletes holds it (ForgetLock), from reading
 /// the runs until the last is forgotten, so that forgets of one project by several processes (two apps' serve,
-/// `octoflow forget` beside one, on any machine reaching the project) run one after the other: a run they all read is
-/// forgotten by the first, found gone by the rest, and its metrics archived once. Its text names the holder: JSON with
-/// its machine ("host"), its process ("pid") and a "nonce" of its own.
+/// `octoflow forget` beside one, on any machine reaching the project) never run at once: while one holds it, another
+/// is refused. Its text names the holder: JSON with its machine ("host"), its process ("pid") and a "nonce" of its
+/// own. Its mtime is the holder's heartbeat, renewed before each run it forgets (ForgetLock::renew).
 const FORGET_LOCK: &str = concat!(crate::project_dir!(), "/forget.lock");
 
-/// How old, in seconds by its mtime on the project's host, a forget lock another machine's process holds must be to be
-/// taken for one it left when it died: that process cannot be asked, as this machine's can. A sweep forgets a run in a
-/// few commands, so a live one holds the lock far shorter.
-const FOREIGN_LOCK_STALE: i64 = 600;
-
-/// How long a forget waits before it tries again for a forget lock another holds.
-const LOCK_RETRY: Duration = Duration::from_secs(1);
+/// How long, in seconds by the project's host's clock, a forget lock's heartbeat must have been silent for the lock to
+/// be taken for one its holder left when it died. The holder renews it before each run, so this bounds the forgetting
+/// of one run (an append to the metrics archive and the delete of its directory), not a whole sweep.
+const LOCK_SILENCE: i64 = 600;
 
 /// The project's forget lock (FORGET_LOCK), held: released when dropped.
 struct ForgetLock<'w, 'a> {
@@ -268,11 +268,14 @@ struct ForgetLock<'w, 'a> {
 }
 
 impl<'w, 'a> ForgetLock<'w, 'a> {
-    /// Take the forget lock of the project at cwd for world, waiting while another live process holds it, which world
-    /// is told of once. A lock left by a process that died is taken over: one of this machine whose pid is gone, or
-    /// one of another machine FOREIGN_LOCK_STALE old. Errors: the interrupt is raised before it is taken; the lock
-    /// cannot be read, made, moved or removed; the system's random bytes cannot be read.
-    fn take(world: &'w Forgetter<'a>, cwd: &str) -> Result<ForgetLock<'w, 'a>, OrchestratorError> {
+    /// Take the forget lock of the project at cwd for world, taking over one its holder left when it died
+    /// (left_by_the_dead). None, and no lock, when the project has no directory of its own (crate::project_dir!), and
+    /// so no run to forget. Errors: another holds it, who is named; something other than a file is at its path; the
+    /// lock cannot be read, made, moved or removed; the system's random bytes cannot be read.
+    fn take(world: &'w Forgetter<'a>, cwd: &str) -> Result<Option<ForgetLock<'w, 'a>>, OrchestratorError> {
+        if !world.host.exists(&format!("{cwd}/{}", crate::project_dir!()))? {
+            return Ok(None);
+        }
         let path = format!("{cwd}/{FORGET_LOCK}");
         let bytes: [u8; 8] = crate::env::random_bytes()
             .map_err(|e| OrchestratorError(format!("cannot read /dev/urandom for a forget lock: {e}")))?;
@@ -283,37 +286,51 @@ impl<'w, 'a> ForgetLock<'w, 'a> {
             ("nonce", Value::from(nonce.as_str())),
         ]);
         let text = format!("{}\n", Value::Object(holder));
-        let mut told = false;
+        // Each pass ends in the lock taken or refused, or finds it released or taken over since, and tries again.
         loop {
-            if world.interrupt.is_raised() {
-                return Err(OrchestratorError(format!("interrupted while waiting for the forget lock {path}")));
-            }
             if world.host.create_new(&path, &text)? {
-                return Ok(ForgetLock { world, path, text });
+                return Ok(Some(ForgetLock { world, path, text }));
             }
-            // Released since, when it is gone: try again at once.
-            let Some(held) = world.host.read(&path)? else { continue };
-            let dead = match left_by_the_dead(world, &path, &held) {
-                Ok(dead) => dead,
-                Err(_) if !world.host.exists(&path)? => continue,
-                Err(e) => return Err(e),
-            };
-            if dead {
-                take_over(world, &path, &held, &nonce)?;
+            let Some(held) = world.host.read(&path)? else {
+                if world.host.exists(&path)? {
+                    return Err(OrchestratorError(format!(
+                        "{path} is not a file: no forget of this project can run until it is removed"
+                    )));
+                }
                 continue;
+            };
+            match left_by_the_dead(world, &path, &held) {
+                Ok(true) => take_over(world, &path, &held, &nonce)?,
+                Ok(false) => {
+                    let who = holder_of(&held).map_or("a holder its text does not name".to_string(), |(host, pid)| {
+                        format!("process {pid} on {host}")
+                    });
+                    return Err(OrchestratorError(format!(
+                        "another forget of this project is running: {who} holds {path}; forget again once it ends"
+                    )));
+                }
+                Err(_) if !world.host.exists(&path)? => {}
+                Err(e) => return Err(e),
             }
-            if !told {
-                world.say(&format!("waiting for another forget of this project to end: it holds {path}"));
-                told = true;
-            }
-            world.interrupt.sleep(LOCK_RETRY);
         }
+    }
+
+    /// Renew the lock's heartbeat, before forgetting the next run. Errors: the lock is no longer this one's, as when
+    /// another forget took it for left by the dead, and the sweep must stop; it cannot be read or touched.
+    fn renew(&self) -> Result<(), OrchestratorError> {
+        if self.world.host.read(&self.path)?.as_deref() != Some(self.text.as_str()) {
+            return Err(OrchestratorError(format!(
+                "the forget lock {} was taken over by another forget, which took this one for dead: stopped",
+                self.path
+            )));
+        }
+        self.world.host.touch(&self.path)
     }
 }
 
 impl Drop for ForgetLock<'_, '_> {
-    /// Remove the lock if it is still this one's (one taken over as left by the dead is its taker's), even past the
-    /// Ctrl-C; a failure is told, as the lock then holds back this machine's forgets for as long as this process lives.
+    /// Remove the lock if it is still this one's (one taken over is its taker's), even past the Ctrl-C. A failure is
+    /// told, as the lock then refuses the project's forgets until its heartbeat has been silent LOCK_SILENCE.
     fn drop(&mut self) {
         let world = self.world;
         let released = world.interrupt.finally(|| match world.host.read(&self.path)? {
@@ -326,26 +343,29 @@ impl Drop for ForgetLock<'_, '_> {
     }
 }
 
-/// Whether the forget lock at path, whose text is held, was left by a process that died (ForgetLock::take says which).
-/// A text naming no holder, as a hand-made lock may, counts as another machine's. Errors: the lock's age cannot be read,
-/// as when it is gone since.
-fn left_by_the_dead(world: &Forgetter, path: &str, held: &str) -> Result<bool, OrchestratorError> {
-    let holder = serde_json::from_str::<Value>(held).ok();
-    let field = |key: &str| holder.as_ref().and_then(|h| h.get(key)).cloned();
-    if let (Some(host), Some(pid)) = (field("host"), field("pid").and_then(|p| p.as_i64())) {
-        if host.text() == world.local_host {
-            return Ok(!(world.pid_alive)(pid));
-        }
-    }
-    Ok(world.host.now()? - world.host.mtime(path)? >= FOREIGN_LOCK_STALE)
+/// The machine and process a forget lock's text held names, if it names both.
+fn holder_of(held: &str) -> Option<(String, i64)> {
+    let holder = serde_json::from_str::<Value>(held).ok()?;
+    Some((holder.get("host")?.as_str()?.to_string(), holder.get("pid")?.as_i64()?))
 }
 
-/// Remove the forget lock at path, read as held and found left by the dead, unless it changed since. It is moved
-/// aside first, to a name nonce makes this process's own, and only removed there if it is still held: so of two
-/// processes that found it so at once, the second moves the first's new lock, sees that, and puts it back. A third
-/// that took the lock in that instant would hold it with the first; that needs three forgets of one project and a
-/// dead process's lock at once, and is accepted. Errors: the lock cannot be moved (other than for being gone), read,
-/// put back or removed.
+/// Whether the forget lock at path, whose text is held, was left by a process that died: one naming a process of this
+/// machine that is gone, its heartbeat late by HEARTBEAT_SECONDS too, or any whose heartbeat has been silent
+/// LOCK_SILENCE. A lock naming no holder is judged by its heartbeat alone. The late heartbeat is asked of a dead pid
+/// as RunState::health asks it, for the same reason: another machine of this one's name may hold the lock. Errors: the
+/// lock's age cannot be read, as when it is gone since.
+fn left_by_the_dead(world: &Forgetter, path: &str, held: &str) -> Result<bool, OrchestratorError> {
+    let age = world.host.now()? - world.host.mtime(path)?;
+    let gone = |(host, pid): (String, i64)| host == world.local_host && !(world.pid_alive)(pid);
+    Ok(age >= LOCK_SILENCE || age > HEARTBEAT_SECONDS as i64 && holder_of(held).is_some_and(gone))
+}
+
+/// Remove the forget lock at path, read as held and found left by the dead, unless it changed since. It is moved aside
+/// first, to a name nonce makes this process's own, and removed there only if it is still held: so of two processes
+/// that found it so at once, the second moves the first's new lock, sees that, and puts it back. Should the first have
+/// released it in between, the lock put back has nobody to renew it and is taken over once silent LOCK_SILENCE; should
+/// a third have made one in between, the put-back fails and the first stops at its next ForgetLock::renew. Errors: the
+/// lock cannot be moved (other than for being gone), read, put back or removed.
 fn take_over(world: &Forgetter, path: &str, held: &str, nonce: &str) -> Result<(), OrchestratorError> {
     let aside = format!("{path}.{nonce}");
     if let Err(e) = world.host.rename(path, &aside) {
@@ -353,7 +373,8 @@ fn take_over(world: &Forgetter, path: &str, held: &str, nonce: &str) -> Result<(
         return if world.host.exists(path)? { Err(e) } else { Ok(()) };
     }
     if let Some(moved) = world.host.read(&aside)?.filter(|moved| moved != held) {
-        world.host.create_new(path, &moved)?;
+        // False when a third made the lock in between: see above.
+        let _put_back = world.host.create_new(path, &moved)?;
     }
     world.host.remove(&aside)
 }

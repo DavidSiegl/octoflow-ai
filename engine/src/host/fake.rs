@@ -770,6 +770,16 @@ impl Host for FakeHost {
         self.write(path, text, false).map(|()| true)
     }
 
+    /// The file's mtime set to the clock's now, if there is one at path.
+    fn touch(&self, path: &str) -> Result<(), OrchestratorError> {
+        let mut s = self.state();
+        if s.files.contains_key(path) {
+            let now = s.now();
+            s.mtimes.insert(path.to_string(), now);
+        }
+        Ok(())
+    }
+
     /// Whether a file is at path, or under it as its directory: a fake holds files only.
     fn exists(&self, path: &str) -> Result<bool, OrchestratorError> {
         let s = self.state();

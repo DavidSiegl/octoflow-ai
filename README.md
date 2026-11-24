@@ -315,7 +315,7 @@ octoflow close e292fb
 octoflow close --all --dry-run
 
 # Delete every closed run's directory, so that list no longer shows it; metrics still prints its line. A run whose
-# branch prune has yet to delete stays until it has
+# branch prune has yet to delete stays until it has. Refused while another forget of the project runs
 octoflow forget --all
 
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
