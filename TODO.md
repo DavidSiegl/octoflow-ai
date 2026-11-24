@@ -126,9 +126,16 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **A turn's waits on something outside the run show in its log only.** turn-timeout-waits/01 left out: the time an
   agent reported waiting (`<stem>.waiting`, `Workflow::await_handoff`) is not in its turn record (`TurnRecord`), so
   `summary.md`'s turn table, `turn-duration-clock`'s durations and the desktop app count a turn's time with its waits
-  in, and none of them shows that the agent is waiting; only the human's notice and the run's log say so. Closes when
-  the user decides whether a turn records its waited seconds and the run view shows a standing wait, and that is
-  built or dropped.
+  in, and none of them shows that the agent is waiting; only the human's notice and the run's log say so. A turn's
+  `waited_seconds` (0.101.0, run-findings 03) counts only an ACP agent's waits for a permission's answer, not these.
+  Closes when the user decides whether a turn records these waits too, and under what name, since `waited_seconds`
+  and the tables' "(… waiting)" already name the permission waits alone (review 301, F5), and whether the run view
+  shows a standing wait, and that is built or dropped.
+- **The desktop app shows a turn's time without its permission waits.** Raised by cross-review 301 (F6): the run
+  map (`ui/src/components/RunMap.tsx`, its turn durations) shows a turn's whole `seconds`, though over ACP, where
+  the app is where permissions are answered, the turn record now holds `waited_seconds` too and `summary.md` shows
+  "3m 44s (3m 19s waiting)". Closes when the app's `TurnRecord` (`ui/src/api.ts`) reads the field and the run map
+  shows it the same way.
 
 - **No test runs the pinned Node's real npm.** Review 263: the tests' fake npm (`acp_adapter/tests.rs`) knows only the
   npm rules someone added to it after they broke an install, so a config rule it does not know (as 0.93.5's

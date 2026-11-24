@@ -553,10 +553,11 @@ fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
 }
 
 /// The build turn of a run of backend, started at HOST_EPOCH and its file written 300 s later, closed by end_turn
-/// with the Builder's journal holding a permission asked at 100 s and answered at 220 s.
+/// with the Builder's journal, on disk, holding a permission asked at 100 s and answered at 220 s.
 fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
+    let tmp = crate::test_support::TempDir::new();
     let mut state = saved_run("build", 1, &["spec"]);
-    state.backend = backend;
+    (state.backend, state.cwd) = (backend, tmp.path());
     let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![]);
     let (dir, path) = (f.state.dir(), f.state.build_path(1));
     let line = |seq: u64, seconds: i64, kind: &str| {
@@ -564,8 +565,10 @@ fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
         format!(r#"{{"seq":{seq},"at":"{at}","kind":"{kind}","request":1}}"#)
     };
     let journal = [r#"{"journal":1}"#.to_string(), line(1, 100, "permission"), line(2, 220, "answered")];
+    // The journal is the orchestrator's own file, which crate::acp reads from disk, not through the host.
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(format!("{dir}/{}", crate::acp::journal_name("build")), journal.join("\n") + "\n").unwrap();
     let mut host = f.host.state();
-    host.files.insert(format!("{dir}/{}", crate::acp::journal_name("build")), journal.join("\n") + "\n");
     host.files.insert(path.clone(), "# Build report\n".into());
     host.mtimes.insert(path.clone(), HOST_EPOCH + 300);
     drop(host);

@@ -71,8 +71,9 @@ about a different run. Two runs that start together each see the other's claim a
 `state.json` keeps a record per handoff file in `turns`: its step, role, round and quality round, the harness
 and model of its agent (none for a quality analysis, whose role is `quality`), whether it is human-paced,
 `started_at`, `ended_at` and `seconds`, and in an ACP run `waited_seconds`: how many of those seconds the agent
-waited for your answer to a permission it asked for, from each `permission` line of its role's journal to that
-request's `answered` line, waits that overlap counted once (absent in a herdr run, whose waits are not recorded).
+waited for your answer to a permission it asked for, as its role's journal records the waits. How a wait is measured
+is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent, a herdr run's turn among them,
+`TurnRecord::waited_seconds`'s (engine/src/state.rs).
 
 - An agent's turn starts when its prompt is first sent. The prompt counts as delivered once the agent takes it:
   herdr reports it `working` or `blocked`, or its handoff file appears, within `PROMPT_DELIVERY_SECONDS`. One it

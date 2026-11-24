@@ -69,13 +69,14 @@ pub fn replay(text: &str, after: u64) -> Result<Replay, Option<u64>> {
     Ok(Replay { session_start, events })
 }
 
-/// How many of the seconds from `from` to `to` (seconds since the epoch) the journal whose text is text has an agent
-/// waiting for the answer to a permission it asked for: from each `permission` line to the `answered` line of its
-/// `request`, or with none, to the next `exited` or `session` line, or to `to`. Waits that overlap count once. A line
-/// that does not read, or whose `at` is not a time, is passed over; an empty text has no waits.
-pub fn waited_seconds(text: &str, from: i64, to: i64) -> i64 {
+/// The waits of crate::acp::waited_seconds (which says how each is measured) from `from` to `to`, in seconds since the
+/// epoch, in the journal whose text is text. A line that does not read, or whose `at` is not a time, is passed over;
+/// an empty text has no waits.
+pub(super) fn waited_seconds_in(text: &str, from: i64, to: i64) -> i64 {
     let mut asked: Vec<(u64, i64)> = vec![];
     let mut waits: Vec<(i64, i64)> = vec![];
+    // The `at` of the last line read.
+    let mut last = from;
     for line in text.lines() {
         let Ok(event) = serde_json::from_str::<Value>(line) else { continue };
         let Some(at) = event.get("at").and_then(Value::as_str).and_then(|at| epoch_seconds(at).ok()) else { continue };
@@ -87,9 +88,11 @@ pub fn waited_seconds(text: &str, from: i64, to: i64) -> i64 {
                     waits.push((asked.swap_remove(i).1, at));
                 }
             }
-            Some("exited" | "session") => waits.extend(asked.drain(..).map(|(_, start)| (start, at))),
+            Some("exited") => waits.extend(asked.drain(..).map(|(_, start)| (start, at))),
+            Some("session") => waits.extend(asked.drain(..).map(|(_, start)| (start, last))),
             _ => {}
         }
+        last = at;
     }
     waits.extend(asked.into_iter().map(|(_, start)| (start, to)));
     // The waits clipped to [from, to], then merged in order of their start, so that an overlap counts once.
@@ -216,7 +219,7 @@ mod tests {
             (163, "answered", json!({"request": 2, "option": "allow", "by": "human"})),
         ]);
 
-        assert_eq!(waited_seconds(&text, 100, 200), 43);
+        assert_eq!(waited_seconds_in(&text, 100, 200), 43);
     }
 
     #[test]
@@ -228,7 +231,7 @@ mod tests {
             (140, "answered", json!({"request": 2, "option": "allow", "by": "human"})),
         ]);
 
-        assert_eq!(waited_seconds(&text, 100, 200), 30);
+        assert_eq!(waited_seconds_in(&text, 100, 200), 30);
     }
 
     #[test]
@@ -240,7 +243,7 @@ mod tests {
             (220, "answered", json!({"request": 2, "option": "allow", "by": "human"})),
         ]);
 
-        assert_eq!(waited_seconds(&text, 100, 200), 20);
+        assert_eq!(waited_seconds_in(&text, 100, 200), 20);
     }
 
     #[test]
@@ -252,7 +255,22 @@ mod tests {
             (140, "permission", json!({"request": 2})),
         ]);
 
-        assert_eq!(waited_seconds(&text, 100, 200), 10 + 60);
+        assert_eq!(waited_seconds_in(&text, 100, 200), 10 + 60);
+    }
+
+    #[test]
+    fn a_wait_cut_off_by_a_lost_orchestrator_ends_at_its_session_s_last_line() {
+        // The orchestrator dies twice while the role's agent waits, and each resume starts it a new session; nothing
+        // journals the old agent's end, as end_leftovers kills it without a line.
+        let text = journal(&[
+            (110, "permission", json!({"request": 1})),
+            (115, "update", json!({"update": {}})),
+            (3700, "session", json!({"session": "t", "harness": "claude", "resumed": true})),
+            (3710, "permission", json!({"request": 2})),
+            (3800, "session", json!({"session": "u", "harness": "claude", "resumed": true})),
+        ]);
+
+        assert_eq!(waited_seconds_in(&text, 100, 4000), 5);
     }
 
     #[test]
@@ -263,8 +281,8 @@ mod tests {
         );
         text.push_str(&format!("{}\n", json!({"seq": 4, "at": iso_utc(115), "kind": "answered", "request": 1})));
 
-        assert_eq!(waited_seconds(&text, 100, 200), 5);
-        assert_eq!(waited_seconds("", 100, 200), 0);
+        assert_eq!(waited_seconds_in(&text, 100, 200), 5);
+        assert_eq!(waited_seconds_in("", 100, 200), 0);
     }
 
     #[test]

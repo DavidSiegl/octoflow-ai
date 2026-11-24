@@ -18,7 +18,7 @@ mod journal;
 mod socket;
 
 pub use groups::{end_leftovers, leftovers};
-pub use journal::{replay, waited_seconds, Replay, PROTOCOL};
+pub use journal::{replay, Replay, PROTOCOL};
 pub use socket::{ask, SocketError, SOCKET_RECORD};
 
 use std::collections::HashMap;
@@ -464,6 +464,24 @@ impl Commands for Running {
 /// The name of the role's journal in its run directory (journal's module comment says what it holds).
 pub fn journal_name(role: &str) -> String {
     format!("{role}.events.jsonl")
+}
+
+/// How many of the seconds from `from` to `to` (seconds since the epoch) the role's agent in run waited for the
+/// human's answer to a permission it asked for, as its journal records them: from each `permission` line to the
+/// `answered` line of its `request`. One with no answer waits until its agent's `exited` line; without one, until the
+/// last line of its session before the next `session` line, since an orchestrator that died while the agent waited
+/// (the agent then ended by end_leftovers, which journals nothing) left no line to say when the wait ended; and in
+/// the journal's last session, until `to`. Waits that overlap count once. 0 for a role with no journal. A line not
+/// written whole, as by a crash, is passed over, bytes that are not UTF-8 among them. Errors: the journal cannot be
+/// read.
+pub fn waited_seconds(run: &RunState, role: &str, from: i64, to: i64) -> Result<i64, OrchestratorError> {
+    let path = format!("{}/{}", run.dir(), journal_name(role));
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(OrchestratorError(format!("cannot read {path}: {e}"))),
+    };
+    Ok(journal::waited_seconds_in(&String::from_utf8_lossy(&bytes), from, to))
 }
 
 /// The path of the record of the role's agent's process group in the run directory dir.

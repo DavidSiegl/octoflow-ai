@@ -637,21 +637,16 @@ impl Workflow<'_> {
         self.save()
     }
 
-    /// How many seconds from started to ended (since the epoch) the role's agent waited for the human to answer a
-    /// permission it asked for, as TurnRecord::waited_seconds has it: None in a herdr run, and where the role's
-    /// journal cannot be read, which is logged; 0 where it has none.
+    /// The role's agent's waits for a permission's answer from started to ended (since the epoch), as
+    /// TurnRecord::waited_seconds has them: None in a herdr run, and where the role's journal cannot be read, which
+    /// is logged.
     fn waited_seconds(&self, role: &str, started: i64, ended: i64) -> Option<i64> {
         if self.state.backend != Backend::Acp {
             return None;
         }
-        let path = format!("{}/{}", self.state.dir(), acp::journal_name(role));
-        match self.host.read(&path) {
-            Ok(text) => Some(acp::waited_seconds(&text.unwrap_or_default(), started, ended)),
-            Err(e) => {
-                self.human.log(&format!("[{role}] could not read its journal for the turn's waits: {e}"));
-                None
-            }
-        }
+        acp::waited_seconds(&self.state, role, started, ended)
+            .map_err(|e| self.human.log(&format!("[{role}] could not read its journal for the turn's waits: {e}")))
+            .ok()
     }
 
     /// Make sure the role's agent is running, and say how: as `alive` finds it, else started again.
