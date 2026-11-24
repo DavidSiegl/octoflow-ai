@@ -1,3 +1,4 @@
+import { useNow } from "../hooks";
 import type { RunEntry } from "../runs";
 import { formatRound, heartbeatAge, outcome, prLabel } from "../runs";
 import { OutsideLink } from "./OutsideLink";
@@ -6,8 +7,6 @@ import { StepProgress } from "./StepProgress";
 interface TableProps {
   /** The runs to list, in the order the table lists them. */
   runs: RunEntry[];
-  /** The time, in milliseconds since the epoch, that the heartbeats are aged to. */
-  now: number;
   selected: string | null;
   onSelect: (run: string) => void;
 }
@@ -25,7 +24,7 @@ interface Props extends TableProps {
 /** A table of the project's runs, one row per run; a click on a row selects its run. Closed runs are listed only
  * with showClosed; the checkbox that sets it, and the button that deletes them, are there only while some run is
  * closed. */
-export function RunsOverview({ runs, now, selected, onSelect, showClosed, onShowClosed, onForget }: Props) {
+export function RunsOverview({ runs, selected, onSelect, showClosed, onShowClosed, onForget }: Props) {
   const closedCount = runs.filter((entry) => entry.record.closed).length;
   const shown = showClosed ? runs : runs.filter((entry) => !entry.record.closed);
   return (
@@ -42,12 +41,14 @@ export function RunsOverview({ runs, now, selected, onSelect, showClosed, onShow
           </button>
         </div>
       )}
-      {shown.length > 0 && <RunsTable runs={shown} now={now} selected={selected} onSelect={onSelect} />}
+      {shown.length > 0 && <RunsTable runs={shown} selected={selected} onSelect={onSelect} />}
     </>
   );
 }
 
-function RunsTable({ runs, now, selected, onSelect }: TableProps) {
+/** The table of runs, its heartbeats aged to the clock, which re-renders it every tick. */
+function RunsTable({ runs, selected, onSelect }: TableProps) {
+  const now = useNow();
   return (
     <table className="runs">
       <thead>

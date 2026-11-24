@@ -11,7 +11,7 @@ import { RunsOverview } from "./components/RunsOverview";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupDialog } from "./components/SetupDialog";
 import { WorkflowsDialog } from "./components/WorkflowsDialog";
-import { useNow, useRunStream } from "./hooks";
+import { useRunStream } from "./hooks";
 import { runsNewestFirst } from "./runs";
 
 // The project last opened, kept per viewer across starts.
@@ -160,7 +160,6 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   // The id of the run last started from the form; null before one is.
   const [started, setStarted] = useState<string | null>(null);
   const state = useRunStream(api, project);
-  const now = useNow();
   const entry = selected ? state.runs[selected] : undefined;
   const openStarted = (run: string) => {
     setFormOpen(false);
@@ -174,7 +173,7 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
       {cleaningUp && <CleanUpDialog api={api} project={project} runs={state.runs} onClose={() => setCleaningUp(false)} />}
       {forgetting && <ForgetDialog api={api} project={project} runs={state.runs} onClose={() => setForgetting(false)} />}
       {entry ? (
-        <RunDetail key={entry.record.id} api={api} project={project} entry={entry} now={now} onClose={() => setSelected(null)} />
+        <RunDetail key={entry.record.id} api={api} project={project} entry={entry} onClose={() => setSelected(null)} />
       ) : (
         <>
           <div className="runs-actions">
@@ -198,7 +197,6 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
           </div>
           <RunsOverview
             runs={runsNewestFirst(state)}
-            now={now}
             selected={selected}
             onSelect={setSelected}
             showClosed={showClosed}
