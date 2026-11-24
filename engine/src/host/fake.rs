@@ -762,6 +762,14 @@ impl Host for FakeHost {
         self.write(path, &format!("{old}{text}"), false)
     }
 
+    /// write of text, unless exists finds something at path.
+    fn create_new(&self, path: &str, text: &str) -> Result<bool, OrchestratorError> {
+        if self.exists(path)? {
+            return Ok(false);
+        }
+        self.write(path, text, false).map(|()| true)
+    }
+
     /// Whether a file is at path, or under it as its directory: a fake holds files only.
     fn exists(&self, path: &str) -> Result<bool, OrchestratorError> {
         let s = self.state();

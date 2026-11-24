@@ -237,3 +237,120 @@ fn a_listed_run_is_read_at_its_turn_so_one_forgotten_since_is_gone() {
         format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 2 skipped\n", dir(CLOSED))
     );
 }
+
+/// The project's forget lock in /proj.
+fn lock() -> String {
+    format!("/proj/{}", super::FORGET_LOCK)
+}
+
+/// A forget lock's text naming host and pid as its holder.
+fn held_by(host: &str, pid: i64) -> String {
+    format!("{}\n", json!({"host": host, "pid": pid, "nonce": "0123456789abcdef"}))
+}
+
+/// forget_all of every run in /proj from the CLI's world, but raising its interrupt as forget says it waits for
+/// another's lock: what it returned, and what it printed.
+fn sweep_until_it_waits(cli: &Cli) -> (Result<Vec<RunForgotten>, String>, String) {
+    let printed = std::cell::RefCell::new(String::new());
+    let stdout = |text: &str| {
+        if text.starts_with("waiting for another forget") {
+            cli.f.interrupt.raise();
+        }
+        printed.borrow_mut().push_str(text);
+    };
+    let runs =
+        cli.with(|world| forget_all(&Forgetter { stdout: &stdout, ..Forgetter::of(world) }, "/proj", Sweep::All));
+    (runs.map_err(|e| e.0), printed.into_inner())
+}
+
+use crate::cli::forget::{forget_all, Forgetter, RunForgotten, Sweep};
+
+#[test]
+fn a_forget_holds_the_lock_while_it_deletes_and_a_dry_run_takes_none() {
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    add(&cli, FINISHED, Some("workspace closed"), true);
+    // Whether the lock was there at each write of the metrics archive, which forgetting a run makes.
+    let held = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let (seen, host) = (std::rc::Rc::clone(&held), std::rc::Rc::clone(&cli.f.host));
+    cli.f.host.state().after_write = Some(Box::new(move |path| {
+        if path.ends_with("/metrics-archive.jsonl") {
+            seen.borrow_mut().push(host.state().files.contains_key(&lock()));
+        }
+    }));
+
+    assert_eq!(run(&cli, &["forget", "--all", "--dry-run"]).0, 0);
+    assert!(!cli.f.host.state().writes.contains(&lock()));
+    assert_eq!(run(&cli, &["forget", CLOSED]).0, 0);
+    assert_eq!(run(&cli, &["forget", "--all"]).0, 0);
+    assert_eq!(*held.borrow(), [true, true]);
+    assert!(!cli.f.host.state().files.contains_key(&lock()));
+}
+
+#[test]
+fn a_lock_its_holder_left_when_it_died_is_taken_over() {
+    // This machine's process that is gone, and another machine's lock FOREIGN_LOCK_STALE old.
+    for (holder, age) in [(held_by("here", 4242), 0), (held_by("there", 4242), super::FOREIGN_LOCK_STALE)] {
+        let cli = cli();
+        add(&cli, CLOSED, Some("workspace closed"), true);
+        let now = crate::host::Host::now(&*cli.f.host).unwrap();
+        cli.f.host.state().files.insert(lock(), holder.clone());
+        cli.f.host.state().mtimes.insert(lock(), now - age);
+        let (status, out) = run(&cli, &["forget", "--all"]);
+        assert_eq!(
+            (status, out),
+            (0, format!("forgot run {CLOSED}: deleted {}\n1 forgotten, 0 not closed, 0 skipped\n", dir(CLOSED))),
+            "{holder}"
+        );
+        let left: Vec<String> =
+            cli.f.host.state().files.keys().filter(|p| p.contains("forget.lock")).cloned().collect();
+        assert!(left.is_empty(), "{left:?}");
+    }
+}
+
+#[test]
+fn a_forget_waits_for_a_live_holder_until_interrupted() {
+    // This machine's live process, another machine's lock younger than FOREIGN_LOCK_STALE, and a hand-made lock.
+    let holders = [held_by("here", 4242), held_by("there", 1), "made by hand\n".to_string()];
+    for holder in holders {
+        let mut cli = cli();
+        cli.f.pid_alive = Box::new(|pid| pid == 4242);
+        add(&cli, CLOSED, Some("workspace closed"), true);
+        let now = crate::host::Host::now(&*cli.f.host).unwrap();
+        cli.f.host.state().files.insert(lock(), holder.clone());
+        cli.f.host.state().mtimes.insert(lock(), now - super::FOREIGN_LOCK_STALE + 1);
+        let (runs, out) = sweep_until_it_waits(&cli);
+        assert_eq!(runs, Err(format!("interrupted while waiting for the forget lock {}", lock())), "{holder}");
+        assert_eq!(out, format!("waiting for another forget of this project to end: it holds {}\n", lock()));
+        assert!(kept(&cli, CLOSED), "{holder}");
+        assert_eq!(cli.f.host.state().files.get(&lock()), Some(&holder));
+    }
+}
+
+#[test]
+fn a_dead_holders_lock_another_took_over_first_is_put_back() {
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    cli.f.host.state().files.insert(lock(), held_by("here", 4242));
+    // Between reading the dead holder's lock and moving it aside, another forget takes it over and holds it.
+    let live = held_by("there", 1);
+    let (taken, host) = (live.clone(), std::rc::Rc::clone(&cli.f.host));
+    cli.f.host.state().before_rename = Some(Box::new(move |path, _| {
+        if path == lock() {
+            host.state().files.insert(lock(), taken.clone());
+        }
+    }));
+    let (runs, out) = sweep_until_it_waits(&cli);
+    assert!(runs.is_err() && out.starts_with("waiting for another forget"), "{runs:?} {out}");
+    assert!(kept(&cli, CLOSED));
+    let locks: Vec<(String, String)> = cli
+        .f
+        .host
+        .state()
+        .files
+        .iter()
+        .filter(|(p, _)| p.contains("forget.lock"))
+        .map(|(p, t)| (p.clone(), t.clone()))
+        .collect();
+    assert_eq!(locks, [(lock(), live)]);
+}

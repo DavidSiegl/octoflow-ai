@@ -323,6 +323,25 @@ fn exists_finds_a_file_a_directory_or_a_dangling_link() {
 }
 
 #[test]
+fn create_new_makes_a_file_and_its_directory_only_where_nothing_is() {
+    let (d, host) = (TempDir::new(), ProcessHost::local(&Interrupt::new()));
+    let path = d.join("project/.octoflow-ai/forget.lock");
+    assert!(host.create_new(&path, "first\n").unwrap());
+    assert!(!host.create_new(&path, "second\n").unwrap());
+    assert_eq!(host.read(&path).unwrap().as_deref(), Some("first\n"));
+    // A dangling link is something there too; and no file written aside is left behind.
+    std::os::unix::fs::symlink(d.join("nowhere"), d.join("project/link")).unwrap();
+    assert!(!host.create_new(&d.join("project/link"), "x").unwrap());
+    let names = |dir: &str| {
+        let mut names: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(&d.join("project/.octoflow-ai")), ["forget.lock"]);
+    assert_eq!(names(&d.join("project")), [".octoflow-ai", "link"]);
+}
+
+#[test]
 fn read_failure_raises() {
     let d = TempDir::new();
     let path = d.join("spec.md");

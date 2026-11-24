@@ -84,8 +84,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   ruling, 2026-11-11): either costs a gate release and a `BUILT_IN_PIN` bump for the name of one file in the report.
 - **Comments that point at TODO.md for what is now a ticket.** The entries they name became todo tickets on
   2026-11-24, and each ticket's change rewrites its comment: `take_base_branch`'s doc (`engine/src/workflow.rs`, "A
-  run's base can be a closed run's branch prune deletes") is todo/113 (GitHub #632), and `ProjectRuns::forgetting`
-  (`engine/src/serve/runs.rs`, another process's forget sweep) is todo/108 (#627).
+  run's base can be a closed run's branch prune deletes") is todo/113 (GitHub #632).
 - **Only a round's first Builder report that changes nothing tracked skips the quality step.** Kept by choice (the
   user's ruling, 2026-11-24, todo-tickets): the narrowing of todo 90's wording in `take_turn`'s `unjudgeable`
   (`engine/src/workflow.rs`) costs one gate run in a rare case.

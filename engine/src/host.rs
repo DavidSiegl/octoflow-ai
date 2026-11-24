@@ -415,6 +415,27 @@ pub trait Host {
         self.check(&["sh", "-c", script, "_", path], Some(text), DEFAULT_TIMEOUT).map(drop)
     }
 
+    /// Make a file at path holding text, making its directory if it is missing, but only if nothing is at path yet:
+    /// true when it was made, false when something was there, which is left as it is. Of several processes making
+    /// one path at once, on this host or another reaching it, exactly one gets true, and a reader never sees the file
+    /// half written. Errors: the file cannot be written, or the host cannot be reached.
+    fn create_new(&self, path: &str, text: &str) -> Result<bool, OrchestratorError> {
+        // Written aside, then hard-linked into place: link(2) fails on a path already taken, atomically, and the text
+        // is whole before the link makes it visible.
+        const TAKEN: i32 = 4;
+        let script = format!(
+            "t=\"$1.tmp.$$\"; mkdir -p -- \"$(dirname -- \"$1\")\" && cat > \"$t\" || {{ rm -f -- \"$t\"; exit 1; }}; \
+             if e=$(ln -- \"$t\" \"$1\" 2>&1); then rm -f -- \"$t\"; exit 0; fi; rm -f -- \"$t\"; \
+             if [ -e \"$1\" ] || [ -L \"$1\" ]; then exit {TAKEN}; fi; printf '%s\\n' \"$e\" >&2; exit 1"
+        );
+        let proc = self.run(&["sh", "-c", &script, "_", path], Some(text), DEFAULT_TIMEOUT)?;
+        match proc.status {
+            0 => Ok(true),
+            TAKEN => Ok(false),
+            _ => Err(OrchestratorError(format!("making {path}: {}", proc.stderr.trim()))),
+        }
+    }
+
     /// Move the file at path to new_path, replacing what is there.
     fn rename(&self, path: &str, new_path: &str) -> Result<(), OrchestratorError> {
         self.check(&["mv", "-f", "--", path, new_path], None, DEFAULT_TIMEOUT).map(drop)
