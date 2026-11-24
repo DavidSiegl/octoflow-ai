@@ -85,10 +85,12 @@ export function useFollowEnd<T extends HTMLElement>(content: unknown, origin?: u
  * new content would slide what the reader is on out from under them: the content to show, which holds while the reader
  * is scrolled up from the element's end. shown is latest while the element is at its end, and the element follows its
  * end as useFollowEnd does; once the reader scrolls up, shown stays what it was, through every change of latest, until
- * they scroll back to the end, which shows latest. held is true while shown is not latest. ref goes on the element. */
+ * they scroll back to the end, which shows latest. held is true while shown is not latest. toEnd scrolls the element
+ * to its end and shows latest, as the reader's own scroll there would. ref goes on the element, which must be mounted
+ * from the hook's first render to its last: the scroll listener is attached to it once. */
 export function useHeldWhileScrolledUp<T extends HTMLElement, C>(
   latest: C,
-): { ref: RefObject<T | null>; shown: C; held: boolean } {
+): { ref: RefObject<T | null>; shown: C; held: boolean; toEnd: () => void } {
   const [shown, setShown] = useState(latest);
   const ref = useFollowEnd<T>(shown);
   // latest as of the last render, for the scroll listener, which outlives renders.
@@ -115,5 +117,12 @@ export function useHeldWhileScrolledUp<T extends HTMLElement, C>(
     el.addEventListener("scroll", onScroll);
     return () => el.removeEventListener("scroll", onScroll);
   }, [ref]);
-  return { ref, shown, held: shown !== latest };
+  const toEnd = () => {
+    const el = ref.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+    setShown(latestNow.current);
+  };
+  return { ref, shown, held: shown !== latest, toEnd };
 }

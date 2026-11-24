@@ -97,6 +97,50 @@ describe("the herdr pane of an agent whose output outgrows the lines read", () =
     });
     expect(pane.textContent).toBe("line 7\nline 8\nline 9\nline 10\nline 11");
     expect(pane.scrollTop).toBe(pane.scrollHeight);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("goes to its end and follows it again once input the reader sent while it held arrives", async () => {
+    vi.useFakeTimers();
+    let lines = 0;
+    const agentText = vi.fn(async () => {
+      lines += 3;
+      return Array.from({ length: lines }, (_, i) => `line ${i}`)
+        .slice(-5)
+        .join("\n");
+    });
+    const typeInto = vi.fn(async () => undefined);
+    const api = { agentText, typeInto } as unknown as Api;
+    const record = {
+      id: "20261122-120000-c0ffee",
+      role: "spec",
+      backend: "herdr",
+      agents: [{ role: "spec", name: "spec-1", kind: "claude" }],
+    } as unknown as RunRecord;
+    render(<AgentPanes api={api} project={PROJECT} record={record} />);
+    const pane = screen.getByLabelText("what the spec agent shows");
+    Object.defineProperty(pane, "scrollHeight", { get: () => 20 * (pane.textContent ?? "").split("\n").length });
+    Object.defineProperty(pane, "clientHeight", { value: 60 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+    });
+    pane.scrollTop = 0;
+    await act(async () => {
+      fireEvent.scroll(pane);
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+    });
+    expect(pane.textContent).toBe("line 1\nline 2\nline 3\nline 4\nline 5");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "press enter" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(typeInto).toHaveBeenCalled();
+    expect(pane.textContent).toBe("line 7\nline 8\nline 9\nline 10\nline 11");
+    expect(pane.scrollTop).toBe(pane.scrollHeight);
+    expect(screen.getByRole("status")).toHaveTextContent("");
   });
 });

@@ -73,12 +73,14 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
   const [sending, setSending] = useState(false);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
   // Each read replaces the window of lines whole, so while the reader is scrolled up it would slide what they read.
-  const { ref: screen, shown, held } = useHeldWhileScrolledUp<HTMLPreElement, string | null>(text);
+  const { ref: screen, shown: screenText, held, toEnd } = useHeldWhileScrolledUp<HTMLPreElement, string | null>(text);
 
   const type = (input: AgentInput) =>
     api.typeInto(project, run, agent.role, input).then(
       () => {
         setSendProblem(null);
+        // As a terminal does on input: the reader is to see what it brings, also if they had scrolled up.
+        toEnd();
         refresh();
         return true;
       },
@@ -104,13 +106,12 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
     <div className="agent" role="tabpanel" aria-label={`${agent.role} agent`}>
       {problem && <p className="problem">{problem}</p>}
       <pre ref={screen} aria-label={`what the ${agent.role} agent shows`}>
-        {shown ?? "Reading…"}
+        {screenText ?? "Reading…"}
       </pre>
-      {held && (
-        <p className="notice" role="status">
-          Held while you are scrolled up: scroll to the end for newer output.
-        </p>
-      )}
+      {/* Mounted, empty, while nothing is held, so that a screen reader announces the text when it comes. */}
+      <p className="notice" role="status">
+        {held && "Held while you are scrolled up: scroll to the end for newer output."}
+      </p>
       <form onSubmit={submit}>
         <input
           aria-label={`Message to the ${agent.role} agent`}
