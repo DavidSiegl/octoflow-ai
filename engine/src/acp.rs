@@ -53,6 +53,11 @@ const REQUEST_SECONDS: u64 = 120;
 /// turn. Tests, whose fake agent answers at once or never, wait less.
 const SETTLE_MS: u64 = if cfg!(test) { 2_000 } else { 10_000 };
 
+/// How long agents killed with prompts pending (AcpAgents' drop, as at the run's Ctrl-C) have, once cancelled, to
+/// answer the cancel, in milliseconds: long enough for an agent that is still reading to answer with its usage, short
+/// enough that a Ctrl-C is not held up. Tests wait less.
+const KILL_SETTLE_MS: u64 = if cfg!(test) { 500 } else { 2_000 };
+
 /// How often, in milliseconds, a settle looks at the run's Ctrl-C while it waits.
 const SETTLE_SLICE_MS: u64 = 100;
 
@@ -60,8 +65,8 @@ const SETTLE_SLICE_MS: u64 = 100;
 const PROTOCOL_VERSION: u64 = 1;
 
 /// The agents of one run, which its orchestrator drives over ACP: each role's, once started, until it exits or is
-/// ended; and the run's socket, from the run's open on. Dropping it kills the agents (Connection's drop) and closes
-/// the socket.
+/// ended; and the run's socket, from the run's open on. Dropping it kills the agents, their pending prompts cancelled
+/// first (its Drop), and closes the socket.
 pub struct AcpAgents<'h> {
     /// Told an agent's error, as find comes upon it.
     human: &'h dyn Human,
@@ -396,6 +401,22 @@ impl AcpAgents<'_> {
             connection.stop();
         }
         still_pending(pending, interrupt);
+    }
+}
+
+impl Drop for AcpAgents<'_> {
+    /// Cancel what every agent still running has pending and give them KILL_SETTLE_MS to answer, so that the usage
+    /// each answer carries is recorded, before their connections' drop kills them. end drains the agents it kills, so
+    /// this is the way out of a run whose orchestrator stops without ending them: its Ctrl-C, or an error.
+    fn drop(&mut self) {
+        let connections = self.connections();
+        for connection in &connections {
+            connection.stop();
+        }
+        let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
+        for connection in &connections {
+            connection.wait_answered(deadline);
+        }
     }
 }
 

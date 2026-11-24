@@ -697,6 +697,30 @@ fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     assert_eq!(cancels(), cancelled_before, "{}", f.log());
 }
 
+/// Agents dropped with prompts pending, as a run released as interrupted drops them, are cancelled and given
+/// KILL_SETTLE_MS to answer, so the usage an answer carries is recorded; one that never answers is killed once that
+/// is up, not SETTLE_MS later (cross-review 275 F5).
+#[test]
+fn agents_dropped_at_a_ctrl_c_are_cancelled_and_the_usage_of_their_answers_recorded() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    for (role, text) in [("builder", "HANG"), ("reviewer", "DEAF")] {
+        agents.start(&f.run, role, &launch("agy")).expect("start");
+        agents.prompt(&f.run, role, text).expect("prompt");
+    }
+    f.interrupt.raise();
+
+    let dropping = Instant::now();
+    drop(agents);
+
+    let waited = dropping.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(f.log().matches("session/cancel ").count(), 2, "{}", f.log());
+    assert_eq!(session_usage(&read(&usage_file(&f.run)), "s-1").len(), 1, "the HANG agent's answer to its cancel");
+}
+
 #[test]
 fn a_run_binds_to_acp_and_a_herdr_run_is_not_opened() {
     let mut f = Fixture::new();
@@ -1024,11 +1048,14 @@ fn a_resumed_role_s_journal_goes_on_numbering_and_its_reopened_session_is_journa
 
     let lines = journal(&f);
     let kinds: Vec<&str> = lines.iter().filter_map(|l| l["kind"].as_str()).collect();
-    assert_eq!(kinds, ["session", "prompt", "permission", "exited", "session", "prompt", "permission"]);
+    // The drop cancelled the first agent's permission and prompt before it killed it.
+    let first = ["session", "prompt", "permission", "answered", "turn_end", "exited"];
+    assert_eq!(kinds, [&first[..], &["session", "prompt", "permission"]].concat());
+    assert_eq!(lines[4]["by"], "stop");
     let seqs: Vec<u64> = lines.iter().filter_map(|l| l["seq"].as_u64()).collect();
-    assert_eq!(seqs, [1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(lines[5]["resumed"], true);
-    assert_eq!(lines[7]["request"], 2);
+    assert_eq!(seqs, (1..=9).collect::<Vec<u64>>());
+    assert_eq!(lines[7]["resumed"], true);
+    assert_eq!(lines[9]["request"], 2);
     // Request 1 was the session before's: this connection never had it.
     assert_eq!(agents.answer("builder", 1, "allow"), Err(CommandError::NoRequest));
 }
