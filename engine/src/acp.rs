@@ -18,7 +18,7 @@ mod journal;
 mod socket;
 
 pub use groups::{end_leftovers, leftovers};
-pub use journal::{replay, Replay, PROTOCOL};
+pub use journal::{replay, waited_seconds, Replay, PROTOCOL};
 pub use socket::{ask, SocketError, SOCKET_RECORD};
 
 use std::collections::HashMap;

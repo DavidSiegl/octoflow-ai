@@ -92,6 +92,29 @@ fn turn_lines_shows_starts_in_the_zone_given() {
 }
 
 #[test]
+fn a_turn_that_waited_for_permission_answers_says_how_long_and_its_metrics_too() {
+    let waited = |n: Option<i64>| move |t: &mut Object| _ = t.insert("waited_seconds".into(), Value::from(n));
+    let turns = [
+        turn("review", "review-1.md", Some(0), Some(224), waited(Some(199))),
+        turn("build", "build-1.md", Some(0), Some(5), waited(Some(0))),
+        turn("spec", "spec.md", Some(0), Some(5), waited(None)),
+    ];
+
+    let table = turns_table(&turns);
+    let lines = turn_lines(&turns, &jiff::tz::TimeZone::UTC);
+    let mut s = approved_run();
+    s.turns = turns.to_vec();
+    let metrics = run_metrics(&s, 1_791_000_300);
+
+    assert!(table.contains("| 3m 44s (3m 19s waiting) | review-1.md |"), "{table}");
+    assert!(table.contains("| 5s | build-1.md |"), "{table}");
+    assert!(lines[0].contains("3m 44s (3m 19s waiting)"), "{lines:?}");
+    let turns = metrics.get("turns").and_then(Value::as_array).unwrap();
+    let waits: Vec<Option<&Value>> = turns.iter().map(|t| t.get("waited_seconds")).collect();
+    assert_eq!(waits, [Some(&Value::from(199)), Some(&Value::from(0)), None]);
+}
+
+#[test]
 fn a_pipe_in_a_cell_does_not_split_it() {
     let table = turns_table(&[turn("build", "a|b.md", Some(0), Some(5), |t| {
         t.insert("model".into(), Value::from("x|y"));

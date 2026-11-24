@@ -2,6 +2,7 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
+use crate::acp;
 use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Waiting};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
@@ -12,7 +13,7 @@ use crate::harness::harness;
 use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
+use crate::state::{AgentRecord, AgentStart, Backend, RunState, TurnRecord};
 use crate::summary::{epoch_seconds, iso_utc};
 use serde_json::Value;
 
@@ -587,6 +588,7 @@ impl Workflow<'_> {
             started_at: started.map(iso_utc),
             ended_at: None,
             seconds: None,
+            waited_seconds: None,
             unknown: Object::new(),
         }
     }
@@ -624,10 +626,32 @@ impl Workflow<'_> {
             .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
         let mtime = self.host.mtime(path)?;
         let ended = started.map_or(mtime, |started| mtime.max(started));
+        let waited = match started {
+            Some(started) if self.state.turns[i].harness.is_some() => self.waited_seconds(role, started, ended),
+            _ => None,
+        };
         let record = &mut self.state.turns[i];
         record.ended_at = Some(iso_utc(ended));
         record.seconds = started.map(|started| ended - started);
+        record.waited_seconds = waited;
         self.save()
+    }
+
+    /// How many seconds from started to ended (since the epoch) the role's agent waited for the human to answer a
+    /// permission it asked for, as TurnRecord::waited_seconds has it: None in a herdr run, and where the role's
+    /// journal cannot be read, which is logged; 0 where it has none.
+    fn waited_seconds(&self, role: &str, started: i64, ended: i64) -> Option<i64> {
+        if self.state.backend != Backend::Acp {
+            return None;
+        }
+        let path = format!("{}/{}", self.state.dir(), acp::journal_name(role));
+        match self.host.read(&path) {
+            Ok(text) => Some(acp::waited_seconds(&text.unwrap_or_default(), started, ended)),
+            Err(e) => {
+                self.human.log(&format!("[{role}] could not read its journal for the turn's waits: {e}"));
+                None
+            }
+        }
     }
 
     /// Make sure the role's agent is running, and say how: as `alive` finds it, else started again.

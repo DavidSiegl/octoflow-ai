@@ -552,6 +552,46 @@ fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
     assert_eq!(tokens, [r#""unknown""#, r#"{"input":11,"output":4,"cache_read":6,"cache_write":8}"#, r#""unknown""#]);
 }
 
+/// The build turn of a run of backend, started at HOST_EPOCH and its file written 300 s later, closed by end_turn
+/// with the Builder's journal holding a permission asked at 100 s and answered at 220 s.
+fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
+    let mut state = saved_run("build", 1, &["spec"]);
+    state.backend = backend;
+    let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![]);
+    let (dir, path) = (f.state.dir(), f.state.build_path(1));
+    let line = |seq: u64, seconds: i64, kind: &str| {
+        let at = crate::summary::iso_utc(HOST_EPOCH + seconds);
+        format!(r#"{{"seq":{seq},"at":"{at}","kind":"{kind}","request":1}}"#)
+    };
+    let journal = [r#"{"journal":1}"#.to_string(), line(1, 100, "permission"), line(2, 220, "answered")];
+    let mut host = f.host.state();
+    host.files.insert(format!("{dir}/{}", crate::acp::journal_name("build")), journal.join("\n") + "\n");
+    host.files.insert(path.clone(), "# Build report\n".into());
+    host.mtimes.insert(path.clone(), HOST_EPOCH + 300);
+    drop(host);
+    let mut wf = f.workflow(f.as_saved());
+    let record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH));
+    wf.state.turns.push(record);
+
+    wf.end_turn("build", &path).expect("the turn closes");
+
+    wf.state.turns.pop().unwrap()
+}
+
+#[test]
+fn an_acp_turn_records_how_long_its_agent_waited_for_permission_answers() {
+    let turn = build_turn_closed(crate::state::Backend::Acp);
+
+    assert_eq!((turn.seconds, turn.waited_seconds), (Some(300), Some(120)));
+}
+
+#[test]
+fn a_herdr_turn_records_no_wait() {
+    let turn = build_turn_closed(crate::state::Backend::Herdr);
+
+    assert_eq!((turn.seconds, turn.waited_seconds), (Some(300), None));
+}
+
 #[test]
 fn a_turn_that_changed_sessions_has_unknown_tokens() {
     let mut state = saved_run("build", 1, &["spec", "build"]);

@@ -254,7 +254,8 @@ pub enum AgentStart {
 }
 
 /// The record of one handoff file's turn (RunState::turns), as Workflow::turn_record opens it and end_turn closes it.
-/// Saved with every field, None as null, in this order, then the fields this engine does not know.
+/// Saved with every field, None as null (but waited_seconds, saved only when known), in this order, then the fields
+/// this engine does not know.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TurnRecord {
     /// The phase the turn was in: its step's id, or QUALITY for a quality analysis.
@@ -299,6 +300,13 @@ pub struct TurnRecord {
     /// ended_at less started_at, in seconds; None while either is not known.
     #[serde(deserialize_with = "Option::deserialize")]
     pub seconds: Option<i64>,
+    /// Of seconds, how many the turn's agent spent waiting for the human's answer to a permission it asked for, as an
+    /// ACP run's journal records them (crate::acp::waited_seconds). None for a turn of a herdr run, which records no
+    /// such waits, for a quality analysis, while either end is not known, and in a record saved by an engine that did
+    /// not keep it. Saved only when known, unlike the fields before it, so that a record without it is written back
+    /// as it was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waited_seconds: Option<i64>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
