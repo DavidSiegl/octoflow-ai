@@ -48,128 +48,23 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   update in two commits a few ms apart, and near a second boundary one can have advanced while the other has not.
   Never off by more than a tick. Closing it means one shared clock that every `useNow` subscribes to
   (`useSyncExternalStore` over a single interval), which moves the overview's table with them too.
-- **The open handoff file can keep a partial write.** Raised by cross-review 286 (not recorded, outside its diff):
-  the server gives a run file's mtime in whole seconds (`ProjectRuns::files`, `engine/src/serve/runs.rs`), and
-  `HandoffFile` (`ui/src/components/HandoffFile.tsx`) reads the file again only when the mtime changes, so a second
-  write within the same second as the one read never shows, and the panel can keep a partial first write until the
-  agent writes again. Closing it means a finer mtime (milliseconds or nanoseconds) in the files event, or the size
-  beside it as a second key.
-- **A herdr pane slides under a reader who scrolled up, once its window is full.** Raised by cross-review 284 (F1):
-  `AgentPane` (`ui/src/components/AgentPanes.tsx`) reads only the agent's last `AGENT_LINES` (200) lines and replaces
-  its text on every read, so once the agent has printed more, each new line drops one off the top. `useFollowEnd`
-  keeps `scrollTop`, so the pane no longer snaps to its end, but the line the reader was on moves up with every read
-  that brings new output. Closing it means keeping their place across reads: matching the line at the top of the view
-  in the new text (a TUI redraws its last screen, so the reads are not a plain append), or reading more lines while
-  the reader is scrolled up. The ACP conversation keeps every event and has no such window.
-- **summary.md, the pull request body and metrics.json do not say a role's model was not offered.** Ticket
-  herdr-gui-decoupling 15: a turn records the model its agent ran on and the role's model it was not offered
-  (`TurnRecord::unoffered_model`), but the roles table of summary.md (`run_summary`, `engine/src/summary.rs`) and of
-  the pull request body (`engine/src/pull_request.rs`), and metrics.json's `roles`, read `RunState::models`, so an
-  ACP run whose harness did not offer the role's model still names that one there. Their turn rows
-  (`TurnCells::of` and `run_metrics`'s `turns`, `engine/src/summary.rs`) carry no `unoffered_model`, so a turn whose
-  session neither offered the role's model nor named another reads `default`, as for a role that asked for none.
-  Closed when they name the model the role's turns ran on and say where it was not offered.
-
-- **A run's base can be a closed run's branch prune deletes.** Review 278 (todo 92): `take_base_branch` takes a
-  closed run's branch that `origin` has as a new run's base, and the new run's pull request targets it, but
-  `prune_remote` (`engine/src/cli/prune.rs`) deletes `origin`'s branch of a merged pull request, or of one closed past
-  `CLOSED_BRANCH_GRACE`, without asking whether another run records it as its `base_branch`; GitHub then closes the
-  new run's pull request. Closed when prune keeps a branch another live run builds on, or the refusal covers it.
-
-- **A GitHub token reaches tools in directories the build user can write outside the workspace.** Review 276 (todo
-  91): the Version stage's `gh pr list` and the Release stage's `gh release create` take PATH entries outside
-  `$WORKSPACE` on trust, so a `gh` a pull request's tests leave in, say, `~/.local/bin` lasts into later builds and
-  runs with `GH_TOKEN`, main's Release included. Whether the Jenkins agent's PATH has such a directory could not be
-  checked from here (its systemInfo page is admin-only); the Go tools installed in `~/.local` on 2026-11-11 suggest
-  it may. Closed when the agent's PATH is shown to hold only root-owned directories, or both stages run `gh` by a
-  root-owned absolute path.
-
 - **A release made after a higher one is marked Latest on GitHub, and two Release stages can overlap.** Review 291
   (release-gaps 01): `gh release create` passes no `--latest`, and GitHub marks a new release Latest by default, so a
   main build that releases a lower version after a higher one's (main's builds may run at once: the Jenkinsfile has no
   `disableConcurrentBuilds()`) moves Latest back. Two such builds that both list the releases before either creates
   its own also put the lower version's notes on both pages (`ci/release-notes.sh`). Closed when Release passes
   `--latest` only for the highest version and the Release stage is serialized, or such overlap is shown not to happen.
-
-- **"The run has the quality gate" is spelt two ways.** Raised by cross-review 268 (F6): `step_prompt.rs` tests
-  `quality_job.is_some()`, while `gate_switch.rs`, `cli.rs` (resume's gate check) and `cli/listing.rs` test
-  `quality_job.as_deref().is_some_and(|j| !j.is_empty())`; within a run they agree (workflow.rs sets quality_job from
-  the `quality_gate_on` the gate runs on). Closes with one `RunState` method, next to `had_quality_gate`, that every
-  site calls.
-
-- **With the gate on, only a round's first Builder report that changes nothing tracked skips the quality step.**
-  Raised by cross-review 270 (F5): todo ticket 90 says "a Builder turn whose tracked tree matches the base skips the
-  quality step"; "a fix turn after a quality round that leaves the tracked tree at the base is still judged"
-  (`engine/src/workflow.rs`, `take_turn`'s `unjudgeable`). From quality round 1 on, the round's quality files are the
-  gate's record and the next step reads the Builder's report by `quality_round` (`Step::last_path`), so skipping there
-  needs `quality_round` advanced with no quality file, which `gate_passed`, `quality_note` and `gate_evidence` would
-  then read as a failed or missing analysis. Closes when the user rules the narrowing fine, or those readers learn a
-  skipped quality round.
-
-- **A run with nothing to publish says so only in summary.md and the log.** Raised by cross-review 270 (F7): "`show`,
-  the listing JSON and the desktop app see `pr: null` and cannot tell 'nothing to publish' from 'never opened'"
-  (`engine/src/cli/listing.rs`, `run_record`). Closes when the run record carries `RunState::nothing_to_publish` and
-  `show` and the app word it.
-
-- **A turn's waits on something outside the run show in its log only.** turn-timeout-waits/01 left out: the time an
-  agent reported waiting (`<stem>.waiting`, `Workflow::await_handoff`) is not in its turn record (`TurnRecord`), so
-  `summary.md`'s turn table, `turn-duration-clock`'s durations and the desktop app count a turn's time with its waits
-  in, and none of them shows that the agent is waiting; only the human's notice and the run's log say so. A turn's
-  `waited_seconds` (0.101.0, run-findings 03) counts only an ACP agent's waits for a permission's answer, not these.
-  Closes when the user decides whether a turn records these waits too, and under what name, since `waited_seconds`
-  and the tables' "(… waiting)" already name the permission waits alone (review 301, F5), and whether the run view
-  shows a standing wait, and that is built or dropped.
 - **The desktop app shows a turn's time without its permission waits.** Raised by cross-review 301 (F6): the run
   map (`ui/src/components/RunMap.tsx`, its turn durations) shows a turn's whole `seconds`, though over ACP, where
   the app is where permissions are answered, the turn record now holds `waited_seconds` too and `summary.md` shows
   "3m 44s (3m 19s waiting)". Closes when the app's `TurnRecord` (`ui/src/api.ts`) reads the field and the run map
   shows it the same way.
-
-- **No test runs the pinned Node's real npm.** Review 263: the tests' fake npm (`acp_adapter/tests.rs`) knows only the
-  npm rules someone added to it after they broke an install, so a config rule it does not know (as 0.93.5's
-  double-loading refusal was) is caught only by a real install by hand. Closed by an opt-in test that installs with
-  the pinned Node's npm against a local registry, or ignored by default and run before a pin raise.
-
-- **An ACP turn's usage is lost when the run is interrupted with its prompt pending.** Raised by cross-review 275
-  (F5): "`Drop for Connection` kills the agent with no settle, which is how an ACP run released as interrupted
-  (Ctrl-C, or the app's stop) loses its agents. The prompt pending at that moment never gets its `acp-usage.jsonl`
-  line, so that turn can count 'unknown' on a later resume." The count, a restart and `end` settle their agents
-  first (`AcpAgents::settle_all`, gui-followups 03); an interrupt skips the wait on purpose, so that the Ctrl-C is
-  not held up. Closes when an interrupted run's agents are cancelled and their answers to the cancel read before
-  the kill, within a wait short enough for a Ctrl-C.
-
-- **A resumed done run's late summary.md or metrics.json can miss the desktop app.** Raised by cross-review 238 (F3):
-  a done run stopped before its ending wrote them is finished by a resume that writes them without saving state.json
-  after (`Workflow::end_done_run`, `ending_left`'s `release: false`), so serve's event stream, which stopped listing
-  the run's files once they settled, lists them again only at the record's next change (`RunWatch::poll`). A failed
-  run's release saves again after its summary (todo/70); would close when this ending does the same.
-- **raise-gate-pin's pin_of reads a malformed ci/gate.pin otherwise than the engine.** `pin_of`
-  (`xtask/src/raise_gate_pin.rs`) takes a sha that is not 64 hex digits, which the engine's `parse_pin` and
-  `ci/fetch-gate.sh` refuse, and `v0.9.2 <sha>`, which `parse_pin` refuses and `ci/fetch-gate.sh` passes on to a
-  download address that does not exist; and it refuses a pre-release such as `1.0.0-rc1`, which `parse_pin` takes;
-  the test holding the two together (`a_pin_reads_as_the_engine_reads_it`) feeds only well-formed pins. Raised
-  by cross-review 256 (F1). Closes with pin_of calling the engine's reading, or the test feeding the diverging cases
-  and the two agreeing on them.
-- **serve's POST /forget archives a run's metrics.json through a link out of its run directory.** serve's sweeps act
-  only on runs inside the runs directory (`RunScope::Inside`, todo/75), but `Host::forget_run` reads the run's
-  `metrics.json` with a plain `read`, so a run directory inside whose `metrics.json` is a link to a file outside has
-  that file's JSON added to the project's metrics archive before the directory is removed. Reading it as `read_inside`
-  does, an outside one taken as none, would close it (cross-review 248).
-- **Two processes forgetting one run at once can both forget it.** serve holds a per-project lock through each
-  forget sweep (`ProjectRuns::forgetting`, todo/74), but that lock is the process's own: a second app instance, each
-  with its own `serve` sidecar, or `octoflow forget` from a shell next to the app, can both read a closed run before
-  either deletes it, both answer "forgotten", and `Host::forget_run`'s check-then-append can archive two metrics lines.
-  Raised by cross-review 245 (F1). Closes with a lock file in the project's `.octoflow-ai/` that `forget_all` holds,
-  over SSH too.
-- **A resumed pull-request run past round 0 does not check gitleaks before its turns.** `Workflow::check_start`
-  (`engine/src/workflow.rs`) runs `check_before_interview`, which checks gitleaks, only at round 0, so an ungated
-  `--pr` run resumed after gitleaks was removed spends its remaining turns and fails only at publish. A gated run is
-  checked again on resume (`gate_switch::check_gate_mid_run`). Raised by cross-review 250 (pre-existing).
-- **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
-  `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
-  accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings
-  back the moved-tag risk. Raised by cross-review 235 (F3). Closes with a check in the gate that fails a `uses:` whose
-  ref is not 40 hex digits (zizmor's `unpinned-uses`, or a grep in `ci/`).
+- **A short first word before one long token leaves a near-empty title.** Raised by cross-review 300 (finding 1):
+  `commit_title` (`engine/src/pull_request.rs`) cuts a title over 72 chars at its last blank whenever anything
+  precedes it, so a task's first line `Fix https://example.com/<an 80-character path>` titles the commit and pull
+  request "Fix…", where 0.100.4 kept 72 characters of it. That follows the rule decided on run-findings ticket 04
+  (last word boundary within the limit), which does not address this case. Closing it is the user's call: a
+  fallback to a mid-word cut when the boundary keeps too little of the title (say, under half of it).
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
@@ -187,6 +82,17 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   file is what keeps the change's settings out. Would close when octoflow-gate takes the judge's rules and settings
   without a settings file, as a `--rules` option, or reports an empty one as its defaults. Decided against (the user's
   ruling, 2026-11-11): either costs a gate release and a `BUILT_IN_PIN` bump for the name of one file in the report.
+- **Comments that point at TODO.md for what is now a ticket.** The entries they name became todo tickets on
+  2026-11-24, and each ticket's change rewrites its comment: `take_base_branch`'s doc (`engine/src/workflow.rs`, "A
+  run's base can be a closed run's branch prune deletes") is todo/113 (GitHub #632); `ProjectRuns::forgetting`
+  (`engine/src/serve/runs.rs`, another process's forget sweep) is todo/108 (#627); `RunWatch::poll`
+  (`engine/src/serve/runs.rs`, a resumed done run's ending) is todo/105 (#624).
+- **Only a round's first Builder report that changes nothing tracked skips the quality step.** Kept by choice (the
+  user's ruling, 2026-11-24, todo-tickets): the narrowing of todo 90's wording in `take_turn`'s `unjudgeable`
+  (`engine/src/workflow.rs`) costs one gate run in a rare case.
+- **No test runs the pinned Node's real npm.** Decided against (the user's ruling, 2026-11-24, todo-tickets): the
+  tests' fake npm (`acp_adapter/tests.rs`) knows only the npm rules added to it; an opt-in install against a local
+  registry is not worth it, and a real install by hand at a pin raise catches a rule it does not know.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead.
@@ -426,9 +332,3 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
-- **A short first word before one long token leaves a near-empty title.** Raised by cross-review 300 (finding 1):
-  `commit_title` (`engine/src/pull_request.rs`) cuts a title over 72 chars at its last blank whenever anything
-  precedes it, so a task's first line `Fix https://example.com/<an 80-character path>` titles the commit and pull
-  request "Fix…", where 0.100.4 kept 72 characters of it. That follows the rule decided on run-findings ticket 04
-  (last word boundary within the limit), which does not address this case. Closing it is the user's call: a
-  fallback to a mid-word cut when the boundary keeps too little of the title (say, under half of it).
