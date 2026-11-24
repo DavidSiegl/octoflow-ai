@@ -155,10 +155,13 @@ pipeline {
                 // stage, which lists a failure among the failing tests (ci/rustfmt.sh). It takes no lock: rustfmt
                 // builds nothing.
                 sh 'ci/rustfmt.sh'
+                // Whether every action the workflows use is pinned by commit sha, likewise, which the Gate stage's
+                // actionlint does not check (ci/actions-pinned.sh).
+                sh 'ci/actions-pinned.sh'
             }
             post {
                 always {
-                    junit 'target/nextest/ci/junit.xml, target/rustfmt/junit.xml'
+                    junit 'target/nextest/ci/junit.xml, target/rustfmt/junit.xml, target/actions-pinned/junit.xml'
                 }
             }
         }
@@ -221,6 +224,7 @@ pipeline {
                             uv run --frozen "$release/gate" --base "$GATE_BASE" \\
                                 --config gate.toml \\
                                 --tests target/nextest/ci/junit.xml --tests target/rustfmt/junit.xml \\
+                                --tests target/actions-pinned/junit.xml \\
                                 --coverage coverage-rust.xml --out quality.md
                         ''')
                     }

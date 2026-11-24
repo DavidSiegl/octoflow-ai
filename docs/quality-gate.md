@@ -54,9 +54,10 @@ Python.
 
 It runs the tests itself first, by `gate.toml`'s `[[test]]` commands, which need cargo-llvm-cov, cargo-nextest and
 rustup's rustfmt component; the surviving-mutants check needs cargo-mutants, and the linters shellcheck, actionlint and
-clippy (`ci/install-tools.sh` fetches the pinned cargo tools). The `[[test]]` commands are `ci/rust-tests.sh` and
-`ci/rustfmt.sh`, whose one test fails when `cargo fmt --all` would change a file. The Jenkinsfile's Test stage runs both
-too, so the coverage is measured as a Jenkins build's is; the Test stage alone gives the engine's generated-input tests
+clippy (`ci/install-tools.sh` fetches the pinned cargo tools). The `[[test]]` commands are `ci/rust-tests.sh`,
+`ci/rustfmt.sh`, whose one test fails when `cargo fmt --all` would change a file, and `ci/actions-pinned.sh`, whose one
+test fails when a workflow or local action under `.github` uses an action by anything but a commit sha, naming its file
+and line. The Jenkinsfile's Test stage runs them too, so the coverage is measured as a Jenkins build's is; the Test stage alone gives the engine's generated-input tests
 a run seed (`OCTOFLOW_TEST_SEED`), so the lines only some generated cases reach can differ between the two. Exit status
 0 means `GATE: OK`, 1 `GATE: ERROR`, 2 a gate that could not judge.
 
