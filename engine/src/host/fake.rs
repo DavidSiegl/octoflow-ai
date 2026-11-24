@@ -164,6 +164,8 @@ pub(crate) struct FakeState {
     pub branch: String,
     /// The paths of the uncommitted changes.
     pub changed: BTreeSet<String>,
+    /// The paths of files git ignores, which only `git status --ignored` (GIT_STATUS_ARGS and `--ignored`) lists.
+    pub ignored: BTreeSet<String>,
     /// The arguments of each git command, in order.
     pub git_calls: Vec<Vec<String>>,
     /// The directory and arguments of each git command, in order.
@@ -313,6 +315,7 @@ impl FakeHost {
                 writes: vec![],
                 branch: branch.to_string(),
                 changed: BTreeSet::new(),
+                ignored: BTreeSet::new(),
                 git_calls: vec![],
                 git_log: vec![],
                 prs: vec![],
@@ -441,6 +444,13 @@ impl FakeState {
                 Some(ok(""))
             }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
+            [status @ .., "--ignored"] if status == GIT_STATUS_ARGS => {
+                // Relative to cwd, as git lists them.
+                let inside = format!("{cwd}/");
+                let ignored = self.ignored.iter().filter_map(|p| p.strip_prefix(&inside));
+                let listed: String = ignored.map(|p| format!("!! {p}\n")).collect();
+                Some(ok(&(porcelain(&self.changed_in(cwd)) + &listed)))
+            }
             ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
                 let changed = self.changed_in(cwd);
                 self.changed.retain(|p| !changed.contains(p));
@@ -625,7 +635,9 @@ impl FakeState {
                     return Completed::new(128, "", error);
                 }
                 self.worktrees.shift_remove(*path);
-                self.changed.retain(|p| !p.starts_with(&format!("{path}/")));
+                let inside = |p: &String| p.starts_with(&format!("{path}/"));
+                self.changed.retain(|p| !inside(p));
+                self.ignored.retain(|p| !inside(p));
             }
             ["worktree", "prune"] => {
                 let vanished = std::mem::take(&mut self.vanished_worktrees);

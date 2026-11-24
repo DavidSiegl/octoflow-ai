@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::constants::SUMMARY_FILE;
+use crate::constants::{PROOF_COPIES_DIR, SUMMARY_FILE};
 use crate::interrupt::Interrupt;
 use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
@@ -1807,6 +1807,38 @@ fn worktree_steps() {
     put(&format!("{wt}/new.py"), "x\n");
     c.host.remove_worktree(&c.a, &wt, true).unwrap();
     assert!(!std::path::Path::new(&wt).exists());
+}
+
+#[test]
+fn a_worktree_holds_nothing_until_a_file_outside_the_engine_s_directory_is_in_it() {
+    let c = Clones::new();
+    let wt = format!("{}/.octoflow-ai/worktrees/a1b2c3", c.a);
+    c.host.add_worktree(&c.a, &wt, "HEAD").unwrap();
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    // The engine's own: its .gitignore there (Orchestrator::ignore_project_dir) and a proof's copy.
+    put(&format!("{wt}/.octoflow-ai/.gitignore"), "*\n");
+    put(&format!("{wt}/{PROOF_COPIES_DIR}/1/proof.txt"), "x\n");
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    // Anything else there is not, such as the runs of an engine run inside the worktree.
+    put(&format!("{wt}/.octoflow-ai/runs/r1/state.json"), "{}\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_dir_all(format!("{wt}/.octoflow-ai/runs")).unwrap();
+    // An ignored file elsewhere, and an untracked one.
+    put(&format!("{wt}/.gitignore"), "*.log\n");
+    c.sh(&["git", "-C", &wt, "add", ".gitignore"]);
+    c.sh(&["git", "-C", &wt, "commit", "--quiet", "-m", "ignore logs"]);
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    put(&format!("{wt}/build.log"), "x\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_file(format!("{wt}/build.log")).unwrap();
+    put(&format!("{wt}/new.py"), "x\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_file(format!("{wt}/new.py")).unwrap();
+    // A locked one holds nothing, yet git will not remove it.
+    c.sh(&["git", "-C", &c.a, "worktree", "lock", &wt]);
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    let refusal = c.host.try_remove_worktree(&c.a, &wt).unwrap();
+    assert!(refusal.as_deref().is_some_and(|r| r.contains("locked")), "{refusal:?}");
 }
 
 #[test]
