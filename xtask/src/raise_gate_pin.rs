@@ -344,7 +344,7 @@ fn pin_of(pin: &str) -> Result<(Version, &str), Error> {
     if !is_version(version) || !is_sha256(sha) {
         return Err(Error(format!("{PIN}: its first line '{line}' is not '<version> <sha256>'")));
     }
-    // Version::parse also takes `v1.2.3`, `01.2.3` and `+1.2.3`, which name no release's tag.
+    // Version::parse also takes `01.2.3` and `+1.2.3`, which name no release's tag.
     let release = Version::parse(version).filter(|v| v.to_string() == version).ok_or_else(|| {
         Error(format!(
             "{PIN} names {version}, which is not a release's major.minor.patch, so raise-gate-pin cannot raise from it"
