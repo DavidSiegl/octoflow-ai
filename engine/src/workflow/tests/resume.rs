@@ -682,14 +682,28 @@ fn a_run_stopped_before_its_release_writes_its_files_again_and_tells_the_human()
 }
 
 #[test]
-fn a_released_run_missing_a_file_has_it_written_and_nothing_else() {
+fn a_released_run_missing_a_file_has_it_written_then_saves_and_does_nothing_else() {
     let f = Fixture::resume(Rc::new(FakeHost::default()), released(), vec![], &[], &[]);
+    // As the resume read it, with a field this engine does not know, which the save keeps.
+    let mut on_disk = released();
+    on_disk.unknown.insert("from_a_later_engine".into(), Value::from(1));
+    f.put(&path(&f, "state.json"), &on_disk.to_text());
     f.put(&path(&f, METRICS_FILE), "{\"kept\": true}\n");
     assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
     let (summary, metrics) = ending_files(&f);
     assert!(summary.is_some_and(|s| s.contains(APPROVE)));
     assert_eq!(metrics.as_deref(), Some("{\"kept\": true}\n"));
-    assert_eq!(f.host.state().writes, [path(&f, SUMMARY_FILE)], "neither saved nor its metrics written");
+    // The save after summary.md is what has serve list the run's files again (RunWatch::poll).
+    assert_eq!(
+        f.host.state().writes,
+        [path(&f, SUMMARY_FILE), path(&f, "state.json")],
+        "saved after its summary, its metrics not written: {:?}",
+        f.told.lines()
+    );
+    let saved = f.saved();
+    assert_eq!(saved.get("owner"), Some(&Value::Null), "still released");
+    assert_eq!(saved.get("from_a_later_engine"), Some(&Value::from(1)), "state.json's own text is what is saved");
+    assert_ne!(saved.get("heartbeat_at"), on_disk.to_json().get("heartbeat_at"), "with a fresh heartbeat");
     assert_eq!(f.told.titles(), Vec::<String>::new(), "the human was told when it was released");
     assert!(!closed_w1(&f));
 }

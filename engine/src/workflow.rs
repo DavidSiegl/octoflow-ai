@@ -401,8 +401,9 @@ impl<'a> Workflow<'a> {
 
     /// What follows the last phase, for a run saved as done, as far as left says: its tokens counted once its agents
     /// settle (Agents::settle), its summary and metrics written, and then, for a run this orchestrator owns, the run
-    /// released, the human told, and the workspace of a published run closed. What only costs a file or a notice is
-    /// logged when it fails, but none goes on past the Ctrl-C.
+    /// released, the human told, and the workspace of a published run closed; for a run no process owns, state.json
+    /// saved again, as no release follows to have serve list the files written (save_after_files). What only costs a
+    /// file or a notice is logged when it fails, but none goes on past the Ctrl-C.
     ///
     /// The files are written before the release, so that a run released is one whose files were written: a resume
     /// (ending_left) tells an ending cut short by the owner alone. The notice and the closing
@@ -424,6 +425,11 @@ impl<'a> Workflow<'a> {
             self.check_interrupt()?;
         }
         if !left.release {
+            let written: Vec<_> = [(left.write_summary, SUMMARY_FILE), (left.write_metrics, METRICS_FILE)]
+                .into_iter()
+                .filter_map(|(w, name)| w.then_some(name))
+                .collect();
+            self.save_after_files(&written.join(" and "));
             return Ok(());
         }
         self.state.owner = None;
@@ -685,30 +691,38 @@ impl<'a> Workflow<'a> {
             }
         }
         self.write_summary();
-        // round_results can take longer than serve waits for a finished run's files
-        // (crate::serve::FINISHED_RUN_WRITES); a save after the summary has serve list them again, so the summary
-        // reaches the app. Only after a save that worked: state.json holds an older text otherwise.
+        // Only after a save that worked: state.json holds an older text otherwise.
         if saved.is_ok() {
-            if let Err(e) = self.save_released() {
-                self.human.log(&format!("could not save state.json after {SUMMARY_FILE}: {e}"));
-            }
+            self.save_after_files(SUMMARY_FILE);
         }
     }
 
-    /// Write state.json again, with a fresh heartbeat, for a run release has just saved. Errors: TakenOver when
-    /// state.json no longer reads as what that save wrote, as after a close or another orchestrator's resume (save's
-    /// owner check cannot tell, since the owner is null now); the host's, when it cannot be read or written. A change
-    /// between the read and the write is overwritten, as with save.
-    fn save_released(&mut self) -> Outcome<()> {
-        let saved = self.host.read(&self.state_path())?;
-        if !saved.is_some_and(|text| RunState::from_text(&text).is_ok_and(|now| now == self.state)) {
-            return Err(Stopped::TakenOver(OrchestratorError(format!(
-                "run {}'s state.json changed since its release, by a close or another orchestrator; stopping without \
-                 saving",
-                self.state.run_id
-            ))));
+    /// Write state.json again, as it is but for a fresh heartbeat_at, after writing files of a run no process owns, so
+    /// that serve lists them: it stops listing a finished or failed run's files once they settle, and lists them again
+    /// only at the run's next save (RunWatch::poll), which nothing else makes. written names those files, for the log.
+    ///
+    /// It is state.json's text that is saved again, not self.state: a done run's record keeps what it ran with, which
+    /// Workflow::new's settings need not match, and what a close changed since is kept. A run some process owns again,
+    /// as after another orchestrator's resume, is that one's to save, and is left as it is. That, or a failed read,
+    /// parse or write, costs only the listing, and is logged. A change between the read and the write is overwritten,
+    /// as with save.
+    fn save_after_files(&self, written: &str) {
+        let path = self.state_path();
+        let resaved = (|| {
+            let text = self.host.read(&path)?.ok_or_else(|| OrchestratorError(format!("{path} is gone")))?;
+            let mut saved = RunState::from_text(&text)?;
+            if saved.owner.is_some() {
+                return Err(OrchestratorError(format!(
+                    "run {} was taken over since it was released; leaving its state.json to that orchestrator",
+                    self.state.run_id
+                )));
+            }
+            saved.heartbeat_at = Some(self.timestamp());
+            self.host.write(&path, &saved.to_text(), false)
+        })();
+        if let Err(e) = resaved {
+            self.human.log(&format!("could not save state.json after {written}: {e}"));
         }
-        Ok(self.write_state()?)
     }
 
     /// Write summary.md for a run that just ended; a failure costs only the summary, so it is only logged.
