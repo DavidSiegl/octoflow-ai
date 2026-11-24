@@ -852,8 +852,10 @@ impl<'a> Workflow<'a> {
     /// deleted, so the run's pr_url does not tell). An in-place run that fails leaves the checkout on its branch for
     /// resume, and close leaves it there too (cli::close's WorktreeFate), while that branch reaches origin only when
     /// the run publishes; taken as a base, it could not be fetched, or would get a pull request against another run's
-    /// work. A closed run's branch that origin has was published, and is taken; prune keeps it on origin while this
-    /// run is not closed (cli::prune::prune_branches), as deleting it would close this run's pull request. The error
+    /// work. A closed run's branch that origin has was published, and is taken; once this run records it, prune
+    /// leaves it, and that closed run, alone while this run is not closed (cli::prune::prune_branches), as deleting it
+    /// would close this run's pull request. This run's own sweep, before it records it, can still delete it (TODO.md,
+    /// "A new run's own sweep can delete the branch it is about to take as its base"). The error
     /// says to check out that run's base, after the run ends when it is running; for a run not closed, also to close
     /// it once done: by the command RunSettings::commands words, or from the desktop app for one of its runs. Errors
     /// also when origin cannot be asked, naming the closed run whose branch it was asked about.

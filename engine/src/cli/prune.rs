@@ -35,8 +35,8 @@ pub struct PrunedRun {
     /// What became of the run's worktree: BRANCH_DELETED, "would be deleted", or BRANCH_KEPT and why; empty when the
     /// run has none to decide (see prune_worktree).
     pub worktree: String,
-    /// Why nothing was decided: the run's state cannot be read (SavedRun::problem), the pull request is not done
-    /// yet, or pruning the run failed. Nothing is recorded then.
+    /// Why nothing was decided: the run's state cannot be read (SavedRun::problem), another run not closed builds on
+    /// its branch, the pull request is not done yet, or pruning the run failed. Nothing is recorded then.
     pub skipped: Option<String>,
     /// The run's branch_cleanup: written, or what would be in a dry run; None when skipped.
     pub cleanup: Option<String>,
@@ -58,15 +58,16 @@ impl PrunedRun {
 /// for CLOSED_BRANCH_GRACE by world's wall clock, and record what became of each in its state.json
 /// (branch_cleanup); with dry_run, decide each and change nothing.
 ///
-/// A local branch goes when it is at or behind its pull request's head commit, origin's when it is at it and no run
-/// that is not closed records it as its base_branch (that run's pull request targets it, and GitHub closes a pull
-/// request whose base is deleted), deleted under a lease; a branch checked out in a worktree stays, unless that is the run's own --worktree under
+/// A local branch goes when it is at or behind its pull request's head commit, origin's when it is at it, deleted
+/// under a lease; a branch checked out in a worktree stays, unless that is the run's own --worktree under
 /// WORKTREES_DIR, which is removed first (git worktree remove, without force, so with its ignored files) when it
 /// has no uncommitted changes and is at or behind the head too. Worktrees whose directory is gone are forgotten
 /// first (Host::prune_worktrees), unless dry_run. Only runs with no branch_cleanup yet are candidates, and with
 /// revisit the runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator did
 /// not make, and one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run
-/// whose state cannot be read (SavedRun::problem) is skipped with that reason. Returns each candidate and each such
+/// whose state cannot be read (SavedRun::problem) is skipped with that reason, and so is a run whose branch another
+/// run that is not closed records as its base_branch, naming that run: its pull request targets origin's branch,
+/// which GitHub closes if the branch is deleted, so the run waits for prune until that run is closed. Returns each candidate and each such
 /// run, in run_states' order, but those after gh was found unusable or origin unreachable, which ends the sweep. A
 /// failure on one run is logged and skips that run.
 ///
@@ -102,7 +103,12 @@ pub fn prune_branches(
                 continue;
             }
         };
-        match prune_run(world, cwd, state, &mut run, &mut checked_out, &bases, dry_run) {
+        if let Some(builder) = bases.get(&run.branch) {
+            run.skipped = Some(format!("run {builder} builds on its branch"));
+            pruned.push(run);
+            continue;
+        }
+        match prune_run(world, cwd, state, &mut run, &mut checked_out, dry_run) {
             Ok(()) => {}
             Err(e) if world.with.interrupt.is_raised() => return Err(e.into()),
             Err(GhError::Unusable(e)) => {
@@ -120,7 +126,7 @@ pub fn prune_branches(
 }
 
 /// Each branch that a run of runs not closed records as its base_branch, with that run's id: the first such run's,
-/// in runs' order. A run whose state cannot be read counts as far as it reads (SavedRun::shown), so it keeps a base.
+/// in runs' order. A run whose state cannot be read counts as far as it reads (SavedRun::shown).
 fn bases_of_runs_not_closed(runs: &[SavedRun]) -> IndexMap<String, String> {
     let mut bases = IndexMap::new();
     for s in runs.iter().map(SavedRun::shown).filter(|s| !s.is_closed()) {
@@ -156,8 +162,7 @@ fn is_prune_candidate(run: &SavedRun, world: &Connected, revisit: bool) -> bool 
 
 /// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and
 /// record the result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to
-/// its worktree, and loses the branch of a worktree removed; bases maps each branch a run not closed builds on to
-/// that run's id (bases_of_runs_not_closed). Errors: GhError::Unusable when gh is, or when prune_remote fails as origin_unreachable says (its read of
+/// its worktree, and loses the branch of a worktree removed. Errors: GhError::Unusable when gh is, or when prune_remote fails as origin_unreachable says (its read of
 /// origin's branch after every try, or a deletion there, which is tried once), either of which no other run can get
 /// past; else GhError::Failed with what failed.
 fn prune_run(
@@ -166,7 +171,6 @@ fn prune_run(
     state: &RunState,
     run: &mut PrunedRun,
     checked_out: &mut IndexMap<String, String>,
-    bases: &IndexMap<String, String>,
     dry_run: bool,
 ) -> Result<(), GhError> {
     let failed = GhError::Failed;
@@ -187,9 +191,7 @@ fn prune_run(
     // Each side is decided on its own, so keeping one does not keep the other.
     // An origin unreachable for this run's branch is so for the runs after it too.
     let unusable = |e| if origin_unreachable(&e) { GhError::Unusable(e) } else { GhError::Failed(e) };
-    let builder = bases.get(branch).map(String::as_str);
-    let (remote, remote_kept) =
-        prune_remote(&world.with, cwd, branch, head, number, builder, dry_run).map_err(unusable)?;
+    let (remote, remote_kept) = prune_remote(&world.with, cwd, branch, head, number, dry_run).map_err(unusable)?;
     // Before the local branch, which a worktree that goes no longer pins.
     let path = state.worktree.as_deref().filter(|w| is_run_worktree(cwd, w));
     let (worktree, worktree_kept) = match path {
@@ -237,8 +239,7 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
 }
 
 /// What became of origin's branch, and why it was kept, if it was: gone already (its tracking ref then deleted),
-/// kept while the run whose id is builder, one not closed, records it as its base, kept with commits beyond the pull
-/// request's head, or deleted at head; on with's host, origin's branch read through
+/// kept with commits beyond the pull request's head, or deleted at head; on with's host, origin's branch read through
 /// a short outage of origin (reaching_origin).
 fn prune_remote(
     with: &Collaborators,
@@ -246,7 +247,6 @@ fn prune_remote(
     branch: &str,
     head: &str,
     number: &str,
-    builder: Option<&str>,
     dry_run: bool,
 ) -> Result<(String, Option<String>), OrchestratorError> {
     let host = with.host;
@@ -257,10 +257,6 @@ fn prune_remote(
         }
         return Ok(("gone".to_string(), None));
     };
-    if let Some(id) = builder {
-        let why = format!("run {id} builds on it");
-        return Ok((format!("{BRANCH_KEPT}{why}"), Some(why)));
-    }
     if tip != head {
         let why = format!("remote has commits beyond PR #{number}");
         return Ok((format!("{BRANCH_KEPT}{why}"), Some(why)));

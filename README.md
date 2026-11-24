@@ -322,7 +322,7 @@ octoflow forget --all
 octoflow refresh e292fb
 
 # Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree;
-# origin's branch stays while a run not closed builds on it
+# a run's branch stays while another run not closed builds on it
 octoflow prune --dry-run
 
 # Every finished run's metrics.json, forgotten runs' included, one JSON line each: outcome, roles, turns with times
