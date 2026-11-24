@@ -431,3 +431,9 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
+- **A short first word before one long token leaves a near-empty title.** Raised by cross-review 300 (finding 1):
+  `commit_title` (`engine/src/pull_request.rs`) cuts a title over 72 chars at its last blank whenever anything
+  precedes it, so a task's first line "Fix https://example.com/<an 80-character path>" titles the commit and pull
+  request "Fix…", where 0.100.4 kept 72 characters of it. That follows the rule decided on run-findings ticket 04
+  (last word boundary within the limit), which does not address this case. Closing it is the user's call: a
+  fallback to a mid-word cut when the boundary keeps too little of the title (say, under half of it).
