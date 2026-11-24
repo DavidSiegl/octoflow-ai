@@ -441,8 +441,9 @@ ticket needs you (its blockers cannot be read, or one is `wontfix`), or `5`.
    is closed, and the branch stays until a later run's sweep or `prune` deletes it
    ([Deleting run branches](docs/design.md#deleting-run-branches)). An approved run that changed nothing git
    tracks, its work only in ignored files, opens no pull request: it checks the base branch out again (a `--worktree`
-   run removes its worktree if it holds no file, ignored ones included, and otherwise keeps it, detached) and deletes
-   its branch, and its summary says there was nothing to publish.
+   run removes its worktree if it holds no file but the engine's own, ignored ones included, and otherwise keeps it,
+   detached, as it does one git will not remove) and deletes its branch, and its summary says there was nothing to
+   publish.
 7. **Summary.** Whenever the run ends, it writes `summary.md`: the outcome, the pull request, each role's harness
    and model, and a table of the turns with their durations, which the pull request gets too. A finished run also
    writes `metrics.json`, which `metrics` prints

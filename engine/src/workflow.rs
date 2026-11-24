@@ -1292,14 +1292,14 @@ impl<'a> Workflow<'a> {
             Some(worktree) => {
                 if self.host.is_worktree(&s.cwd, worktree)? {
                     // None once removed; else why the worktree stays.
-                    let kept = if holds_nothing(self.host, worktree)? {
+                    let why_kept = if holds_nothing(self.host, worktree)? {
                         self.host.try_remove_worktree(&s.cwd, worktree)?.map(|refusal| {
                             format!("worktree {worktree} kept, detached, as git would not remove it: {refusal}")
                         })
                     } else {
                         Some(format!("what the run wrote is in worktree {worktree}"))
                     };
-                    worktree_fate = match kept {
+                    worktree_fate = match why_kept {
                         None => format!("; removed worktree {worktree}"),
                         Some(why) => {
                             self.host.git(worktree, &["switch", "--quiet", "--detach"])?;

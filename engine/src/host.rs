@@ -9,7 +9,7 @@
 use indexmap::IndexMap;
 
 use crate::constants::{
-    CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, PROJECT_DIR, REMOTE, RUNS_DIR, SUMMARY_FILE,
+    CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, PROJECT_DIR, PROOF_COPIES_DIR, REMOTE, RUNS_DIR, SUMMARY_FILE,
 };
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
@@ -1633,16 +1633,19 @@ pub(crate) fn git_status<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String
     host.git(cwd, GIT_STATUS_ARGS)
 }
 
-/// Whether the working tree at cwd holds nothing of its own but the engine's: no change, no untracked file and no
-/// ignored one, as `git status --ignored` lists them under GIT_STATUS_ARGS's settings, outside its PROJECT_DIR, where
-/// only the engine writes (Orchestrator::ignore_project_dir, the proofs' copies). Removing such a worktree loses no
-/// file a run or a human wrote, though git may still refuse to (Host::try_remove_worktree). Errors: as Host::git's.
+/// Whether the working tree at cwd holds nothing but what the engine writes there: no change, no untracked file and
+/// no ignored one, as `git status --ignored` lists them under GIT_STATUS_ARGS's settings, but PROJECT_DIR's .gitignore
+/// (Orchestrator::ignore_project_dir) and the proofs' copies under PROOF_COPIES_DIR, whose originals are in the run's
+/// directory. Removing such a worktree loses no file a run or a human wrote, though git may still refuse to
+/// (Host::try_remove_worktree). Errors: as Host::git's.
 pub(crate) fn holds_nothing<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<bool, OrchestratorError> {
     let args = [GIT_STATUS_ARGS, &["--ignored"]].concat();
     let listed = host.git(cwd, &args)?;
-    // Each line is "XY path", a path in quotes when it has a quote, a backslash or a control character in it.
-    let engines = format!("{PROJECT_DIR}/");
-    Ok(listed.lines().all(|line| line.get(3..).is_some_and(|path| path.starts_with(&engines))))
+    // Each line is "XY path", a path in quotes when it has a quote, a backslash or a control character in it; with
+    // --untracked-files=all, each file in an ignored directory has a line of its own.
+    let (ignore, copies) = (format!("{PROJECT_DIR}/.gitignore"), format!("{PROOF_COPIES_DIR}/"));
+    let engines = |path: &str| path == ignore || path.starts_with(&copies);
+    Ok(listed.lines().all(|line| line.get(3..).is_some_and(engines)))
 }
 
 /// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended
