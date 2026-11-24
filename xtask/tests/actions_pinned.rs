@@ -1,6 +1,6 @@
 //! ci/actions-pinned.sh, which fails its one JUnit test when a workflow or local action uses an action by anything but
-//! a commit sha: run in a checkout of its own, a temporary directory holding a copy of the script and the files a test
-//! writes, and on this checkout.
+//! a commit sha: run in a git checkout of its own, made in a temporary directory, holding a copy of the script and the
+//! files a test writes, and on this checkout.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -45,8 +45,8 @@ impl Run {
 }
 
 /// Run a copy of ci/actions-pinned.sh in a git checkout tracking each (path, contents) of tracked, with each of
-/// untracked written beside them but not added.
-fn check_tracked(tracked: &[(&str, &str)], untracked: &[(&str, &str)]) -> Run {
+/// untracked written beside them but not added, and each path of removed, among tracked, deleted from disk only.
+fn check_tracked(tracked: &[(&str, &str)], untracked: &[(&str, &str)], removed: &[&str]) -> Run {
     let dir = tempfile::Builder::new().prefix("xtask-actions-pinned-test-").tempdir().expect("a temporary directory");
     let write = |files: &[(&str, &str)]| {
         for (path, contents) in files {
@@ -64,12 +64,15 @@ fn check_tracked(tracked: &[(&str, &str)], untracked: &[(&str, &str)]) -> Run {
     write(tracked);
     git(&["add", "-A"]);
     write(untracked);
+    for path in removed {
+        fs::remove_file(dir.path().join(path)).expect("removed");
+    }
     run(dir.path())
 }
 
 /// Run a copy of ci/actions-pinned.sh in a git checkout tracking each (path, contents) of files.
 fn check(files: &[(&str, &str)]) -> Run {
-    check_tracked(files, &[])
+    check_tracked(files, &[], &[])
 }
 
 fn script() -> String {
@@ -166,12 +169,15 @@ fn every_workflow_and_local_action_is_read_and_nothing_else() {
             (".github/dependabot.yml", "uses: a/b@v1\n"),
             (".github/workflows/notes.md", "uses: a/b@v1\n"),
             (".github/workflows/sub/c.yml", &workflow(&["- uses: a/b@v1"])),
+            // Tracked, but deleted from the working tree.
+            (".github/workflows/removed.yml", &workflow(&["- uses: a/b@v1"])),
         ],
         &[
             // Not the repository's: what a build or a tool puts in the checkout, such as a crate's own action.
             (".cargo-home/registry/src/c-1.0/.github/actions/setup/action.yml", action),
             (".github/workflows/untracked.yml", &workflow(&["- uses: a/b@v1"])),
         ],
+        &[".github/workflows/removed.yml"],
     );
     run.assert_unpinned(&[
         ".github/actions/other/action.yaml:4",
@@ -187,24 +193,19 @@ fn only_a_uses_github_runs_is_judged() {
     let text = format!(
         "on: push\njobs:\n  build:\n    runs-on: x\n    env:\n      uses: a/env@v1\n    steps:\n      - run: |\n          \
          uses: a/script@v1\n          steps:\n            - uses: a/script-steps@v1\n      - name: >-\n          uses: a/folded@v1\n      - uses: a/b@{SHA}\n        with:\n          \
-         uses: a/input@v1\n      - {{uses: a/b@{SHA}, with: {{uses: a/nested@v1}}}}\n"
+         uses: a/input@v1\n      - uses: a/b@{SHA}\n        with: {{uses: a/nested@v1, steps: [{{uses: a/s@v1}}]}}\n"
     );
     check(&[(".github/workflows/ci.yml", &text)]).assert_pinned();
 }
 
 #[test]
-fn a_reusable_workflow_a_flow_style_step_and_crlf_lines_are_read() {
+fn a_reusable_workflow_and_crlf_lines_are_read() {
     let text = format!(
         "on: push\r\njobs:\r\n  call:\r\n    uses: o/r/.github/workflows/w.yml@v1\r\n  build:\r\n    steps:\r\n      \
-         - uses: a/b@{SHA}\r\n      - uses: a/crlf@v1\r\n      - {{uses: a/flow@v4, with: {{x: 1}}}}\r\n  \
-         other:\r\n    steps: [{{uses: a/b@{SHA}}}, {{uses: a/sequence@v2}}]\r\n"
+         - uses: a/b@{SHA}\r\n      - uses: a/crlf@v1\r\n"
     );
-    check(&[(".github/workflows/ci.yml", &text)]).assert_unpinned(&[
-        ".github/workflows/ci.yml:4",
-        ".github/workflows/ci.yml:8",
-        ".github/workflows/ci.yml:9",
-        ".github/workflows/ci.yml:11",
-    ]);
+    check(&[(".github/workflows/ci.yml", &text)])
+        .assert_unpinned(&[".github/workflows/ci.yml:4", ".github/workflows/ci.yml:8"]);
 }
 
 #[test]
@@ -216,14 +217,28 @@ fn a_comment_after_a_key_hides_nothing_under_it() {
 }
 
 #[test]
-fn a_job_or_steps_in_one_line_flow_style_is_read_where_github_runs_it() {
+fn a_step_or_job_in_flow_style_fails_as_not_read_even_when_pinned() {
     let text = format!(
-        "on: push\njobs:\n  call: {{uses: o/r/.github/workflows/w.yml@v1}}\n  pinned: {{uses: o/r/w.yml@{SHA}}}\n  \
-         build:\n    steps:\n      - uses: a/b@{SHA}\n        with:\n          steps: [{{uses: a/input@v1}}]\n"
+        "on: push\njobs:\n  call: {{uses: o/r/w.yml@{SHA}}}\n  build:\n    steps:\n      \
+         - {{name: \"Build #1\", uses: a/b@{SHA}}}\n  other:\n    steps: [{{uses: a/b@{SHA}}}]\n"
     );
-    let action = "runs:\n  using: composite\n  steps: [{uses: a/composite@v1}]\n";
-    check(&[(".github/workflows/ci.yml", &text), ("action.yml", action)])
-        .assert_unpinned(&[".github/workflows/ci.yml:3", "action.yml:3"]);
+    let run = check(&[
+        (".github/workflows/ci.yml", &text),
+        (".github/workflows/jobs.yml", "on: push\njobs: {build: {steps: [{uses: a/b@v1}]}}\n"),
+        ("action.yml", "runs: {using: composite, steps: [{uses: a/c@v1}]}\n"),
+        ("ci/a/action.yml", "runs:\n  using: composite\n  steps: [{uses: a/c@v1}]\n"),
+    ]);
+    run.assert_unpinned(&[
+        ".github/workflows/ci.yml:3",
+        ".github/workflows/ci.yml:6",
+        ".github/workflows/ci.yml:8",
+        ".github/workflows/jobs.yml:2",
+        "action.yml:1",
+        "ci/a/action.yml:3",
+    ]);
+    let stderr = run.stderr();
+    let step = ".github/workflows/ci.yml:6: a step in flow style, which this check does not read";
+    assert!(stderr.contains(step), "{stderr}");
 }
 
 #[test]

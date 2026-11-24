@@ -28,8 +28,9 @@ name = "rustfmt"
 command = ["sh", "ci/rustfmt.sh"]
 junit = ["target/rustfmt/junit.xml"]
 
-# Whether every action the workflows and the local actions git tracks use is pinned by commit sha, a failing test when
-# one is not: the Test stage's third step, whose report the Gate stage passes with --tests likewise (ci/actions-pinned.sh).
+# Whether every action the workflows and the local actions git tracks use is pinned by commit sha, a failing test
+# when one is not: the Test stage's third step, whose report the Gate stage passes with --tests likewise
+# (ci/actions-pinned.sh).
 [[test]]
 name = "actions-pinned"
 command = ["sh", "ci/actions-pinned.sh"]

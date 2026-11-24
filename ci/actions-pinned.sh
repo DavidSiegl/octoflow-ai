@@ -4,10 +4,11 @@
 # test, actions-pinned.by-sha, which fails naming the file:line of each `uses:` that does not. It reads the workflows
 # (.github/workflows/*.yml, *.yaml, the top level only, as GitHub does) and every action.yml or action.yaml git tracks,
 # wherever a workflow's ./ may name it; only tracked files, so that what a build or a tool puts in the checkout (the
-# Jenkinsfile's CARGO_HOME, whose crates ship actions of their own) is not judged. A local action
-# (./...) and a docker:// image pinned by digest (@sha256: and 64 hex digits) pass too: neither can be moved under the
-# name the workflow gives. A tag, a branch, a short sha or no ref at all fails. Exits 0 whether or not one fails, the
-# gate judging the report, as ci/rustfmt.sh does; exits non-zero, with no report, when the files could not be read.
+# Jenkinsfile's CARGO_HOME, whose crates ship actions of their own) is not judged, and only those on disk. A local
+# action (./...) and a docker:// image pinned by digest (@sha256: and 64 hex digits) pass too: neither can be moved
+# under the name the workflow gives. A tag, a branch, a short sha or no ref at all fails. Exits 0 whether or not one
+# fails, the gate judging the report, as ci/rustfmt.sh does; exits non-zero, with no report, when the files could not
+# be read.
 #
 #   ci/actions-pinned.sh
 #
@@ -17,10 +18,9 @@
 #
 # A `uses:` GitHub runs is a step's (a key of an item of a `steps:` list, in a workflow's job or a composite action's
 # runs) or a job's (a key of a job under the top-level `jobs:`, calling a reusable workflow); a key named uses anywhere
-# else, such as a with: input, and a line of a block or multi-line scalar (a run: | script) is not one. It reads block
-# style, and a step or job written as a flow mapping that opens and closes on one line (- {uses: ...}, steps: [...],
-# <job>: {uses: ...}); a flow collection spread over lines, or one holding the jobs: or a job's keys, is not read
-# (TODO.md, "actions-pinned.sh does not read every flow-style workflow").
+# else, such as a with: input, and a line of a block or multi-line scalar (a run: | script) is not one. It reads only
+# block style: a step, a steps: list, a job, jobs: or an action's runs: written in flow style ({...} or [...]) fails as
+# not read, naming its line, since reading flow style by line is where a tag would slip through.
 set -eu
 
 # -P: as ci/rustfmt.sh does, so that the files are named from the top level.
@@ -29,7 +29,8 @@ out=target/actions-pinned
 mkdir -p "$out"
 rm -f "$out/junit.xml"
 
-# The awk program that prints, for each file it is given, one line per unpinned `uses:`: "file:line: uses: value".
+# The awk program that prints, for each file it is given, one line per unpinned `uses:`, "file:line: uses: value", and
+# one per step or job in flow style, "file:line: <key> in flow style ...".
 # Its $0 and $... are awk's, not the shell's.
 # shellcheck disable=SC2016
 unpinned='
@@ -58,25 +59,9 @@ unpinned='
         return (depth >= 1 && key[depth] == "steps") || (depth == 2 && key[1] == "jobs" && col[1] == 0)
     }
 
-    # Judge each uses: key of the flow collection s whose entries sit at nesting level n: 1 for a mapping, 2 for
-    # the mappings of a sequence; the collections nested deeper are skipped.
-    function flow(s, n,    i, c, level, quote, item) {
-        level = 0; quote = ""; item = ""
-        for (i = 1; i <= length(s); i++) {
-            c = substr(s, i, 1)
-            if (quote != "") { if (c == quote) quote = ""; item = item c; continue }
-            if (c == "\"" || c == "\047") { quote = c; item = item c; continue }
-            if (c == "{" || c == "[") { level++; if (level == n) item = ""; else item = item c; continue }
-            if (c == "}" || c == "]") { if (level == n) flow_entry(item); else item = item c; level--; continue }
-            if (c == "," && level == n) { flow_entry(item); item = ""; continue }
-            item = item c
-        }
-    }
-    function flow_entry(entry) {
-        if (entry ~ /^[ \t]*["\047]?uses["\047]?[ \t]*:/) {
-            sub(/^[ \t]*["\047]?uses["\047]?[ \t]*:[ \t]*/, "", entry)
-            judge(entry)
-        }
+    # Report the step or job, or the list or mapping of them, written in flow style on this line, as not read.
+    function flow(what) {
+        print FILENAME ":" FNR ": " what " in flow style, which this check does not read: write it in block style"
     }
 
     FNR == 1 { depth = 0; scalar = -1 }
@@ -98,8 +83,8 @@ unpinned='
         }
         # Close the keys this line is not inside: those at its column or deeper.
         while (depth > 0 && col[depth] >= at) depth--
-        if (text ~ /^\{/) {
-            if (runs()) flow(text, 1)
+        if (text ~ /^[{[]/) {
+            if (runs()) flow("a step")
             next
         }
         if (!match(text, /^("[^"]*"|\047[^\047]*\047|[^ \t#"\047:][^:]*)[ \t]*:([ \t]|$)/)) next
@@ -111,10 +96,15 @@ unpinned='
         # A comment, after blanks or alone, is no value: jobs: # all jobs opens a mapping.
         sub(/(^|[ \t]+)#.*$/, "", v)
         if (k == "uses" && runs()) judge(v)
-        # A steps: list in flow style, of a job or a composite action; a job in flow style.
-        if (k == "steps" && v ~ /^\[/ && ((depth == 2 && key[1] == "jobs") || (depth == 1 && key[1] == "runs")))
-            flow(v, 2)
-        if (v ~ /^\{/ && depth == 1 && key[1] == "jobs" && col[1] == 0) flow(v, 1)
+        # Where steps and jobs sit: the steps: of a job or of runs:, a job, and jobs: and runs: themselves.
+        if (v ~ /^[{[]/) {
+            if (k == "steps" && ((depth == 2 && key[1] == "jobs") || (depth == 1 && key[1] == "runs")))
+                flow("steps:")
+            else if (depth == 1 && key[1] == "jobs" && col[1] == 0)
+                flow("job " k)
+            else if (depth == 0 && (k == "jobs" || k == "runs"))
+                flow(k ":")
+        }
         depth++
         key[depth] = k
         col[depth] = at
@@ -125,11 +115,14 @@ unpinned='
 '
 # The workflows GitHub reads, at the top level of .github/workflows, and every action a ./ can name. :(glob): a * that
 # does not cross a slash. -r: no awk at all, which would read standard input, when git tracks none.
-# Listed to a file first, not piped, so that set -e stops a git that fails (sh has no pipefail).
+# Listed to a file first, not piped, so that set -e stops a git that fails (sh has no pipefail). Then those on disk
+# only: a tracked file deleted, or left out of a sparse checkout, is no workflow this tree runs.
 git ls-files -z -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' \
-    ':(glob)**/action.yaml' > "$out/files"
+    ':(glob)**/action.yaml' > "$out/tracked"
+# shellcheck disable=SC2016
+xargs -0 -r sh -c 'for f; do if [ -f "$f" ]; then printf "%s\0" "$f"; fi; done' sh < "$out/tracked" > "$out/files"
 xargs -0 -r awk "$unpinned" < "$out/files" > "$out/unsorted"
-# Sorted by file, then numerically by line: find lists the files in no set order.
+# Sorted by file, then numerically by line, whatever order git lists the files in and xargs hands them to awk.
 sort -t: -k1,1 -k2,2n "$out/unsorted" > "$out/unpinned"
 
 if [ -s "$out/unpinned" ]; then
