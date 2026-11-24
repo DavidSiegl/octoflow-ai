@@ -402,8 +402,8 @@ impl<'a> Workflow<'a> {
     /// What follows the last phase, for a run saved as done, as far as left says: its tokens counted once its agents
     /// settle (Agents::settle), its summary and metrics written, and then, for a run this orchestrator owns, the run
     /// released, the human told, and the workspace of a published run closed; for a run no process owns, state.json
-    /// saved again, as no release follows to have serve list the files written (save_after_files). What only costs a
-    /// file or a notice is logged when it fails, but none goes on past the Ctrl-C.
+    /// saved again, as no release follows to have serve list the files written (save_after_files), even past the
+    /// Ctrl-C. What only costs a file or a notice is logged when it fails, but nothing else goes on past the Ctrl-C.
     ///
     /// The files are written before the release, so that a run released is one whose files were written: a resume
     /// (ending_left) tells an ending cut short by the owner alone. The notice and the closing
@@ -416,22 +416,24 @@ impl<'a> Workflow<'a> {
             self.count_tokens();
             self.check_interrupt()?;
         }
-        if left.write_summary {
-            self.write_summary();
-            self.check_interrupt()?;
-        }
-        if left.write_metrics {
-            self.write_metrics();
-            self.check_interrupt()?;
-        }
+        let written = (|| {
+            if left.write_summary {
+                self.write_summary();
+                self.check_interrupt()?;
+            }
+            if left.write_metrics {
+                self.write_metrics();
+                self.check_interrupt()?;
+            }
+            Ok(())
+        })();
         if !left.release {
-            let written: Vec<_> = [(left.write_summary, SUMMARY_FILE), (left.write_metrics, METRICS_FILE)]
-                .into_iter()
-                .filter_map(|(w, name)| w.then_some(name))
-                .collect();
-            self.save_after_files(&written.join(" and "));
-            return Ok(());
+            // Saved even past the Ctrl-C: a file written and not saved after would never be listed, as the next
+            // resume finds nothing left (ending_left) and so saves nothing.
+            self.interrupt.finally(|| self.save_after_files());
+            return written;
         }
+        written?;
         self.state.owner = None;
         self.save()?;
         let s = &self.state;
@@ -693,20 +695,20 @@ impl<'a> Workflow<'a> {
         self.write_summary();
         // Only after a save that worked: state.json holds an older text otherwise.
         if saved.is_ok() {
-            self.save_after_files(SUMMARY_FILE);
+            self.save_after_files();
         }
     }
 
     /// Write state.json again, as it is but for a fresh heartbeat_at, after writing files of a run no process owns, so
     /// that serve lists them: it stops listing a finished or failed run's files once they settle, and lists them again
-    /// only at the run's next save (RunWatch::poll), which nothing else makes. written names those files, for the log.
+    /// only at the run's next save (RunWatch::poll), which nothing else makes.
     ///
     /// It is state.json's text that is saved again, not self.state: a done run's record keeps what it ran with, which
     /// Workflow::new's settings need not match, and what a close changed since is kept. A run some process owns again,
     /// as after another orchestrator's resume, is that one's to save, and is left as it is. That, or a failed read,
     /// parse or write, costs only the listing, and is logged. A change between the read and the write is overwritten,
     /// as with save.
-    fn save_after_files(&self, written: &str) {
+    fn save_after_files(&self) {
         let path = self.state_path();
         let resaved = (|| {
             let text = self.host.read(&path)?.ok_or_else(|| OrchestratorError(format!("{path} is gone")))?;
@@ -721,7 +723,7 @@ impl<'a> Workflow<'a> {
             self.host.write(&path, &saved.to_text(), false)
         })();
         if let Err(e) = resaved {
-            self.human.log(&format!("could not save state.json after {written}: {e}"));
+            self.human.log(&format!("could not save state.json after writing the run's files: {e}"));
         }
     }
 

@@ -449,7 +449,32 @@ fn a_run_taken_over_while_its_summary_is_written_is_not_saved_again() {
     failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
     assert!(f.saved().get("owner").is_some_and(Value::is_set), "{:?}", f.saved());
     let told = f.told.lines();
-    assert!(told.iter().any(|l| l.starts_with("could not save state.json after summary.md: run ")), "{told:?}");
+    assert!(
+        told.iter().any(|l| l.starts_with("could not save state.json after writing the run's files: run ")),
+        "{told:?}"
+    );
+}
+
+#[test]
+fn a_run_closed_while_its_summary_is_written_keeps_the_close_in_the_save_after_it() {
+    let host = Rc::new(FakeHost::default());
+    let other = Rc::downgrade(&host);
+    host.state().before_write = Some(Box::new(move |path, _| {
+        if path.ends_with("/summary.md") {
+            let host = other.upgrade().expect("the host outlives its hook");
+            let state = path.replace("/summary.md", "/state.json");
+            let mut closed: Object = serde_json::from_str(&host.state().files[&state]).unwrap();
+            closed.insert("closed".into(), Value::from("workspace closed"));
+            host.state().files.insert(state, Value::Object(closed).to_string());
+        }
+        Ok(())
+    }));
+    let f = Fixture::on(host, new_state(), vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
+    failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
+    assert_eq!(f.host.state().writes.last(), Some(&format!("{}/state.json", f.state.dir())), "saved after the summary");
+    let saved = f.saved();
+    assert_eq!(saved.get("closed"), Some(&Value::from("workspace closed")), "{saved:?}");
+    assert!(saved.get("error").is_some_and(Value::is_set));
 }
 
 // -- metrics.json ------------------------------------------------------------------------------------------------

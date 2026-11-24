@@ -708,6 +708,53 @@ fn a_released_run_missing_a_file_has_it_written_then_saves_and_does_nothing_else
     assert!(!closed_w1(&f));
 }
 
+/// A fixture of released(), whose state.json holds on_disk, as the resume read it, and whose metrics.json is there.
+fn released_on_disk(on_disk: &RunState) -> Fixture {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), released(), vec![], &[], &[]);
+    f.put(&path(&f, "state.json"), &on_disk.to_text());
+    f.put(&path(&f, METRICS_FILE), "{}\n");
+    f
+}
+
+#[test]
+fn a_released_run_missing_only_its_metrics_saves_after_them() {
+    let f = Fixture::resume(Rc::new(FakeHost::default()), released(), vec![], &[], &[]);
+    f.put(&path(&f, "state.json"), &released().to_text());
+    f.put(&path(&f, SUMMARY_FILE), "# summary\n");
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.host.state().writes, [path(&f, METRICS_FILE), path(&f, "state.json")]);
+}
+
+#[test]
+fn a_ctrl_c_while_a_released_run_s_file_is_written_still_saves_after_it() {
+    let f = released_on_disk(&released());
+    let interrupt = f.interrupt.clone();
+    f.host.state().before_write = Some(Box::new(move |path, _| {
+        if path.ends_with(SUMMARY_FILE) {
+            interrupt.raise();
+        }
+        Ok(())
+    }));
+    assert_eq!(f.workflow(f.as_saved()).run(), Err(Stopped::Interrupted));
+    // Else nothing would: the next resume finds nothing left to write.
+    assert_eq!(f.host.state().writes, [path(&f, SUMMARY_FILE), path(&f, "state.json")]);
+}
+
+#[test]
+fn a_released_run_taken_up_by_another_since_its_resume_read_it_is_not_saved_after_its_file() {
+    let mut claimed = released();
+    claimed.owner = Some(object([("pid", Value::from(7)), ("host", Value::from("b"))]));
+    let f = released_on_disk(&claimed);
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+    assert_eq!(f.host.state().writes, [path(&f, SUMMARY_FILE)]);
+    assert!(f.saved().get("owner").is_some_and(Value::is_set), "the other orchestrator's state.json stays");
+    let told = f.told.lines();
+    assert!(
+        told.iter().any(|l| l.starts_with("could not save state.json after writing the run's files: run ")),
+        "{told:?}"
+    );
+}
+
 #[test]
 fn invalid_review_is_refused_until_deleted() {
     // As a run that stopped because its retry was used left it.
