@@ -506,7 +506,7 @@ pub fn run_workflow(
             harnesses: state.next_harnesses.clone(),
         },
         pull_request: state.pull_request,
-        quality_gate_on: state.quality_job.as_deref().is_some_and(|j| !j.is_empty()),
+        quality_gate_on: state.has_quality_gate(),
         max_quality_rounds: state.max_quality_rounds,
         pipeline: Some(pipeline.clone()),
         spec,

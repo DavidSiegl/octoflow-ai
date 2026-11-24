@@ -141,7 +141,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
 /// run_record's steps, of s's workflow p.
 fn step_refs(p: &Pipeline, s: &RunState) -> Value {
     // A workflow has one gated step at most (Pipeline::uniqueness_problem), so any quality turn checked that step.
-    let gate_checks = s.quality_job.is_some() || s.turns.iter().any(|t| t.step == QUALITY);
+    let gate_checks = s.has_quality_gate() || s.turns.iter().any(|t| t.step == QUALITY);
     let step = |st: &Step| {
         let label = p.roles().get(&st.role).expect("Pipeline::new refuses a step whose role has no label");
         Value::Object(object([
@@ -301,7 +301,7 @@ fn quality_gate_line(s: &RunState) -> Option<String> {
     if s.quality_gate_disabled {
         return Some("off (turned off by resume)".to_string());
     }
-    let job = s.quality_job.as_deref().filter(|job| !job.is_empty())?;
+    let job = s.quality_job.as_deref().filter(|_| s.has_quality_gate())?;
     if job == LOCAL_GATE {
         return Some(job.to_string());
     }

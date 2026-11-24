@@ -214,7 +214,7 @@ pub fn resumable_state(
 /// is already past the limit.
 fn resume_quality_limit(state: &mut RunState, pipeline: &Pipeline, args: &ResumeArgs) -> Result<(), OrchestratorError> {
     if let Some(n) = args.settings.max_quality_rounds {
-        if state.quality_job.as_deref().is_none_or(str::is_empty) && !args.quality_gate {
+        if !state.has_quality_gate() && !args.quality_gate {
             return Err(OrchestratorError(format!(
                 "run {} has no quality gate, so --max-quality-rounds does not apply",
                 state.run_id

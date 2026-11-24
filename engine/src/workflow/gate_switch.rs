@@ -71,7 +71,7 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline) -> Result<Option
     let s = state;
     let why = if s.phase == DONE || s.phase == PUBLISH {
         format!("is in phase {}, past its last turn", s.phase)
-    } else if s.quality_job.as_deref().is_some_and(|j| !j.is_empty()) {
+    } else if s.has_quality_gate() {
         return Ok(None);
     } else if s.quality_gate_disabled {
         "had its quality gate turned off with --no-quality-gate, which cannot be undone".to_string()
@@ -107,7 +107,7 @@ pub fn turn_quality_gate_off(
     human: &dyn Human,
 ) -> Result<(), OrchestratorError> {
     let s = state;
-    if s.phase == DONE || s.quality_job.as_deref().is_none_or(str::is_empty) {
+    if s.phase == DONE || !s.has_quality_gate() {
         let why = if s.phase == DONE { "is done" } else { "has no quality gate" };
         return Err(OrchestratorError(format!("run {} {why}, so --no-quality-gate does not apply", s.run_id)));
     }
