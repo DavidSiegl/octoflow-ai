@@ -1145,6 +1145,20 @@ fn a_forgotten_run_s_directory_goes_and_its_metrics_stay_in_place() {
 }
 
 #[test]
+fn a_metrics_file_that_leads_out_of_its_run_directory_is_not_archived_and_the_run_still_goes() {
+    let d = TempDir::new();
+    let host = ProcessHost::local(&Interrupt::new());
+    let runs = d.join(RUNS_DIR);
+    put(&format!("{runs}/a/state.json"), "{}");
+    put(&d.join("elsewhere.json"), "{\"run_id\": \"x\"}");
+    std::os::unix::fs::symlink(d.join("elsewhere.json"), format!("{runs}/a/metrics.json")).unwrap();
+    host.forget_run(&d.path(), "a").unwrap();
+    assert!(!std::path::Path::new(&d.join(".octoflow-ai/metrics-archive.jsonl")).exists());
+    assert!(!std::path::Path::new(&format!("{runs}/a")).exists());
+    assert!(std::path::Path::new(&d.join("elsewhere.json")).exists());
+}
+
+#[test]
 fn a_forget_after_its_archive_line_was_written_does_not_write_it_twice() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());

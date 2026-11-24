@@ -9,7 +9,8 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use super::{
-    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ,
+    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, RunFileText, Scanned, GIT_STATUS_ARGS,
+    ORIGIN_READ,
 };
 use crate::constants::{METRICS_FILE, SUMMARY_FILE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
@@ -748,6 +749,11 @@ impl Host for FakeHost {
 
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
         Ok(self.state().files.get(path).cloned())
+    }
+
+    /// read of the file in `files`: FakeHost has no links, so nothing leads out.
+    fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
+        Ok(self.read(&format!("{run_dir}/{name}"))?.map_or(RunFileText::Missing, RunFileText::Text))
     }
 
     /// write of the file's text in `files` with text at its end, as one write.
