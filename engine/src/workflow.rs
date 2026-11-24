@@ -489,7 +489,7 @@ impl<'a> Workflow<'a> {
         self.check_branch()?;
         // gitleaks and the gate's tools may have gone since the run last started.
         self.check_gitleaks()?;
-        if self.quality_gate_on {
+        if self.gate_ahead() {
             local_gate::preflight(self.host)?;
         }
         Ok(())
@@ -893,13 +893,19 @@ impl<'a> Workflow<'a> {
         s.pull_request && !s.nothing_to_publish && s.pr_url.as_deref().is_none_or(str::is_empty)
     }
 
+    /// Whether the run has the quality gate and may yet judge a snapshot with it: it is not publishing, after its
+    /// last turn.
+    fn gate_ahead(&self) -> bool {
+        self.quality_gate_on && self.state.phase != PUBLISH
+    }
+
     /// Fail if the rest of the run needs gitleaks and it cannot run here (Host::check_gitleaks): a run that will push
-    /// scans what it pushes, and a gated one each snapshot; one that does both is told of its pushes, which it asked
-    /// for with its pull request.
+    /// scans what it pushes, and one whose gate is ahead each snapshot; one that does both is told of its pushes,
+    /// which it asked for with its pull request.
     fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
         if self.will_push() {
             self.host.check_gitleaks(Scanned::Unpublished)
-        } else if self.quality_gate_on {
+        } else if self.gate_ahead() {
             self.host.check_gitleaks(Scanned::SinceBase)
         } else {
             Ok(())
