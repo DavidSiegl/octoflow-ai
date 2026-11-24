@@ -90,9 +90,11 @@ is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent
   start and no duration. A spec copied with `--spec` gets none, since no turn ran.
 
 When a run ends, done, failed or interrupted, it writes `summary.md` in its run directory: the task, run id and
-workflow, each role's harness and model, the outcome (verdict or error), the pull request and branch, the wall time from
-the first known start to the end, a Markdown table of the turns (`?` for what is not known, the interview marked as
-human-paced, a duration that holds permission waits written as "3m 44s (3m 19s waiting)"), and each round's quality
+workflow, each role's harness and the model its agent ran on, the outcome (verdict or error), the pull request and
+branch, the wall time from the first known start to the end, a Markdown table of the turns (`?` for what is not known,
+the interview marked as human-paced, a duration that holds permission waits written as "3m 44s (3m 19s waiting)", a
+model the harness did not offer as "sonnet (opus not offered)", or "default (o3 not offered)" when its session named
+none it took instead), and each round's quality
 gates and the verdict of each verdict step that judged it, read from the handoff files. A resume that ends again
 rewrites it with every turn; a run that is already `done` is not rewritten, unless the orchestrator that ended it
 stopped before releasing it, which it does once both files are written: a resume then writes them again, releases the
@@ -108,12 +110,14 @@ until a resume finishes it. Its keys:
 - `version` (1), `run_id`, `workflow`, `outcome` (the verdict, `error` or `unfinished`), `rounds` and
   `max_rounds`, `quality_gate` and `max_quality_rounds`, `pull_request`, `started_at`, `ended_at` and `seconds`
   of the whole run, and `restored_locked_files`, how many locked files later turns had changed.
-- `roles`: per role whose agent ran, its `harness` and `model` (`null` for the harness's default).
+- `roles`: per role whose agent ran, its `harness` and `model`, the one its agent ran on (`null` for the harness's
+  default), and when its harness did not offer the role's model, `unoffered_model`, the one it was not offered.
 - `turns`: `turns` of `state.json` in order, each with `step`, `role`, `harness` and `model` (`null` for a quality
   analysis; `model` is the one the agent ran on, not the role's of `roles` when its harness did not offer that, and
   also `null` for the harness's default and for a session that did not name the model it took instead), `round`,
   `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`, and in an ACP run
-  `waited_seconds` ([Turn timings](#turn-timings-and-the-summary)).
+  `waited_seconds` ([Turn timings](#turn-timings-and-the-summary)) and, for a turn whose harness did not offer the
+  role's model, `unoffered_model`, the one it was not offered.
 - `quality_rounds`: per quality round, `round`, `quality_round`, `gate`, the failed `conditions` and
   `fingerprints_by_check`: for each check or linter, the first word of a finding's rule, and `tests` for failing
   tests, the fingerprints of the findings that failed the gate (the gate's own from `quality.json`, else
@@ -272,7 +276,7 @@ The commit a run publishes ends with git trailers that say what made it, after t
 | --- | --- |
 | `Octoflow-Run` | the run id, which names the run directory and the run's `summary.md` |
 | `Octoflow-Workflow` | the workflow's name |
-| `Octoflow-Role` | one per role whose agent ran, in the order they first started: `role=harness/model`, the model `default` when no flag or workflow file set one; a role that ran in two harnesses over resumes names the one it ended in |
+| `Octoflow-Role` | one per role whose agent ran, in the order they first started: `role=harness/model`, the model its agent ran on, `default` when no flag or workflow file set one, followed by ` (opus not offered)` when its harness did not offer the role's model (`sonnet (opus not offered)`, `default (o3 not offered)`); a role that ran in two harnesses over resumes names the one it ended in |
 | `Octoflow-Gate` | with `--quality-gate` only: the last quality round's gate and how many quality rounds its review round took, such as `OK after 2 quality rounds`; `, then turned off` appended, as in `ERROR after 1 quality round, then turned off`, when `resume --no-quality-gate` turned the gate off after that quality round and the Builder changed the code since, so nothing judged the final change; no trailer when the gate was turned off before any analysis finished |
 
 So which harness and model built and reviewed a change can be read from history:

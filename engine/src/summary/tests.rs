@@ -1,7 +1,7 @@
 use super::*;
 use crate::json::object;
 use crate::pipeline::DEFAULT_WORKFLOW;
-use crate::state::AgentRecord;
+use crate::state::{AgentRecord, UnofferedModel};
 use crate::test_support::{helper_cases, oracle, unhex, GOLDEN_SUMMARY};
 
 #[test]
@@ -251,4 +251,59 @@ fn turn_tokens_sums_the_answers_within_the_turn() {
     }
     // The session of 7 and the start of 5; any more means TurnRecord stopped holding cases the engine writes.
     assert_eq!((refused, cases.len()), (2, 16));
+}
+
+/// approved_run, but the review's harness was not offered opus and ran on sonnet, and the build's was not offered o3
+/// and named none it took instead.
+fn run_with_unoffered_models() -> RunState {
+    let mut s = approved_run();
+    s.models.insert("build".to_string(), "o3".to_string());
+    let unoffered =
+        |asked: &str, taken: Option<&str>| Some(UnofferedModel { asked: asked.into(), taken: taken.map(String::from) });
+    s.agents["review"].unoffered_model = unoffered("opus", Some("sonnet"));
+    s.agents["build"].unoffered_model = unoffered("o3", None);
+    for t in &mut s.turns {
+        (t.model, t.unoffered_model) = match t.role.as_str() {
+            "review" => (Some("sonnet".into()), Some("opus".into())),
+            "build" => (None, Some("o3".into())),
+            _ => (t.model.take(), None),
+        };
+    }
+    s
+}
+
+#[test]
+fn the_summary_names_the_model_a_role_ran_on_and_the_one_not_offered() {
+    let summary = run_summary(&run_with_unoffered_models(), &DEFAULT_WORKFLOW, &[], 1_791_000_000 + 2100);
+
+    assert!(summary.contains("| Builder (build) | codex | default (o3 not offered) |"), "{summary}");
+    assert!(summary.contains("| Reviewer (review) | claude | sonnet (opus not offered) |"), "{summary}");
+    assert!(summary.contains("| Spec Collector (spec) | claude | default |"), "{summary}");
+    assert!(summary.contains("| build | build | 1 | codex | default (o3 not offered) |"), "{summary}");
+    assert!(summary.contains("| review | review | 1 | claude | sonnet (opus not offered) |"), "{summary}");
+    assert!(summary.contains("| spec | 0 | claude | default |"), "{summary}");
+}
+
+#[test]
+fn the_metrics_name_the_model_a_role_ran_on_and_the_one_not_offered() {
+    let metrics = run_metrics(&run_with_unoffered_models(), 1_791_000_000 + 2100);
+
+    assert_eq!(
+        metrics["roles"],
+        json!({
+            "spec": {"harness": "claude", "model": null},
+            "build": {"harness": "codex", "model": null, "unoffered_model": "o3"},
+            "review": {"harness": "claude", "model": "sonnet", "unoffered_model": "opus"},
+        })
+    );
+    let turns: Vec<(&Value, Option<&Value>)> =
+        metrics["turns"].as_array().unwrap().iter().map(|t| (&t["model"], t.get("unoffered_model"))).collect();
+    assert_eq!(
+        turns,
+        [
+            (&Value::Null, None),
+            (&Value::Null, Some(&Value::from("o3"))),
+            (&Value::from("sonnet"), Some(&Value::from("opus")))
+        ]
+    );
 }

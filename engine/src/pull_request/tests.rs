@@ -1,5 +1,5 @@
 use super::*;
-use crate::state::AgentRecord;
+use crate::state::{AgentRecord, UnofferedModel};
 use crate::test_support::{helper_cases, TempDir};
 use serde_json::Value;
 
@@ -313,4 +313,29 @@ fn git_reads_them_as_trailers() {
          Octoflow-Role: build=claude/default\nOctoflow-Role: review=codex/gpt-5\nOctoflow-Gate: OK after 2 quality rounds\n"
     );
     assert!(message.contains(&note));
+}
+
+#[test]
+fn a_role_trailer_names_the_model_its_agent_ran_on_and_the_one_not_offered() {
+    let s = state(|s| {
+        for role in ["spec", "build", "review"] {
+            s.agents.insert(role.to_string(), AgentRecord::new(&format!("{role}-r"), "p1", "claude"));
+        }
+        s.models.insert("build".to_string(), "o3".to_string());
+        s.models.insert("review".to_string(), "opus".to_string());
+        s.agents["build"].unoffered_model = Some(UnofferedModel { asked: "o3".into(), taken: None });
+        s.agents["review"].unoffered_model =
+            Some(UnofferedModel { asked: "opus".into(), taken: Some("sonnet".into()) });
+    });
+
+    let roles: Vec<String> = provenance(&s, &GateEvidence::default())
+        .into_iter()
+        .filter(|(key, _)| key == "Octoflow-Role")
+        .map(|(_, role)| role)
+        .collect();
+
+    assert_eq!(
+        roles,
+        ["spec=claude/default", "build=claude/default (o3 not offered)", "review=claude/sonnet (opus not offered)"]
+    );
 }
