@@ -78,6 +78,7 @@
       "state": null,
       "error": null
      },
+     "nothing_to_publish": false,
      "turns": [
       {
        "step": "spec",
@@ -237,6 +238,7 @@
      "branch": null,
      "worktree": null,
      "pr": null,
+     "nothing_to_publish": false,
      "turns": [
       {
        "step": "spec",
@@ -330,6 +332,7 @@
      "branch": "orchestrator/add-a-token-bucket-rate-limiter-c0ffee",
      "worktree": null,
      "pr": null,
+     "nothing_to_publish": false,
      "turns": [
       {
        "step": "spec",
@@ -448,6 +451,7 @@
      "branch": "orchestrator/add-a-token-bucket-rate-limiter-c0ffee",
      "worktree": null,
      "pr": null,
+     "nothing_to_publish": false,
      "turns": [
       {
        "step": "spec",
@@ -589,6 +593,7 @@
      "branch": "orchestrator/add-a-token-bucket-rate-limiter-c0ffee",
      "worktree": null,
      "pr": null,
+     "nothing_to_publish": false,
      "turns": [
       {
        "step": "spec",

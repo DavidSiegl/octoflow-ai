@@ -113,4 +113,21 @@ describe("the run detail", () => {
     expect(nowLine()).toBe("build · claude · running 31s");
     expect(renders).toEqual(before);
   });
+
+  it("says a run with nothing to publish had nothing to publish, where its pull request would be", () => {
+    const api = {
+      fileText: async () => "",
+      agentEvents: async () => ({ session_start: null, events: [], answerable: false }),
+    } as unknown as Api;
+    const nothing = { ...record(), pull_request: true, phase: "done", verdict: "APPROVE", nothing_to_publish: true };
+    const shown = (r: RunRecord) =>
+      render(<RunDetail api={api} project={{ cwd: "/home/me/proj" }} entry={{ record: r, receivedAt: NOW, files: [] }} onClose={() => {}} />);
+
+    const { unmount } = shown(nothing);
+    expect(screen.getByText(/nothing to publish/)).toBeInTheDocument();
+    unmount();
+
+    shown({ ...nothing, nothing_to_publish: false });
+    expect(screen.queryByText(/nothing to publish/)).not.toBeInTheDocument();
+  });
 });

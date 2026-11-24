@@ -20,6 +20,9 @@ pub fn run_dir(cwd: &str, run_id: &str) -> String {
     format!("{cwd}/{RUNS_DIR}/{run_id}")
 }
 
+/// How summary.md and `show` word the pull request of a run that had nothing to publish (RunState::nothing_to_publish).
+pub const NOTHING_TO_PUBLISH: &str = "none: nothing tracked changed since the base, so there was nothing to publish";
+
 /// What a run has done so far, saved as state.json in its run directory.
 ///
 /// state.json is one line of JSON, an object: "format", STATE_FORMAT, then these fields in this order, then the fields
@@ -57,7 +60,8 @@ pub struct RunState {
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     /// True once publish found that the run changed nothing git tracks, its working tree and HEAD as they were at
-    /// base, and so opened no pull request though the run succeeded (Workflow::publish). Saved only when true.
+    /// base, and so opened no pull request though the run succeeded (Workflow::publish); summary.md and `show` word
+    /// it as NOTHING_TO_PUBLISH. Saved only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub nothing_to_publish: bool,
     /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last

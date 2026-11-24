@@ -10,7 +10,7 @@ const RECORD: KeysOf<RunRecord> = {
   id: true, key: true, task: true, workflow: true, steps: true, pull_request: true, phase: true, round: true,
   quality_round: true, role: true, pane: true, agents: true, backend: true, health: true, health_reason: true, heartbeat_age: true,
   waiting: true, verdict: true, verdicts: true, error: true, closed: true, branch: true, worktree: true, pr: true,
-  turns: true, resume_command: true, resumable: true,
+  nothing_to_publish: true, turns: true, resume_command: true, resumable: true,
 };
 const STEP: KeysOf<Step> = { id: true, role: true, role_label: true, loop_to: true, quality_gated: true };
 const AGENT: KeysOf<AgentRef> = { role: true, name: true, kind: true };
