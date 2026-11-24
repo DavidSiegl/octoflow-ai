@@ -277,6 +277,43 @@ fn a_flow_collection_below_its_key_or_an_anchor_tag_or_alias_fails_as_not_read()
 }
 
 #[test]
+fn a_top_level_not_in_block_style_or_a_key_this_check_cannot_compare_fails_as_not_read() {
+    // A workflow written as JSON, which is YAML too.
+    let json = "{\"on\": \"push\", \"jobs\": {\"b\": {\"steps\": [{\"uses\": \"a/b@v1\"}]}}}\n";
+    let keys = workflow(&["- ? uses", "  : a/b@v1", "- <<: *e", "- \"u\\x73es\": a/b@v1"]);
+    // An anchor on a with: input is passed over, and the script under it, which holds a steps: list, stays a script.
+    let script = format!(
+        "on: push\njobs:\n  b:\n    steps:\n      - uses: actions/github-script@{SHA}\n        with:\n          \
+         &s script: |\n            steps:\n              - uses: foo/falsepos@v1\n"
+    );
+    let run = check(&[
+        (".github/workflows/anchored-jobs.yml", "on: push\n&j jobs:\n  call:\n    uses: o/r/w.yml@v1\n"),
+        (".github/workflows/bom.yml", "\u{feff}jobs:\n  call:\n    uses: o/r/w.yml@v1\n"),
+        (".github/workflows/json.yml", json),
+        (".github/workflows/script.yml", &script),
+        (".github/workflows/steps.yml", &keys),
+    ]);
+    run.assert_unpinned(&[
+        ".github/workflows/anchored-jobs.yml:2",
+        ".github/workflows/bom.yml:3",
+        ".github/workflows/json.yml:1",
+        ".github/workflows/steps.yml:6",
+        ".github/workflows/steps.yml:8",
+        ".github/workflows/steps.yml:9",
+    ]);
+    let stderr = run.stderr();
+    for said in [
+        "json.yml:1: the document in flow style",
+        "anchored-jobs.yml:2: the document with an anchor, tag or alias",
+        "steps.yml:6: a step with an explicit key (?)",
+        "steps.yml:8: a step with a merge key (<<)",
+        "steps.yml:9: a step with an escape in a quoted key",
+    ] {
+        assert!(stderr.contains(said), "{said}: {stderr}");
+    }
+}
+
+#[test]
 fn a_checkout_without_github_passes() {
     check(&[]).assert_pinned();
 }

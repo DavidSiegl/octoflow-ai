@@ -19,9 +19,10 @@
 # A `uses:` GitHub runs is a step's (a key of an item of a `steps:` list, in a workflow's job or a composite action's
 # runs) or a job's (a key of a job under the top-level `jobs:`, calling a reusable workflow); a key named uses anywhere
 # else, such as a with: input, and a line of a block or multi-line scalar (a run: | script) is not one. It reads only
-# plain block style: a step, a steps: list, a job, jobs: or an action's runs: written in flow style ({...} or [...]),
-# on its key's line or below it, or carrying an anchor (&), a tag (!) or an alias (*), fails as not read, naming its
-# line, since reading those by line is where a tag would slip through.
+# plain block style: the document's top level, a step, a steps: list, a job, jobs: or an action's runs: written in
+# flow style ({...} or [...]), on its key's line or below it, or carrying an anchor (&), a tag (!), an alias (*), an
+# explicit key (?), a merge key (<<) or a double-quoted key with an escape, fails as not read, naming its line, since
+# reading those by line is where a tag would slip through. Elsewhere an anchor or a tag is passed over.
 set -eu
 
 # -P: as ci/rustfmt.sh does, so that the files are named from the top level.
@@ -60,19 +61,31 @@ unpinned='
         return (depth >= 1 && key[depth] == "steps") || (depth == 2 && key[1] == "jobs" && col[1] == 0)
     }
 
-    # What a line whose content is not a key sits in, at this place, if steps or jobs are written there: a step
-    # (an item of steps), a job (its keys), jobs: or runs: (their keys); "" elsewhere.
+    # What a node at this place, if it is not plain block style, would hide steps or jobs in, by the keys open: the
+    # document itself at the top level; a step (an item of a steps: list, item being whether the node is one) or the
+    # steps: list; a job; jobs: or runs:; "" elsewhere.
     function place() {
-        if (depth >= 1 && key[depth] == "steps") return "a step"
+        if (depth == 0) return "the document"
+        if (key[depth] == "steps") return item ? "a step" : "steps:"
         if (depth == 2 && key[1] == "jobs" && col[1] == 0) return "job " key[2]
         if (depth == 1 && col[1] == 0 && (key[1] == "jobs" || key[1] == "runs")) return key[1] ":"
         return ""
     }
 
-    # Report what, written as node (a flow collection, or one that starts with an anchor, a tag or an alias) on this
-    # line, as not read.
+    # Whether node, the text of a line or a value, starts with what this check does not read: a flow collection, an
+    # anchor, a tag, an alias, or an explicit key (? ).
+    function unreadable(node) {
+        return node ~ /^([{[&!*]|[?]([ \t]|$))/
+    }
+
+    # Report what as not read, written on this line as node (unreadable) or, by key, as the merge key << or a quoted
+    # key with an escape.
     function unread(what, node,    how) {
-        how = node ~ /^[{[]/ ? "in flow style" : "with an anchor, tag or alias"
+        if (node ~ /^[{[]/) how = "in flow style"
+        else if (node ~ /^[?]/) how = "with an explicit key (?)"
+        else if (node == "<<") how = "with a merge key (<<)"
+        else if (node ~ /^"/) how = "with an escape in a quoted key"
+        else how = "with an anchor, tag or alias"
         print FILENAME ":" FNR ": " what " " how ", which this check does not read: write it out in block style"
     }
 
@@ -80,6 +93,8 @@ unpinned='
     {
         line = $0
         sub(/\r$/, "", line)
+        # A byte order mark, which YAML allows at the start, is no part of the first key.
+        if (FNR == 1) sub(/^\357\273\277/, "", line)
         if (line ~ /^[ \t]*(#.*)?$/) next
         match(line, /^ */)
         at = RLENGTH
@@ -88,39 +103,56 @@ unpinned='
         scalar = -1
         text = substr(line, at + 1)
         # A list item: its content starts after "- ", a column deeper.
+        item = 0
         while (text ~ /^-([ \t]|$)/) {
             match(text, /^-[ \t]*/)
             at += RLENGTH
             text = substr(text, RLENGTH + 1)
+            item = 1
         }
         # Close the keys this line is not inside: those at its column or deeper.
         while (depth > 0 && col[depth] >= at) depth--
-        if (text ~ /^[{[&!*]/) {
+        if (unreadable(text)) {
             what = place()
-            if (what != "") unread(what, text)
-            next
+            if (what != "") {
+                unread(what, text)
+                next
+            }
+            # Elsewhere an anchor or a tag is passed over, so that the key after it is opened and its value, a block
+            # scalar perhaps, is skipped as any other: &s script: | holds no steps.
+            while (text ~ /^[&!][^ \t]*([ \t]|$)/) {
+                sub(/^[&!][^ \t]*[ \t]*/, "", text)
+            }
+            if (text == "" || unreadable(text)) next
         }
         if (!match(text, /^("[^"]*"|\047[^\047]*\047|[^ \t#"\047:][^:]*)[ \t]*:([ \t]|$)/)) next
         k = substr(text, 1, RLENGTH)
         sub(/[ \t]*:[ \t]*$/, "", k)
+        quoted = k
         gsub(/^["\047]|["\047]$/, "", k)
         v = substr(text, RLENGTH + 1)
         sub(/^[ \t]+/, "", v)
         # A comment, after blanks or alone, is no value: jobs: # all jobs opens a mapping.
         sub(/(^|[ \t]+)#.*$/, "", v)
-        if (k == "uses" && runs()) judge(v)
-        # Where steps and jobs sit: the steps: of a job or of runs:, a job, and jobs: and runs: themselves.
-        if (v ~ /^[{[&!*]/) {
-            if (k == "steps" && ((depth == 2 && key[1] == "jobs") || (depth == 1 && key[1] == "runs")))
-                unread("steps:", v)
-            else if (depth == 1 && key[1] == "jobs" && col[1] == 0)
-                unread("job " k, v)
-            else if (depth == 0 && (k == "jobs" || k == "runs"))
-                unread(k ":", v)
+        # A key whose name this check cannot compare where steps and jobs sit: << merges keys from elsewhere, and a
+        # double-quoted key may spell uses with an escape.
+        if (k == "<<" || (quoted ~ /^"/ && k ~ /\\/)) {
+            what = place()
+            if (what != "") {
+                unread(what, k == "<<" ? "<<" : quoted)
+                next
+            }
         }
+        if (k == "uses" && runs()) judge(v)
         depth++
         key[depth] = k
         col[depth] = at
+        # The value on the line of the key, where it holds steps or jobs (place(), with the key open), must be plain.
+        item = 0
+        if (unreadable(v)) {
+            what = place()
+            if (what != "") unread(what, v)
+        }
         # A value on the line of the key itself, other than an anchor or tag, is a scalar or a flow collection, and the
         # deeper lines after it belong to it, not to keys of their own.
         if (v != "" && v !~ /^[&!][^ \t]*$/) scalar = at
