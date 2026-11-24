@@ -336,19 +336,28 @@ fn replace_golden(dir: &Path, golden: &[(String, Vec<u8>)]) -> Result<(), Error>
 /// The version and sha256 of pin's first line that is not a comment, read by the rules of the engine's parse_pin,
 /// which tests.rs's a_pin_reads_as_the_engine_reads_it holds the two to: a version that starts with a digit and holds
 /// only letters, digits and `.+-`, a space, and 64 lower-case hex digits. Errors: a pin parse_pin refuses, as the
-/// engine words it; and a pre-release, which parse_pin takes but a raise cannot order against a release (Version).
+/// engine words it; and a version parse_pin takes that is not a release's major.minor.patch as Version writes it (a
+/// pre-release, a build, `0.16`, a leading zero), which a raise cannot order against a release.
 fn pin_of(pin: &str) -> Result<(Version, &str), Error> {
     let line = pin.lines().find(|l| !l.starts_with('#')).unwrap_or("");
     let (version, sha) = line.split_once(' ').unwrap_or((line, ""));
-    let is_version = version.starts_with(|c: char| c.is_ascii_digit())
-        && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b));
-    if !is_version || !is_sha256(sha) {
+    if !is_version(version) || !is_sha256(sha) {
         return Err(Error(format!("{PIN}: its first line '{line}' is not '<version> <sha256>'")));
     }
-    let version = Version::parse(version).ok_or_else(|| {
-        Error(format!("{PIN} names {version}, a pre-release, which raise-gate-pin cannot raise from"))
+    // Version::parse also takes `v1.2.3`, `01.2.3` and `+1.2.3`, which name no release's tag.
+    let release = Version::parse(version).filter(|v| v.to_string() == version).ok_or_else(|| {
+        Error(format!(
+            "{PIN} names {version}, which is not a release's major.minor.patch, so raise-gate-pin cannot raise from it"
+        ))
     })?;
-    Ok((version, sha))
+    Ok((release, sha))
+}
+
+/// Whether version is one the engine's parse_pin takes (its is_version): a digit, then only letters, digits and
+/// `.+-`.
+fn is_version(version: &str) -> bool {
+    version.starts_with(|c: char| c.is_ascii_digit())
+        && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
 }
 
 /// Whether sha is a sha256 as the pin and a release's `.sha256` asset write it: 64 lower-case hex digits.

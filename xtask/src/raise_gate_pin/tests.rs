@@ -43,9 +43,11 @@ fn a_pin_reads_as_the_engine_reads_it() {
         let engine = local_gate::parse_pin(&pin).unwrap_err();
         assert_eq!(ours, format!("{PIN}: {}", engine.0), "{pin:?}");
     }
-    // A pre-release, which the engine takes, cannot be raised from.
-    let pre = format!("1.0.0-rc1 {sha}\n");
-    assert!(local_gate::parse_pin(&pre).is_ok());
-    let Error(ours) = pin_of(&pre).map(|_| ()).unwrap_err();
-    assert!(ours.contains("1.0.0-rc1, a pre-release"), "{ours}");
+    // A version the engine takes that is not a release's major.minor.patch cannot be raised from.
+    for version in ["1.0.0-rc1", "1.2.3+build.5", "0.16", "0.09.2", "0.+16.0"] {
+        let pin = format!("{version} {sha}\n");
+        assert!(local_gate::parse_pin(&pin).is_ok(), "{version}");
+        let Error(ours) = pin_of(&pin).map(|_| ()).unwrap_err();
+        assert!(ours.contains(&format!("{version}, which is not a release's major.minor.patch")), "{ours}");
+    }
 }
