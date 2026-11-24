@@ -496,7 +496,7 @@ is of its source, and each hidden test rejects its task's starting point and acc
   `packaging/build-desktop.sh`. On `main` a Release stage publishes a new version (`ci/release-version.sh`) as a GitHub
   release, with the Linux binary and the Linux desktop app, each with its `.sha256`, and
   `octoflow-third-party-licenses.html`, in one `gh release create`, and `docs/releases/v<version>.md`, where there is
-  one, with the notes of any version since the latest release that `main` reached unreleased (`ci/release-notes.sh`),
+  one, with the notes of any version above the highest release that `main` reached unreleased (`ci/release-notes.sh`),
   before GitHub's generated notes. A pull request build into `main` fails its Version stage unless the pull request
   raises the version over `main`'s or changes only docs, tests, CI or repository tooling (`ci/version-raised.sh` lists
   those paths), so that every merge into `main` that reaches users is released; and it fails a raise while an older

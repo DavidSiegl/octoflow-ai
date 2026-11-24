@@ -56,10 +56,10 @@ fn a_release_right_after_the_highest_has_its_own_notes_as_they_are() {
 #[test]
 fn a_skipped_version_s_notes_come_after_the_release_s_under_headings() {
     // 0.10.0 sorts after 0.9.1 as a version, not as text; 0.8.0 is older than the highest release, 0.11.0 newer than
-    // the one released; a tag not starting with "v" is no release.
+    // the one released; a tag that is no plain version, which sort -V would put above them, is no release.
     let notes = ["0.8.0", "0.9.0", "0.9.1", "0.10.0", "0.11.0"];
     assert_eq!(
-        printed(&notes, "0.10.0", &["v0.9.0", "v0.8.0", "nightly"]),
+        printed(&notes, "0.10.0", &["v0.9.0", "v0.8.0", "nightly", "vnext", "v0.10.0-rc.1"]),
         "# v0.10.0\n\n## 0.10.0\n\n# v0.9.1\n\n## 0.9.1\n\n# Pull requests\n"
     );
 }

@@ -97,6 +97,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   it may. Closed when the agent's PATH is shown to hold only root-owned directories, or both stages run `gh` by a
   root-owned absolute path.
 
+- **A release made after a higher one is marked Latest on GitHub, and two Release stages can overlap.** Review 291
+  (release-gaps 01): `gh release create` passes no `--latest`, and GitHub marks a new release Latest by default, so a
+  main build that releases a lower version after a higher one's (main's builds may run at once: the Jenkinsfile has no
+  `disableConcurrentBuilds()`) moves Latest back. Two such builds that both list the releases before either creates
+  its own also put the lower version's notes on both pages (`ci/release-notes.sh`). Closed when Release passes
+  `--latest` only for the highest version and the Release stage is serialized, or such overlap is shown not to happen.
+
 - **"The run has the quality gate" is spelt two ways.** Raised by cross-review 268 (F6): `step_prompt.rs` tests
   `quality_job.is_some()`, while `gate_switch.rs`, `cli.rs` (resume's gate check) and `cli/listing.rs` test
   `quality_job.as_deref().is_some_and(|j| !j.is_empty())`; within a run they agree (workflow.rs sets quality_job from
