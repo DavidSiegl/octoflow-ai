@@ -899,7 +899,7 @@ fn run_files_in_one_call_over_ssh() {
 }
 
 #[test]
-fn run_files_failure_and_a_time_that_is_not_one() {
+fn run_files_failure_and_a_time_or_size_that_is_not_one() {
     let bin = TempDir::new();
     tool(&bin.path(), "stat", "#!/bin/sh\necho soon\n");
     let d = TempDir::new();

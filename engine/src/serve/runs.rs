@@ -208,8 +208,8 @@ impl ProjectRuns {
     /// size in bytes: a file written again within the second it was listed in can keep its mtime but not, as a rule,
     /// its size, so the two together tell the app when to read it again. [] for a run without a directory. Only the
     /// files read would give are listed: none that leads out of the run directory through a symbolic link, and none of
-    /// a run whose directory leads out of the runs directory (Host::run_files_inside). Errors: Refused for a run id that is not a plain name, Failed when the directory
-    /// cannot be listed.
+    /// a run whose directory leads out of the runs directory (Host::run_files_inside). Errors: Refused for a run id that
+    /// is not a plain name, Failed when the directory cannot be listed.
     pub fn files(&self, run_id: &str) -> Result<Value, RunReadError> {
         let files = self.host.run_files_inside(&self.dir(run_id)?)?;
         let entry = |f: &RunFile| {

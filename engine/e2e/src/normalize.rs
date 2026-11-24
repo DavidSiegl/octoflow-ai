@@ -12,7 +12,8 @@ use serde_json::Value;
 
 /// The JSON keys whose numbers differ between runs, each with the placeholder its number becomes: times measured by a
 /// clock (a turn's or a run's seconds, a state's age, a file's modification time), and a file's size, which follows
-/// the times and durations the file holds. Sorted by key.
+/// the times and durations the file holds. A key is matched in every payload, not only where it has that meaning:
+/// "size" is replaced wherever it appears, which today is only serve's file entries. Sorted by key.
 const MEASURED_KEYS: [(&str, &str); 4] =
     [("heartbeat_age", "<seconds>"), ("mtime", "<seconds>"), ("seconds", "<seconds>"), ("size", "<bytes>")];
 /// The JSON keys whose strings word a time measured by a clock, such as run_health's "beat 3s ago".
@@ -183,11 +184,13 @@ impl Normalizer {
             }
             Value::Array(items) => Value::Array(items.iter().map(|v| self.json(v, timed, key)).collect()),
             Value::String(s) => Value::String(self.text(s, timed || key.is_some_and(|k| TIMED_TEXT_KEYS.contains(&k)))),
-            Value::Number(n) if n.is_i64() && measured(key).is_some() => Value::from(measured(key).unwrap_or_default()),
-            Value::Number(n) if n.is_i64() && key == Some("pid") => {
-                let pid = n.as_i64().and_then(|p| self.pid_placeholder(p));
-                Value::from(pid.unwrap_or("<pid:?>"))
-            }
+            Value::Number(n) if n.is_i64() => match (measured(key), key) {
+                (Some(placeholder), _) => Value::from(placeholder),
+                (None, Some("pid")) => {
+                    Value::from(n.as_i64().and_then(|p| self.pid_placeholder(p)).unwrap_or("<pid:?>"))
+                }
+                _ => node.clone(),
+            },
             other => other.clone(),
         }
     }
