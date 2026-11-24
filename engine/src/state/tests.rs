@@ -207,6 +207,56 @@ fn a_turn_record_saved_before_waits_were_kept_has_none() {
     let state = RunState::from_text(&text).unwrap();
 
     assert_eq!(state.turns[0].waited_seconds, None);
+    assert_eq!((&state.turns[0].outside_wait_seconds, &state.turns[0].waiting_on), (&None, &None));
+    assert_eq!(state.to_text(), text + "\n");
+}
+
+#[test]
+fn a_standing_wait_and_the_seconds_of_those_ended_are_saved_as_read() {
+    let wait = r#"{"on": "the merge of pull request #526", "since": "2026-10-03T04:01:00+00:00"}"#;
+    let turns = turn_with(&[("outside_wait_seconds", Some("30")), ("waiting_on", Some(wait))]);
+    let text = saved_with(&[("turns", Some(&turns))]);
+
+    let state = RunState::from_text(&text).unwrap();
+
+    let since = "2026-10-03T04:01:00+00:00".to_string();
+    let standing = StandingWait { on: "the merge of pull request #526".into(), since };
+    assert_eq!((state.turns[0].outside_wait_seconds, &state.turns[0].waiting_on), (Some(30), &Some(standing)));
+    assert_eq!(state.to_text(), text + "\n");
+}
+
+/// turn_with's record as read.
+fn build_1_under_way() -> TurnRecord {
+    RunState::from_text(&saved_with(&[("turns", Some(&turn_with(&[])))])).unwrap().turns.remove(0)
+}
+
+#[test]
+fn ending_a_wait_adds_its_seconds_to_those_of_the_waits_ended_before() {
+    let at = |s: i64| crate::summary::iso_utc(1_791_000_000 + s);
+    let mut turn = build_1_under_way();
+    assert_eq!(turn.end_wait(1_791_000_100), Ok(false));
+    assert_eq!(turn.outside_wait_seconds, None);
+
+    turn.waiting_on = Some(StandingWait { on: "x".into(), since: at(10) });
+    assert_eq!(turn.end_wait(1_791_000_040), Ok(true));
+    turn.waiting_on = Some(StandingWait { on: "y".into(), since: at(100) });
+    assert_eq!(turn.end_wait(1_791_000_105), Ok(true));
+    // A wait found after the turn's end, as its file's mtime gives it, counts nothing.
+    turn.waiting_on = Some(StandingWait { on: "z".into(), since: at(200) });
+    assert_eq!(turn.end_wait(1_791_000_150), Ok(true));
+
+    assert_eq!((turn.outside_wait_seconds, turn.waiting_on), (Some(35), None));
+}
+
+#[test]
+fn a_wait_that_started_at_no_time_stays_standing() {
+    let mut turn = build_1_under_way();
+    turn.waiting_on = Some(StandingWait { on: "x".into(), since: "soon".into() });
+
+    let err = turn.end_wait(1_791_000_000).unwrap_err();
+
+    assert!(err.0.starts_with("the wait of the turn that writes build-1.md started at no time: "), "{err:?}");
+    assert!(turn.waiting_on.is_some());
 }
 
 #[test]

@@ -1,10 +1,14 @@
 //! An agent in a turn that reports it is waiting on something outside the run (its handoff file's waiting file, the
 //! wait note of a step that can block): its turn's deadline stands still and no stall is told while the report
-//! stands, a resume finds the wait and waits too, and the report goes once the turn ends.
+//! stands, a resume finds the wait and waits too, and the report goes once the turn ends. The turn's record carries
+//! the wait while it stands and counts its seconds once it ends (TurnRecord::outside_wait_seconds).
 //!
 //! Not here: the note in the prompts of steps that can block, in tests.rs beside the BLOCKED note.
 
 use super::*;
+use crate::constants::POLL_SECONDS;
+use crate::host::fake::HOST_EPOCH;
+use crate::workflow::Workflow;
 
 const D: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 const WHAT: &str = "the merge of pull request #526";
@@ -20,6 +24,20 @@ fn waiting_1() -> String {
 /// How many of the human's notices name the Builder's wait.
 fn waits_told(f: &Fixture) -> usize {
     f.told.titles().iter().filter(|t| *t == &format!("Builder is waiting on {WHAT}")).count()
+}
+
+/// The record of the run's build-1.md turn.
+fn build_1_turn(wf: &Workflow) -> TurnRecord {
+    wf.state().turns.iter().find(|t| t.file == "build-1.md").cloned().expect("a build-1.md turn")
+}
+
+/// A record of the build-1.md turn under way, as a run that stopped while its Builder reported a wait on WHAT saved
+/// it: started 200s and waiting 100s before HOST_EPOCH.
+fn waiting_build_turn(wf: &Workflow) -> TurnRecord {
+    let mut record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH - 200));
+    let since = crate::summary::iso_utc(HOST_EPOCH - 100);
+    record.waiting_on = Some(crate::state::StandingWait { on: WHAT.to_string(), since });
+    record
 }
 
 /// How many of the human's notices name the Builder's stall.
@@ -74,6 +92,42 @@ fn a_turn_that_waits_past_its_timeout_and_then_writes_its_file_succeeds() {
 }
 
 #[test]
+fn a_withdrawn_wait_s_seconds_are_recorded_apart_from_the_turn_s() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![idle()]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    waits_then_writes(&f, Some(600.0), 30.0);
+    let mut wf = f.workflow(no_pr());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let turn = build_1_turn(&wf);
+    // A poll's worth of slack either side: the wait is found and its withdrawal seen at polls POLL_SECONDS apart.
+    let outside = turn.outside_wait_seconds.expect("the turn's wait is recorded");
+    assert!((600 - POLL_SECONDS as i64..=600 + POLL_SECONDS as i64).contains(&outside), "{outside}");
+    assert!(turn.seconds.is_some_and(|s| s >= outside + 30), "{turn:?}");
+    assert_eq!(turn.waiting_on, None);
+    let saved = f.saved();
+    let turns = saved.get("turns").and_then(Value::as_array).expect("saved turns");
+    let build = turns.iter().find(|t| t.get("file") == Some(&Value::from("build-1.md"))).expect("a saved build turn");
+    assert_eq!(build.get("outside_wait_seconds"), Some(&Value::from(outside)));
+    assert_eq!(build.get("waiting_on"), None);
+}
+
+#[test]
+fn a_turn_that_reported_no_wait_records_none() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![build_turn(1)]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    let mut wf = f.workflow(no_pr());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let turn = build_1_turn(&wf);
+    assert_eq!((turn.outside_wait_seconds, turn.waiting_on), (None, None));
+}
+
+#[test]
 fn a_turn_that_works_past_its_timeout_after_a_wait_still_fails() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
     waits_then_writes(&f, Some(600.0), 120.0);
@@ -108,6 +162,11 @@ fn a_wait_report_left_when_the_file_is_written_is_deleted_with_the_turn() {
     let mut wf = f.workflow(RunSettings { turn_timeout: 60, ..no_pr() });
     assert_eq!(wf.run(), verdict(APPROVE));
     assert!(!f.host.state().files.contains_key(&waiting_1()));
+    // The wait ends with the turn, at its file's mtime.
+    let turn = build_1_turn(&wf);
+    let outside = turn.outside_wait_seconds.expect("the turn's wait is recorded");
+    assert!((120 - POLL_SECONDS as i64..=120 + POLL_SECONDS as i64).contains(&outside), "{outside}");
+    assert_eq!(turn.waiting_on, None);
 }
 
 #[test]
@@ -126,6 +185,14 @@ fn an_agent_that_exits_while_it_waits_fails_the_run() {
     });
     let message = failure(f.workflow(RunSettings { turn_timeout: 60, ..no_pr() }).run());
     assert_eq!(message, format!("the Builder exited without writing {}", build_1()));
+    // The saved turn carries the wait that still stood, for the run's view and a resume.
+    let saved = f.saved();
+    let turns = saved.get("turns").and_then(Value::as_array).expect("saved turns");
+    let build = turns.iter().find(|t| t.get("file") == Some(&Value::from("build-1.md"))).expect("a saved build turn");
+    let wait = build.get("waiting_on").expect("a standing wait");
+    assert_eq!(wait.get("on"), Some(&Value::from(WHAT)));
+    assert!(wait.get("since").and_then(Value::as_str).is_some_and(|s| s.ends_with("+00:00")), "{wait}");
+    assert_eq!(build.get("outside_wait_seconds"), None);
 }
 
 #[test]
@@ -145,9 +212,14 @@ fn a_resume_that_finds_the_wait_standing_waits_too() {
         }
     });
     let mut wf = f.workflow(f.as_saved());
+    let record = waiting_build_turn(&wf);
+    wf.state.turns.push(record);
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(waits_told(&f), 1);
     assert_eq!(prompts_to(&f, "build-a1b2c3"), 0);
+    // The wait the stopped run saved goes on from its start: 100s before the resume, and 600s and a poll after it.
+    let outside = build_1_turn(&wf).outside_wait_seconds.expect("the turn's wait is recorded");
+    assert!((700..=700 + POLL_SECONDS as i64).contains(&outside), "{outside}");
 }
 
 #[test]
@@ -187,8 +259,14 @@ fn a_wait_left_by_an_agent_that_exited_is_dropped_for_the_session_started_in_its
     let f = Fixture::resume(Rc::clone(&host), state, vec![("build", vec![idle()])], &[], &[]);
     // Without the drop the old wait would stand for good, and the turn never time out.
     f.clock.hook(|now| assert!(now < 20_000.0, "the turn did not time out"));
-    let message = failure(f.workflow(f.as_saved()).run());
+    let mut wf = f.workflow(f.as_saved());
+    let record = waiting_build_turn(&wf);
+    wf.state.turns.push(record);
+    let message = failure(wf.run());
     assert!(message.starts_with(&format!("the Builder did not write {} within ", build_1())), "{message}");
     assert_eq!(waits_told(&f), 0);
     assert!(!host.state().files.contains_key(&waiting_1()));
+    // The saved wait ends when the replaced session is found, before the new one's turn starts.
+    let turn = build_1_turn(&wf);
+    assert_eq!((turn.outside_wait_seconds, turn.waiting_on), (Some(100), None));
 }

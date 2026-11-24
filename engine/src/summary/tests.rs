@@ -92,12 +92,19 @@ fn turn_lines_shows_starts_in_the_zone_given() {
 }
 
 #[test]
-fn a_turn_that_waited_for_permission_answers_says_how_long_and_its_metrics_too() {
-    let waited = |n: Option<i64>| move |t: &mut Object| _ = t.insert("waited_seconds".into(), Value::from(n));
+fn a_turn_that_waited_says_how_long_for_each_kind_of_wait_and_its_metrics_too() {
+    let waited = |permission: Option<i64>, outside: Option<i64>| {
+        move |t: &mut Object| {
+            t.insert("waited_seconds".into(), Value::from(permission));
+            t.insert("outside_wait_seconds".into(), Value::from(outside));
+        }
+    };
     let turns = [
-        turn("review", "review-1.md", Some(0), Some(224), waited(Some(199))),
-        turn("build", "build-1.md", Some(0), Some(5), waited(Some(0))),
-        turn("spec", "spec.md", Some(0), Some(5), waited(None)),
+        turn("review", "review-1.md", Some(0), Some(224), waited(Some(199), None)),
+        turn("build", "build-1.md", Some(0), Some(5), waited(Some(0), Some(0))),
+        turn("spec", "spec.md", Some(0), Some(5), waited(None, None)),
+        turn("build", "build-2.md", Some(0), Some(723), waited(None, Some(360))),
+        turn("build", "build-3.md", Some(0), Some(723), waited(Some(199), Some(360))),
     ];
 
     let table = turns_table(&turns);
@@ -106,12 +113,19 @@ fn a_turn_that_waited_for_permission_answers_says_how_long_and_its_metrics_too()
     s.turns = turns.to_vec();
     let metrics = run_metrics(&s, 1_791_000_300);
 
-    assert!(table.contains("| 3m 44s (3m 19s waiting) | review-1.md |"), "{table}");
+    assert!(table.contains("| 3m 44s (3m 19s waiting for you) | review-1.md |"), "{table}");
     assert!(table.contains("| 5s | build-1.md |"), "{table}");
-    assert!(lines[0].contains("3m 44s (3m 19s waiting)"), "{lines:?}");
+    assert!(table.contains("| 12m 03s (6m 00s waiting outside the run) | build-2.md |"), "{table}");
+    assert!(
+        table.contains("| 12m 03s (3m 19s waiting for you, 6m 00s waiting outside the run) | build-3.md |"),
+        "{table}"
+    );
+    assert!(lines[0].contains("3m 44s (3m 19s waiting for you)"), "{lines:?}");
     let turns = metrics.get("turns").and_then(Value::as_array).unwrap();
-    let waits: Vec<Option<&Value>> = turns.iter().map(|t| t.get("waited_seconds")).collect();
-    assert_eq!(waits, [Some(&Value::from(199)), Some(&Value::from(0)), None]);
+    let key = |k: &str| turns.iter().map(|t| t.get(k).cloned()).collect::<Vec<_>>();
+    let n = |n: i64| Some(Value::from(n));
+    assert_eq!(key("waited_seconds"), [n(199), n(0), None, None, n(199)]);
+    assert_eq!(key("outside_wait_seconds"), [None, n(0), None, n(360), n(360)]);
 }
 
 #[test]

@@ -10,6 +10,7 @@ use crate::herdr::HerdrServer;
 use crate::json::Object;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{saved_prompts, Prompts};
+use crate::summary::epoch_seconds;
 use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -282,8 +283,8 @@ pub enum AgentStart {
 }
 
 /// The record of one handoff file's turn (RunState::turns), as Workflow::turn_record opens it and end_turn closes it.
-/// Saved with every field, None as null (but waited_seconds, saved only when known), in this order, then the fields
-/// this engine does not know.
+/// Saved with every field, None as null (but waited_seconds, outside_wait_seconds and waiting_on, saved only when
+/// known), in this order, then the fields this engine does not know.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TurnRecord {
     /// The phase the turn was in: its step's id, or QUALITY for a quality analysis.
@@ -336,6 +337,18 @@ pub struct TurnRecord {
     /// without it is written back as it was read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waited_seconds: Option<i64>,
+    /// Of seconds, how many the turn's role reported waiting on something outside the run (its waiting file,
+    /// crate::workflow::turn's waiting_path), its waits closed so far summed. A wait counts from the poll that first
+    /// finds it to the one that finds it gone, the turn's end, or the pass that finds its session not going on, so a
+    /// wait withdrawn while no orchestrator watched counts until the next one looks. None, and so absent from
+    /// state.json and metrics.json, for a turn that reported none, and in a record saved by an engine that did not
+    /// keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_wait_seconds: Option<i64>,
+    /// The wait on something outside the run that stands on the turn now, not yet in outside_wait_seconds; None, and
+    /// so absent, while none stands, and always once the turn has ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_on: Option<StandingWait>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
@@ -376,7 +389,31 @@ fn optional_harness_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Optio
     Ok(Option::<Name>::deserialize(d)?.map(|Name(n)| n))
 }
 
+/// A turn's wait on something outside the run while it stands (TurnRecord::waiting_on).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StandingWait {
+    /// What the role waits on, as the first line of its waiting file names it.
+    pub on: String,
+    /// When the wait was first found standing, as iso_utc writes it.
+    pub since: String,
+}
+
 impl TurnRecord {
+    /// End the turn's standing wait at `at`, in seconds since the epoch, adding the seconds since it started (none
+    /// for an `at` before then) to outside_wait_seconds. Whether a wait stood. Errors: its start is not a time, which
+    /// leaves the wait standing.
+    pub fn end_wait(&mut self, at: i64) -> Result<bool, OrchestratorError> {
+        let Some(wait) = &self.waiting_on else {
+            return Ok(false);
+        };
+        let since = epoch_seconds(&wait.since).map_err(|e| {
+            OrchestratorError(format!("the wait of the turn that writes {} started at no time: {e}", self.file))
+        })?;
+        let total = self.outside_wait_seconds.unwrap_or(0) + (at - since).max(0);
+        (self.outside_wait_seconds, self.waiting_on) = (Some(total), None);
+        Ok(true)
+    }
+
     /// Whether the turn is under way: its file has not been found written.
     pub fn under_way(&self) -> bool {
         self.ended_at.is_none()

@@ -123,6 +123,9 @@ export interface Turn {
   ended_at: string | null;
   /** From started_at to ended_at; null while either is. */
   seconds: number | null;
+  /** What the turn's role reports it waits on outside the run, and since when (an ISO time), while that wait stands;
+   * absent while none does. */
+  waiting_on?: { on: string; since: string };
 }
 
 /** One verdict a verdict step gave: the round it judged, the step's id, and APPROVE or CHANGES_REQUESTED. */

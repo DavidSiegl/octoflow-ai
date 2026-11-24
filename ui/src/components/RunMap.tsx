@@ -476,7 +476,8 @@ function NowLine({ record }: { record: RunRecord }) {
   return <p className="now">{nowLine(record, now)}</p>;
 }
 
-/** What the run does now, in a line: where it failed, how it ended, or its running turn and for how long. */
+/** What the run does now, in a line: where it failed, how it ended, or its running turn and for how long, and while
+ * its role reports a wait outside the run, for how long and on what. */
 function nowLine(record: RunRecord, now: number): string {
   if (record.error) {
     return `failed at ${record.phase}`;
@@ -491,9 +492,10 @@ function nowLine(record: RunRecord, now: number): string {
   if (!runDriven(record)) {
     return `${turnStep(running)} · ${turnHolder(running)} · ${record.health ?? "stopped"}`;
   }
-  const started = running.started_at ? Date.parse(running.started_at) : now;
+  const age = (since: string | null) => formatAge(Math.max(0, Math.round((now - (since ? Date.parse(since) : now)) / 1000)));
   const doing = running.human_paced ? "waiting on you" : "running";
-  return `${turnStep(running)} · ${turnHolder(running)} · ${doing} ${formatAge(Math.max(0, Math.round((now - started) / 1000)))}`;
+  const wait = running.waiting_on && `waiting ${age(running.waiting_on.since)} on ${running.waiting_on.on}`;
+  return [turnStep(running), turnHolder(running), `${doing} ${age(running.started_at)}`, wait].filter(Boolean).join(" · ");
 }
 
 /** How a turn in the feed stands: ended; failed, the turn the run failed in; running; or unfinished, a turn with no

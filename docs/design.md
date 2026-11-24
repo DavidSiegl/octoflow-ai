@@ -73,7 +73,10 @@ and model of its agent (none for a quality analysis, whose role is `quality`), w
 `started_at`, `ended_at` and `seconds`, and in an ACP run `waited_seconds`: how many of those seconds the agent
 waited for your answer to a permission it asked for, as its role's journal records the waits. How a wait is measured
 is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent, a herdr run's turn among them,
-`TurnRecord::waited_seconds`'s (engine/src/state.rs).
+`TurnRecord::waited_seconds`'s (engine/src/state.rs). Apart from those, `outside_wait_seconds` counts the seconds the
+agent reported waiting on something outside the run (its handoff file's `.waiting` file), and while such a wait
+stands, `waiting_on` holds what it waits on and since when, which the desktop app shows on the running turn;
+`TurnRecord::outside_wait_seconds`'s doc says when a wait starts and ends.
 
 - An agent's turn starts when its prompt is first sent. The prompt counts as delivered once the agent takes it:
   herdr reports it `working` or `blocked`, or its handoff file appears, within `PROMPT_DELIVERY_SECONDS`. One it
@@ -92,7 +95,8 @@ is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent
 When a run ends, done, failed or interrupted, it writes `summary.md` in its run directory: the task, run id and
 workflow, each role's harness and the model its agent ran on, the outcome (verdict or error), the pull request and
 branch, the wall time from the first known start to the end, a Markdown table of the turns (`?` for what is not known,
-the interview marked as human-paced, a duration that holds permission waits written as "3m 44s (3m 19s waiting)"), and
+the interview marked as human-paced, a duration that holds waits written with each kind apart, as "12m 03s (3m 19s
+waiting for you, 6m 00s waiting outside the run)"), and
 each round's quality gates and the verdict of each verdict step that judged it, read from the handoff files. Where a
 harness did not offer the role's model, the roles and turns tables name the one its agent ran on instead and the one
 asked for: "sonnet (opus not offered)", or "default (o3 not offered)" when its session named none it took. A resume that
@@ -117,7 +121,8 @@ until a resume finishes it. Its keys:
   analysis; `model` is the one the agent ran on, not the role's of `roles` when its harness did not offer that, and
   also `null` for the harness's default and for a session that did not name the model it took instead), `round`,
   `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`, and in an ACP run
-  `waited_seconds` ([Turn timings](#turn-timings-and-the-summary)) and, for a turn whose harness did not offer the
+  `waited_seconds`, and for a turn that reported a wait outside the run `outside_wait_seconds` ([Turn
+  timings](#turn-timings-and-the-summary)), and, for a turn whose harness did not offer the
   role's model, `unoffered_model`, the one it was not offered.
 - `quality_rounds`: per quality round, `round`, `quality_round`, `gate`, the failed `conditions` and
   `fingerprints_by_check`: for each check or linter, the first word of a finding's rule, and `tests` for failing
