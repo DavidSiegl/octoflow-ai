@@ -118,7 +118,7 @@ fn top_level() -> Result<PathBuf, Error> {
 fn raise(top: &Path, wanted: Option<Version>) -> Result<String, Error> {
     // Every read and check first, so that a failed one leaves the checkout as it was.
     let pin_text = read(&top.join(PIN))?;
-    let (old, old_sha) = pin_of(&pin_text).ok_or_else(|| Error(format!("{PIN} has no '<version> <sha256>' line")))?;
+    let (old, old_sha) = pin_of(&pin_text)?;
     let releases = releases()?;
     let new = chosen(&releases, wanted)?.version;
     if new < FIRST_WITH_GATE {
@@ -274,7 +274,7 @@ fn release_sha256(version: Version) -> Result<String, Error> {
     let url = format!("{}.sha256", release_url(version));
     let asset = run(command("curl").args(["-fsSL", &url]), &format!("downloading {url}"))?;
     let sha = asset.split_whitespace().next().unwrap_or("");
-    if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+    if !is_sha256(sha) {
         return Err(Error(format!("{url} holds no sha256: {asset:?}")));
     }
     Ok(sha.to_owned())
@@ -333,14 +333,27 @@ fn replace_golden(dir: &Path, golden: &[(String, Vec<u8>)]) -> Result<(), Error>
     Ok(())
 }
 
-/// The version and sha256 of pin's first line that is not a comment. For a well-formed pin this is the engine's
-/// parse_pin's reading, as tests.rs's a_pin_reads_as_the_engine_reads_it checks; on a malformed one they differ:
-/// pin_of takes any text as the sha, which parse_pin and ci/fetch-gate.sh refuse, and a `v` prefix, which parse_pin
-/// refuses and ci/fetch-gate.sh passes on to a download address that does not exist; and it refuses a pre-release,
-/// which parse_pin takes.
-fn pin_of(pin: &str) -> Option<(Version, &str)> {
-    let (version, sha) = pin.lines().find(|l| !l.starts_with('#'))?.split_once(' ')?;
-    Some((Version::parse(version)?, sha))
+/// The version and sha256 of pin's first line that is not a comment, read by the rules of the engine's parse_pin,
+/// which tests.rs's a_pin_reads_as_the_engine_reads_it holds the two to: a version that starts with a digit and holds
+/// only letters, digits and `.+-`, a space, and 64 lower-case hex digits. Errors: a pin parse_pin refuses, as the
+/// engine words it; and a pre-release, which parse_pin takes but a raise cannot order against a release (Version).
+fn pin_of(pin: &str) -> Result<(Version, &str), Error> {
+    let line = pin.lines().find(|l| !l.starts_with('#')).unwrap_or("");
+    let (version, sha) = line.split_once(' ').unwrap_or((line, ""));
+    let is_version = version.starts_with(|c: char| c.is_ascii_digit())
+        && version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b));
+    if !is_version || !is_sha256(sha) {
+        return Err(Error(format!("{PIN}: its first line '{line}' is not '<version> <sha256>'")));
+    }
+    let version = Version::parse(version).ok_or_else(|| {
+        Error(format!("{PIN} names {version}, a pre-release, which raise-gate-pin cannot raise from"))
+    })?;
+    Ok((version, sha))
+}
+
+/// Whether sha is a sha256 as the pin and a release's `.sha256` asset write it: 64 lower-case hex digits.
+fn is_sha256(sha: &str) -> bool {
+    sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// pin with its first line that is not a comment replaced by line.

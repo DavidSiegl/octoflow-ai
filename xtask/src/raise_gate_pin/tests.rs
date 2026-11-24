@@ -27,4 +27,25 @@ fn a_pin_reads_as_the_engine_reads_it() {
         let (engine_version, engine_sha) = local_gate::parse_pin(pin).unwrap();
         assert_eq!((version.to_string(), sha), (engine_version, engine_sha.as_str()), "{pin}");
     }
+    // Malformed: both refuse each, and with the same words.
+    let short = &sha[..40];
+    let upper = sha.to_uppercase();
+    for pin in [
+        format!("v0.9.2 {sha}"),
+        format!("0.9.2 {short}"),
+        format!("0.9.2 {upper}"),
+        format!("0.9.2 {sha} trailing"),
+        "0.9.2".to_string(),
+        String::new(),
+        "# only a comment\n".to_string(),
+    ] {
+        let Error(ours) = pin_of(&pin).map(|_| ()).unwrap_err();
+        let engine = local_gate::parse_pin(&pin).unwrap_err();
+        assert_eq!(ours, format!("{PIN}: {}", engine.0), "{pin:?}");
+    }
+    // A pre-release, which the engine takes, cannot be raised from.
+    let pre = format!("1.0.0-rc1 {sha}\n");
+    assert!(local_gate::parse_pin(&pre).is_ok());
+    let Error(ours) = pin_of(&pre).map(|_| ()).unwrap_err();
+    assert!(ours.contains("1.0.0-rc1, a pre-release"), "{ours}");
 }
