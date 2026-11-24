@@ -255,7 +255,9 @@ pipeline {
                 // checkout's git config is not read; and ci/version-raised.sh, which the pull request can change,
                 // runs after, without the token. Not guaranteed: a directory outside the workspace that the build
                 // user can write to passes the filter, so a tool a pull request's code left there runs with the
-                // token (TODO.md); and a pull request whose own Jenkinsfile Jenkins runs controls all of this.
+                // token, which the user accepted on the premise that only this repository's pull requests build on
+                // the agent (TODO.md, Open issues, "A GitHub token reaches tools in directories ..."); and a pull
+                // request whose own Jenkinsfile Jenkins runs controls all of this.
                 script {
                     def trusted = env.PATH.split(':').findAll { it.startsWith('/') && !it.startsWith(env.WORKSPACE) }
                     withEnv(["PATH=${trusted.join(':')}"]) {
