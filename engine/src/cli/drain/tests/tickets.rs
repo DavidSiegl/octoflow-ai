@@ -229,7 +229,7 @@ fn a_tickets_blockers_name_tickets_by_number_or_another_specs_whether_or_not_tha
     d.ticket("e", "03-v", &spec_text("E3", Some(TICKET_RESOLVED), &[]));
     let queue = read_queue(&d.dir()).unwrap();
     let read: Vec<(&str, &Kind, Vec<String>, Vec<String>)> =
-        queue.iter().map(|q| (q.slug.as_str(), &q.kind, q.blockers.clone(), q.unread_blockers.clone())).collect();
+        queue.iter().map(|q| (q.slug.as_str(), &q.kind, q.blockers.clone(), q.unread.clone())).collect();
     let (a, b) = (Kind::Ticket("a".into()), Kind::Ticket("b".into()));
     let (d_, e) = (Kind::Ticket("d".into()), Kind::Ticket("e".into()));
     let strings = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -299,4 +299,187 @@ fn a_blocked_by_line_naming_none_with_a_note_names_no_blocker() {
     assert_eq!(r.status, 0, "{}", r.err);
     assert_eq!(d.tasks(), ["First", "Second"]);
     assert_eq!(blocker_slugs(Some("None (independent)")), Vec::<String>::new());
+}
+
+#[test]
+fn a_ticketed_spec_deleted_between_two_runs_leaves_its_ready_tickets_named_gone() {
+    let d = Rc::new(Drain::new());
+    d.spec("a", &ready("A"));
+    d.spec("s", &ready("Spec"));
+    d.ticket("s", "01-first", &ready_ticket("First"));
+    let dd = Rc::clone(&d);
+    let r = d.drain(vec![after(move || dd.remove("s"), approved(PR_A, &[]))], &[]);
+    assert_eq!(r.status, EXIT_WAITING, "{}", r.err);
+    assert_eq!(d.tasks(), ["A"]);
+    assert!(!r.out.contains("all specs cleared"), "{}", r.out);
+    assert!(r.out.ends_with(&format!("s/01-first: gone (its spec s is gone: {})\n", d.gone("s"))), "{}", r.out);
+}
+
+#[test]
+fn a_dry_run_names_each_held_ticket_and_exits_as_the_drain_would() {
+    let d = Drain::new();
+    d.spec("s", &ready("Spec"));
+    d.ticket("s", "01-first", &ready_ticket("First"));
+    let held = spec_text("Held", Some(SPEC_READY), &["Blocked by: 07"]);
+    d.ticket("s", "02-held", &held);
+    let r = d.drain(vec![], &["--dry-run"]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    let why = "its Blocked by: entry `07` names no ticket";
+    assert_eq!(r.out, format!("would run, in order: s/01-first\ns/02-held needs the human: {why}\n"));
+    assert_eq!((d.ticket_text("s", "01-first"), d.ticket_text("s", "02-held")), (ready_ticket("First"), held));
+}
+
+#[test]
+fn a_blocked_by_entry_names_a_ticket_by_its_whole_file_name_or_its_number() {
+    let d = Drain::new();
+    d.spec("s", &ready("Spec"));
+    d.ticket("s", "02-new-name", &ready_ticket("Second"));
+    d.ticket("s", "03-by-old-name", &spec_text("Third", Some(SPEC_READY), &["Blocked by: 02-old-name"]));
+    d.ticket("s", "04-by-number", &spec_text("Fourth", Some(SPEC_READY), &["Blocked by: 02"]));
+    let noted = "Blocked by: 02 (same file, also the UI), 02-new-name";
+    d.ticket("s", "05-noted", &spec_text("Fifth", Some(SPEC_READY), &[noted]));
+    d.ticket("s", "06-dash", &spec_text("Sixth", Some(SPEC_READY), &["Blocked by: - 02"]));
+    d.ticket("s", "07-none-yet", &spec_text("Seventh", Some(SPEC_READY), &["Blocked by: none yet, 02"]));
+    d.ticket("s", "08-note-only", &spec_text("Eighth", Some(SPEC_READY), &["Blocked by: (after 02 lands)"]));
+    d.ticket("s", "09-with-md", &spec_text("Ninth", Some(SPEC_READY), &["Blocked by: 02-new-name.md"]));
+    let queue = read_queue(&d.dir()).unwrap();
+    let read: Vec<(&str, Vec<String>, Vec<String>)> =
+        queue.iter().skip(2).map(|q| (q.slug.as_str(), q.blockers.clone(), q.unread.clone())).collect();
+    let strings = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        read,
+        [
+            ("s/03-by-old-name", vec![], strings(&["its Blocked by: entry `02-old-name` names no ticket"])),
+            ("s/04-by-number", strings(&["s/02-new-name"]), vec![]),
+            ("s/05-noted", strings(&["s/02-new-name", "s/02-new-name"]), vec![]),
+            ("s/06-dash", vec![], strings(&["its Blocked by: entry `- 02` names no ticket"])),
+            (
+                "s/07-none-yet",
+                strings(&["s/02-new-name"]),
+                strings(&["its Blocked by: entry `none yet` names no ticket"])
+            ),
+            ("s/08-note-only", vec![], strings(&["its Blocked by: entry `(after 02 lands)` names no ticket"])),
+            ("s/09-with-md", strings(&["s/02-new-name"]), vec![]),
+        ]
+    );
+    // A spec's line is read the same way: a note's comma parts nothing, and `none yet` is no `none`.
+    assert_eq!(blocker_slugs(Some("base (same files, and more)")), ["base"]);
+    assert_eq!(blocker_slugs(Some("none yet, base")), ["none yet", "base"]);
+    assert_eq!(blocker_slugs(Some("- base")), ["- base"]);
+    assert_eq!(blocker_slugs(Some("(after base lands)")), ["(after base lands)"]);
+    d.spec("t", &spec_text("T", Some(SPEC_READY), &["Blocked by: none yet, s"]));
+    let e = read_queue(&d.dir()).unwrap_err();
+    assert!(e.0.starts_with("spec t is blocked by none yet, which has no spec.md"), "{e}");
+}
+
+#[test]
+fn a_spec_blocked_by_a_wontfix_spec_is_held_for_the_human_as_a_ticket_is() {
+    let d = Drain::new();
+    d.spec("a", &spec_text("A", Some(TICKET_WONTFIX), &[]));
+    d.spec("b", &spec_text("B", Some(SPEC_READY), &["Blocked by: a"]));
+    d.spec("c", &ready("C"));
+    let r = d.drain(vec![approved(PR_A, &[])], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    assert_eq!(d.tasks(), ["C"]);
+    assert!(r.out.ends_with("b needs the human: it is blocked by a, which is wontfix\n"), "{}", r.out);
+    assert_eq!(d.header("b"), (some(SPEC_READY), None, None));
+}
+
+#[test]
+fn a_ticketed_spec_is_done_once_its_last_ticket_merges_whatever_its_status() {
+    for status in [SPEC_FOR_HUMAN, "needs-triage (waiting on x)"] {
+        let d = Drain::new();
+        d.spec("s", &spec_text("Spec", Some(status), &[]));
+        d.ticket("s", "01-first", &spec_text("First", Some(SPEC_IN_REVIEW), &[&format!("PR: {PR_A}")]));
+        d.ticket("s", "02-second", &spec_text("Second", Some(TICKET_WONTFIX), &[]));
+        d.pull_request(PR_A, "MERGED", &[]);
+        let r = d.drain(vec![], &[]);
+        assert_eq!(r.status, 0, "{status}: {}", r.err);
+        assert_eq!(d.header("s").0, some(SPEC_DONE), "{status}");
+        let was = status_word(status);
+        assert!(r.out.contains(&format!("s: {was} -> done\n")), "{status}: {}", r.out);
+    }
+}
+
+#[test]
+fn a_wontfix_or_held_ticketed_spec_is_not_made_done() {
+    // Closed by the human with its tickets: nothing merged, and what it blocks stays held.
+    let d = Drain::new();
+    d.spec("s", &spec_text("Spec", Some(TICKET_WONTFIX), &[]));
+    d.ticket("s", "01-first", &spec_text("First", Some(TICKET_WONTFIX), &[]));
+    d.spec("b", &spec_text("B", Some(SPEC_READY), &["Blocked by: s"]));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    assert_eq!(d.header("s").0, some(TICKET_WONTFIX));
+    assert!(d.tasks().is_empty());
+    // Held by a wontfix blocker, its tickets resolved before that.
+    let d = Drain::new();
+    d.spec("w", &spec_text("W", Some(TICKET_WONTFIX), &[]));
+    d.spec("s", &spec_text("Spec", Some(SPEC_READY), &["Blocked by: w"]));
+    d.ticket("s", "01-first", &spec_text("First", resolved(1).as_deref(), &[]));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    assert_eq!(d.header("s").0, some(SPEC_READY));
+    assert!(r.out.ends_with("s needs the human: it is blocked by w, which is wontfix\n"), "{}", r.out);
+}
+
+#[test]
+fn a_held_specs_tickets_run_lines_are_not_read_and_the_other_specs_drain() {
+    let stale = ["Run: 20261024-100000-aaaaaa"];
+    // Held by its status, and held for the human by a wontfix blocker.
+    for (status, blocked_by, exit) in [("needs-triage", "Blocked by: -", 0), (SPEC_READY, "Blocked by: w", EXIT_ERROR)]
+    {
+        let d = Drain::new();
+        d.spec("a", &ready("A"));
+        d.spec("s", &spec_text("Spec", Some(status), &[blocked_by]));
+        d.ticket("s", "01-stale", &spec_text("Stale", Some(SPEC_READY), &stale));
+        d.spec("w", &spec_text("W", Some(TICKET_WONTFIX), &[]));
+        let r = d.drain(vec![approved(PR_A, &[])], &[]);
+        assert_eq!(r.status, exit, "{status}: {}{}", r.out, r.err);
+        assert_eq!(d.tasks(), ["A"], "{status}");
+        assert_eq!(d.ticket_header("s", "01-stale"), (some(SPEC_READY), some(stale[0][5..].trim()), None));
+    }
+    // Nor is the Run: line of a ticket whose directory has no spec.md, which never runs.
+    let d = Drain::new();
+    d.spec("a", &ready("A"));
+    d.ticket("orphan", "01-stale", &spec_text("Stale", Some(SPEC_READY), &stale));
+    let r = d.drain(vec![approved(PR_A, &[])], &[]);
+    assert_eq!((r.status, d.tasks()), (0, vec!["A".to_string()]), "{}", r.err);
+    // A ticket under a spec drain runs still stops the drain.
+    let d = Drain::new();
+    d.spec("s", &ready("Spec"));
+    d.ticket("s", "01-stale", &spec_text("Stale", Some(SPEC_READY), &stale));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR);
+    assert!(r.err.contains("ticket s/01-stale: run 20261024-100000-aaaaaa, on its Run: line"), "{}", r.err);
+}
+
+#[test]
+fn an_unreadable_ticket_holds_its_spec_for_the_human_and_the_other_specs_drain() {
+    let d = Drain::new();
+    d.spec("a", &ready("A"));
+    d.spec("s", &ready("Spec"));
+    d.ticket("s", "01-ok", &ready_ticket("Fine"));
+    std::fs::write(d.ticket_path("s", "02-bad"), b"Status: \xff\n").unwrap();
+    let r = d.drain(vec![approved(PR_A, &[])], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    assert_eq!(d.tasks(), ["A"]);
+    let why = format!("spec file {} is not UTF-8 text", d.ticket_path("s", "02-bad"));
+    assert!(r.out.contains(&format!("s needs the human: {why}")), "{}", r.out);
+    assert!(r.out.contains("s/01-ok needs the human: its spec s needs the human\n"), "{}", r.out);
+    assert_eq!(d.ticket_text("s", "01-ok"), ready_ticket("Fine"));
+    // Whatever the spec's status.
+    let d = Drain::new();
+    d.spec("s", &spec_text("Spec", Some(SPEC_IN_REVIEW), &[]));
+    d.ticket("s", "01-ok", &ready_ticket("Fine"));
+    std::fs::write(d.ticket_path("s", "02-bad"), b"Status: \xff\n").unwrap();
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    let why = format!("spec file {} is not UTF-8 text", d.ticket_path("s", "02-bad"));
+    assert!(r.out.contains(&format!("s needs the human: {why}")), "{}", r.out);
+    // An unreadable spec.md still stops the drain.
+    std::fs::write(d.path("s"), b"Status: \xff\n").unwrap();
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR);
+    assert!(r.err.starts_with(&format!("error: spec file {} is not UTF-8 text", d.path("s"))), "{}", r.err);
 }

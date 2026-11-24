@@ -508,8 +508,9 @@ PR: https://github.com/o/r/pull/7
   has merged. A run that does not approve, conflicts or fails leaves its spec `ready-for-human`. Any other status
   is left alone. Drain reads the line's first word, so a note may follow it: `ready-for-agent (reviewed)`.
 - `Blocked by:` lists the specs that must be `done` first, by slug or by a path ending in `<slug>/spec.md`, or
-  names none when its first word is `none` or `-`, as in `none (independent)`. A missing blocker, or blockers in a
-  cycle, stop drain before it runs anything.
+  names none when it is `none` or `-` alone, as in `none (independent)`. Notes in parentheses are dropped before the
+  line is split on commas. A missing blocker, or blockers in a cycle, stop drain before it runs anything; a blocker
+  that is `wontfix` holds the spec for you, as for a ticket (below).
 - `Run:` and `PR:` are written by drain.
 
 A ready spec with tickets, `DIR/<slug>/issues/<NN>-<name>.md` or `<NN>.md`, is drained ticket by ticket instead: each
@@ -517,14 +518,16 @@ A ready spec with tickets, `DIR/<slug>/issues/<NN>-<name>.md` or `<NN>.md`, is d
 A ticket's header works as a spec's, with these differences:
 
 - A merged pull request makes the ticket `resolved (PR #<n> merged)`, and the spec turns `done` once each of its
-  tickets is `resolved` or `wontfix`.
-- `Blocked by:` lists tickets that must be `resolved` first: `02` or `02-name` for one of the same spec,
-  `<slug>/02` for one of another spec's, whatever that spec's status. An entry's first word counts, so
-  `02 (same file)` works. The spec's own `Blocked by:` holds back all of its tickets.
-- A ticket whose `Blocked by:` entry names no ticket, or more than one, or whose blocker is `wontfix`, needs you:
-  drain runs the rest, prints `<slug>/<ticket> needs the human: <why>` and exits `1`.
-- Drain starts a ticket only while its spec is `ready-for-agent`, but follows every ticket's pull request, so one
-  merged or closed while its spec is held is still recorded. A spec without numbered tickets runs whole.
+  tickets is `resolved` or `wontfix`, whatever the spec's status, unless it is `wontfix` itself or held for you.
+- `Blocked by:` lists tickets that must be `resolved` first: `02` for the one numbered 02 of the same spec, `02-name`
+  for only the one of that name, `<slug>/02` for one of another spec's, whatever that spec's status. An entry's first
+  word counts, so `02 (same file)` works. The spec's own `Blocked by:` holds back all of its tickets.
+- A ticket whose `Blocked by:` entry names no ticket, or more than one, or whose blocker is `wontfix`, needs you, and
+  so does a spec with a ticket drain cannot read, whatever its status, with its tickets: drain runs the rest, prints
+  `<slug> needs the human: <why>` for each and exits `1`. `--dry-run` prints them too, and exits `1` as well.
+- Drain starts a ticket only while its spec is `ready-for-agent`, but follows every ticket's `PR:` line, so a pull
+  request merged or closed while its spec is held is still recorded. A ticket whose run had not written its `PR:`
+  line yet is caught up once its spec is `ready-for-agent` again. A spec without numbered tickets runs whole.
 
 Drain stops rather than polls: a spec whose blocker's pull request is still open waits for the next drain. If
 the specs directory is inside the checkout, ignore it in git, or use `--worktree`, since the header edits would
