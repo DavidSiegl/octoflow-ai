@@ -267,6 +267,28 @@ fn remote_moved_past_the_pull_requests_head_is_kept() {
 }
 
 #[test]
+fn origins_branch_a_run_not_closed_builds_on_is_kept_until_that_run_is_closed() {
+    let p = Prune::new();
+    let base = "orchestrator/task-aaaaaa";
+    let run_id = p.add(run("aaaaaa", merged()).with("closed", "workspace closed"));
+    let builder = p.add(run("bbbbbb", open()).n(8).with("base_branch", base));
+    let r = p.pruned(&run_id);
+    let kept = format!("kept: run {builder} builds on it");
+    assert_eq!((r.local.as_str(), r.remote.as_str()), ("deleted", kept.as_str()));
+    assert_eq!(p.host().remote.get(base).map(String::as_str), Some(PR_HEAD));
+    assert_eq!(p.cleanup(&run_id), Value::from(kept.as_str()));
+
+    // Once the run building on it is closed, prune revisiting the kept branch deletes it.
+    let mut saved = p.saved(&builder);
+    saved.insert("closed".into(), Value::from("workspace closed"));
+    p.resave(&builder, saved);
+    let pruned = p.prune(false, true);
+    let r = &pruned.iter().find(|(id, _)| *id == run_id).expect("pruned again").1;
+    assert_eq!((r.remote.as_str(), r.cleanup.as_deref()), ("deleted", Some("deleted")));
+    assert!(p.host().remote.get(base).is_none());
+}
+
+#[test]
 fn remote_already_gone_drops_the_stale_tracking_ref() {
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()).remote(None));
