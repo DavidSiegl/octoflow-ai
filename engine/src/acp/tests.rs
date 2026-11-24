@@ -672,7 +672,7 @@ fn the_usage_of_a_prompt_pending_at_an_end_a_restart_or_a_settle_is_recorded() {
 /// kills it at once. A settle once the run's Ctrl-C is raised cancels it at once, without SETTLE_MS's wait for its
 /// prompt, and waits KILL_SETTLE_MS for the cancel's answer.
 #[test]
-fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
+fn an_agent_settled_once_is_not_waited_for_again_until_the_ctrl_c() {
     let f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
@@ -695,6 +695,30 @@ fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
     assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
     assert_eq!(cancels(), cancelled_before + 1, "{}", f.log());
+}
+
+/// A Ctrl-C raised while a settle waits for the answers to its cancels gives the agents KILL_SETTLE_MS from then, not
+/// nothing: what they answer in it is recorded before the run's end kills them (cross-review 311, round 2).
+#[test]
+fn a_ctrl_c_during_the_wait_for_the_cancels_still_gives_the_agents_kill_settle_ms() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    let raised_after = Duration::from_millis(SETTLE_MS + SETTLE_MS / 4);
+    let interrupt = f.interrupt.clone();
+    let raising = std::thread::spawn(move || {
+        std::thread::sleep(raised_after);
+        interrupt.raise();
+    });
+
+    let settling = Instant::now();
+    agents.settle(&f.run);
+
+    let waited = settling.elapsed();
+    raising.join().unwrap();
+    assert!(raised_after + Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
 }
 
 /// Agents settled at a Ctrl-C with prompts pending, as an interrupted run settles them before its release, are

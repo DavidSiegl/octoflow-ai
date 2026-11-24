@@ -18,7 +18,7 @@
 //!   `option` and `by` of the answer that won), `bad_option`.
 //! - `{"message": {"role", "text"}}`: send the role's agent text, the human's message, as its next prompt, while the
 //!   run waits on the human's message to it (its journal's `waiting`). Errors: `no_agent`, `not_waiting` (it does not
-//!   wait, or a prompt of it is pending, which ACP allows no second beside).
+//!   wait, a prompt of it is pending, which ACP allows no second beside, or the agent was stopped).
 //! - `{"stop": {}}`: answered `ok` at once; then the run stops, as at a Ctrl-C, its agents' permissions cancelled and
 //!   their prompts too (Commands::stop).
 //!

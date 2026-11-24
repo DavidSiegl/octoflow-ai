@@ -389,9 +389,9 @@ impl AcpAgents<'_> {
     /// left (Connection::stop: its prompts, and the permissions they wait on) and give them as long again, so that
     /// the usage each answer carries is recorded. An agent cancelled before (Connection::cancelled), which answered
     /// the cancel then or never will, is not cancelled again, nor waited for. Once the run's Ctrl-C is raised, before
-    /// or during the first wait, what is left is cancelled at once, and every agent, those cancelled before (as by
-    /// the app's stop) among them, is given KILL_SETTLE_MS instead. What answers neither is left as it is, for
-    /// the caller to kill or keep.
+    /// or during either wait, what is left is cancelled at once, and every agent, those cancelled before (as by the
+    /// app's stop) among them, is given KILL_SETTLE_MS instead of what is left of the wait. What answers neither is
+    /// left as it is, for the caller to kill or keep.
     fn settle_all(&self, connections: &[Arc<Connection>]) {
         let interrupt = &self.running.interrupt;
         let pending = connections.iter().filter(|c| !c.cancelled()).collect();
@@ -399,13 +399,14 @@ impl AcpAgents<'_> {
         for connection in &pending {
             connection.stop();
         }
+        if !pending.is_empty() {
+            still_pending(pending, interrupt);
+        }
         if interrupt.is_raised() {
             let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
             for connection in connections {
                 connection.wait_answered(deadline);
             }
-        } else if !pending.is_empty() {
-            still_pending(pending, interrupt);
         }
     }
 }
