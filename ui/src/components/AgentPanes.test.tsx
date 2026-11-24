@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Api, RunRecord } from "../api";
 import { AGENT_POLL_MS, AgentPanes } from "./AgentPanes";
@@ -44,5 +44,59 @@ describe("the herdr pane of an agent", () => {
     pane.scrollTop = pane.scrollHeight - pane.clientHeight;
     await readAgain();
     expect(pane.scrollTop).toBe(pane.scrollHeight);
+  });
+});
+
+describe("the herdr pane of an agent whose output outgrows the lines read", () => {
+  it("keeps its text while the reader is scrolled up, and shows the newest read back at the end", async () => {
+    vi.useFakeTimers();
+    let lines = 0;
+    // Each read shows the last five lines of an output three lines longer than the last read's, as a full window does.
+    const agentText = vi.fn(async () => {
+      lines += 3;
+      return Array.from({ length: lines }, (_, i) => `line ${i}`)
+        .slice(-5)
+        .join("\n");
+    });
+    const api = { agentText } as unknown as Api;
+    const record = {
+      id: "20261122-120000-c0ffee",
+      role: "spec",
+      backend: "herdr",
+      agents: [{ role: "spec", name: "spec-1", kind: "claude" }],
+    } as unknown as RunRecord;
+    render(<AgentPanes api={api} project={PROJECT} record={record} />);
+    const pane = screen.getByLabelText("what the spec agent shows");
+    // Each line 20px high, in a pane 60px high: five lines overflow it.
+    Object.defineProperty(pane, "scrollHeight", { get: () => 20 * (pane.textContent ?? "").split("\n").length });
+    Object.defineProperty(pane, "clientHeight", { value: 60 });
+    const readAgain = () =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+      });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await readAgain();
+    expect(pane.textContent).toBe("line 1\nline 2\nline 3\nline 4\nline 5");
+
+    // Scrolled up with no scroll event yet, as a read can land before it: the read that brings new lines is held.
+    pane.scrollTop = 0;
+    await readAgain();
+    expect(pane.textContent).toBe("line 1\nline 2\nline 3\nline 4\nline 5");
+    expect(screen.getByRole("status")).toHaveTextContent("newer output");
+    await act(async () => {
+      fireEvent.scroll(pane);
+    });
+    await readAgain();
+    expect(pane.textContent).toBe("line 1\nline 2\nline 3\nline 4\nline 5");
+
+    pane.scrollTop = pane.scrollHeight - pane.clientHeight;
+    await act(async () => {
+      fireEvent.scroll(pane);
+    });
+    expect(pane.textContent).toBe("line 7\nline 8\nline 9\nline 10\nline 11");
+    expect(pane.scrollTop).toBe(pane.scrollHeight);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

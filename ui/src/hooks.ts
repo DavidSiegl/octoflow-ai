@@ -49,6 +49,12 @@ export function useNow(intervalMs = 1000): number {
  * reader can make leaves the end. */
 const AT_END_SLACK_PX = 2;
 
+/** Whether el is scrolled to its end, within AT_END_SLACK_PX, for content height pixels high: by default what it
+ * holds now; useFollowEnd passes the height before a change, to ask where the reader was. */
+function atEnd(el: HTMLElement, height = el.scrollHeight): boolean {
+  return height - el.scrollTop - el.clientHeight <= AT_END_SLACK_PX;
+}
+
 /** A ref for a scrollable element that follows its end, as a terminal does, while the reader is there: each time
  * content changes, the element is scrolled to its end if it was at its end before the change, and left where the
  * reader put it otherwise. Only the element scrolls, never the page around it. It starts at its end, and again
@@ -67,10 +73,47 @@ export function useFollowEnd<T extends HTMLElement>(content: unknown, origin?: u
       return;
     }
     const before = last.current;
-    if (!before || before.origin !== origin || before.height - el.scrollTop - el.clientHeight <= AT_END_SLACK_PX) {
+    if (!before || before.origin !== origin || atEnd(el, before.height)) {
       el.scrollTop = el.scrollHeight;
     }
     last.current = { origin, height: el.scrollHeight };
   }, [content, origin]);
   return ref;
+}
+
+/** For a scrollable element whose content each change replaces whole, such as the last lines of a terminal, so that
+ * new content would slide what the reader is on out from under them: the content to show, which holds while the reader
+ * is scrolled up from the element's end. shown is latest while the element is at its end, and the element follows its
+ * end as useFollowEnd does; once the reader scrolls up, shown stays what it was, through every change of latest, until
+ * they scroll back to the end, which shows latest. held is true while shown is not latest. ref goes on the element. */
+export function useHeldWhileScrolledUp<T extends HTMLElement, C>(
+  latest: C,
+): { ref: RefObject<T | null>; shown: C; held: boolean } {
+  const [shown, setShown] = useState(latest);
+  const ref = useFollowEnd<T>(shown);
+  // latest as of the last render, for the scroll listener, which outlives renders.
+  const latestNow = useRef(latest);
+  // Before paint, as useFollowEnd's: whether the reader is at the end is read from the element when latest changes,
+  // not kept from scroll events, which arrive a frame late.
+  useLayoutEffect(() => {
+    latestNow.current = latest;
+    const el = ref.current;
+    if (!el || atEnd(el)) {
+      setShown(latest);
+    }
+  }, [latest, ref]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+    const onScroll = () => {
+      if (atEnd(el)) {
+        setShown(latestNow.current);
+      }
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [ref]);
+  return { ref, shown, held: shown !== latest };
 }
