@@ -455,8 +455,10 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
              is not run itself: each of its {SPEC_READY} tickets is, in number order, once the tickets on its Blocked \
              by: line are {TICKET_RESOLVED}, moving as a spec does but to `{TICKET_RESOLVED} (PR #<n> merged)`; the \
              spec is marked {SPEC_DONE} once each ticket is {TICKET_RESOLVED} or {TICKET_WONTFIX}. A ticket whose \
-             blockers cannot be read, or include a {TICKET_WONTFIX} one, is held for the human, and drain then exits \
-             {EXIT_ERROR}. A status is read by its first word."
+             blockers cannot be read, or include a {TICKET_WONTFIX} one, is held for the human, as is a spec blocked \
+             by a {TICKET_WONTFIX} spec or with a ticket drain cannot read, with its tickets; drain runs the rest and \
+             then exits {EXIT_ERROR}, and --dry-run, which lists them too, exits {EXIT_ERROR} as well. A status is \
+             read by its first word."
         ))
         .args(target_args())
         .args(settings_args())

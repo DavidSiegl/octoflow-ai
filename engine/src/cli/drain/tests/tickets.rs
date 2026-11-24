@@ -340,6 +340,8 @@ fn a_blocked_by_entry_names_a_ticket_by_its_whole_file_name_or_its_number() {
     d.ticket("s", "05-noted", &spec_text("Fifth", Some(SPEC_READY), &[noted]));
     d.ticket("s", "06-dash", &spec_text("Sixth", Some(SPEC_READY), &["Blocked by: - 02"]));
     d.ticket("s", "07-none-yet", &spec_text("Seventh", Some(SPEC_READY), &["Blocked by: none yet, 02"]));
+    d.ticket("s", "08-note-only", &spec_text("Eighth", Some(SPEC_READY), &["Blocked by: (after 02 lands)"]));
+    d.ticket("s", "09-with-md", &spec_text("Ninth", Some(SPEC_READY), &["Blocked by: 02-new-name.md"]));
     let queue = read_queue(&d.dir()).unwrap();
     let read: Vec<(&str, Vec<String>, Vec<String>)> =
         queue.iter().skip(2).map(|q| (q.slug.as_str(), q.blockers.clone(), q.unread.clone())).collect();
@@ -356,12 +358,15 @@ fn a_blocked_by_entry_names_a_ticket_by_its_whole_file_name_or_its_number() {
                 strings(&["s/02-new-name"]),
                 strings(&["its Blocked by: entry `none yet` names no ticket"])
             ),
+            ("s/08-note-only", vec![], strings(&["its Blocked by: entry `(after 02 lands)` names no ticket"])),
+            ("s/09-with-md", strings(&["s/02-new-name"]), vec![]),
         ]
     );
     // A spec's line is read the same way: a note's comma parts nothing, and `none yet` is no `none`.
     assert_eq!(blocker_slugs(Some("base (same files, and more)")), ["base"]);
     assert_eq!(blocker_slugs(Some("none yet, base")), ["none yet", "base"]);
     assert_eq!(blocker_slugs(Some("- base")), ["- base"]);
+    assert_eq!(blocker_slugs(Some("(after base lands)")), ["(after base lands)"]);
     d.spec("t", &spec_text("T", Some(SPEC_READY), &["Blocked by: none yet, s"]));
     let e = read_queue(&d.dir()).unwrap_err();
     assert!(e.0.starts_with("spec t is blocked by none yet, which has no spec.md"), "{e}");
@@ -394,6 +399,28 @@ fn a_ticketed_spec_is_done_once_its_last_ticket_merges_whatever_its_status() {
         let was = status_word(status);
         assert!(r.out.contains(&format!("s: {was} -> done\n")), "{status}: {}", r.out);
     }
+}
+
+#[test]
+fn a_wontfix_or_held_ticketed_spec_is_not_made_done() {
+    // Closed by the human with its tickets: nothing merged, and what it blocks stays held.
+    let d = Drain::new();
+    d.spec("s", &spec_text("Spec", Some(TICKET_WONTFIX), &[]));
+    d.ticket("s", "01-first", &spec_text("First", Some(TICKET_WONTFIX), &[]));
+    d.spec("b", &spec_text("B", Some(SPEC_READY), &["Blocked by: s"]));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    assert_eq!(d.header("s").0, some(TICKET_WONTFIX));
+    assert!(d.tasks().is_empty());
+    // Held by a wontfix blocker, its tickets resolved before that.
+    let d = Drain::new();
+    d.spec("w", &spec_text("W", Some(TICKET_WONTFIX), &[]));
+    d.spec("s", &spec_text("Spec", Some(SPEC_READY), &["Blocked by: w"]));
+    d.ticket("s", "01-first", &spec_text("First", resolved(1).as_deref(), &[]));
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    assert_eq!(d.header("s").0, some(SPEC_READY));
+    assert!(r.out.ends_with("s needs the human: it is blocked by w, which is wontfix\n"), "{}", r.out);
 }
 
 #[test]
@@ -441,6 +468,15 @@ fn an_unreadable_ticket_holds_its_spec_for_the_human_and_the_other_specs_drain()
     assert!(r.out.contains(&format!("s needs the human: {why}")), "{}", r.out);
     assert!(r.out.contains("s/01-ok needs the human: its spec s needs the human\n"), "{}", r.out);
     assert_eq!(d.ticket_text("s", "01-ok"), ready_ticket("Fine"));
+    // Whatever the spec's status.
+    let d = Drain::new();
+    d.spec("s", &spec_text("Spec", Some(SPEC_IN_REVIEW), &[]));
+    d.ticket("s", "01-ok", &ready_ticket("Fine"));
+    std::fs::write(d.ticket_path("s", "02-bad"), b"Status: \xff\n").unwrap();
+    let r = d.drain(vec![], &[]);
+    assert_eq!(r.status, EXIT_ERROR, "{}", r.err);
+    let why = format!("spec file {} is not UTF-8 text", d.ticket_path("s", "02-bad"));
+    assert!(r.out.contains(&format!("s needs the human: {why}")), "{}", r.out);
     // An unreadable spec.md still stops the drain.
     std::fs::write(d.path("s"), b"Status: \xff\n").unwrap();
     let r = d.drain(vec![], &[]);

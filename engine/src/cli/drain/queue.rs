@@ -97,13 +97,19 @@ pub fn with_header_field(text: &str, key: &str, entry: &str) -> Result<String, O
 /// The entries of a Blocked by: line's value, in order, blanks at their ends removed. Each explanation in parentheses
 /// is dropped before the value is split on commas, so a comma inside one makes no entry: `02 (same file, also the UI)`
 /// is one entry, `02`. None without the line, or when what is left is one of NO_BLOCKERS and nothing else:
-/// `none (independent)` names no blocker, but `none yet, 03` names `none yet` and `03`.
+/// `none (independent)` names no blocker, but `none yet, 03` names `none yet` and `03`. A value that is nothing but
+/// explanations, `(after 03 lands)`, is one entry, the whole value, which names nothing drain can find: it is not read
+/// as no blocker.
 fn blocker_entries(line: Option<&str>) -> Vec<String> {
-    let line = without_parentheses(line.unwrap_or(""));
-    if NO_BLOCKERS.contains(&line.trim().to_lowercase().as_str()) {
+    let line = line.unwrap_or("").trim();
+    let kept = without_parentheses(line);
+    if kept.trim().is_empty() && !line.is_empty() {
+        return vec![line.to_string()];
+    }
+    if NO_BLOCKERS.contains(&kept.trim().to_lowercase().as_str()) {
         return vec![];
     }
-    line.split(',').map(str::trim).filter(|e| !e.is_empty()).map(String::from).collect()
+    kept.split(',').map(str::trim).filter(|e| !e.is_empty()).map(String::from).collect()
 }
 
 /// text without the parts in parentheses, each with its parentheses, nested ones included; a `(` never closed drops
@@ -141,13 +147,14 @@ pub fn ticket_number(stem: &str) -> Option<u64> {
 /// What a Blocked by: line's value names for a ticket of spec own (BLOCKED_BY_KEY): the slugs, among queue, of the
 /// tickets it names, in order; and, for each entry that names no single ticket of queue, why, for the human. An entry's
 /// first word counts. A number names the ticket of own with that number (ticket_number), so a ticket renamed since
-/// still counts; a file name without .md only the ticket of that name, so `02-old-name` names no ticket once 02 is
-/// renamed. <slug>/<either> names one of spec slug's so, whatever that spec's status.
+/// still counts; a file name, with or without .md, only the ticket of that name, so `02-old-name` names no ticket once
+/// 02 is renamed. <slug>/<either> names one of spec slug's so, whatever that spec's status.
 fn ticket_blockers(own: &str, line: Option<&str>, queue: &[Queued]) -> (Vec<String>, Vec<String>) {
     let (mut slugs, mut unread) = (vec![], vec![]);
     for entry in blocker_entries(line) {
         let word = entry.split_whitespace().next().unwrap_or_default();
         let (spec, name) = word.rsplit_once('/').unwrap_or((own, word));
+        let name = name.strip_suffix(".md").unwrap_or(name);
         let by_number = !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit());
         let of_spec = Kind::Ticket(spec.to_string());
         let named: Vec<&str> = queue
@@ -216,8 +223,9 @@ fn dirname(path: &str) -> &str {
 pub enum Kind {
     /// A spec drain runs whole: it has no tickets.
     Spec,
-    /// A spec with tickets, which drain never runs: while it is SPEC_READY, drain runs its tickets instead, and makes
-    /// it SPEC_DONE once each is TICKET_RESOLVED or TICKET_WONTFIX.
+    /// A spec with tickets, which drain never runs: while it is SPEC_READY, drain runs its tickets instead. Whatever
+    /// its status, drain makes it SPEC_DONE once each ticket is TICKET_RESOLVED or TICKET_WONTFIX, unless it is held
+    /// (drain's held), TICKET_WONTFIX itself, or has no Status: line.
     Ticketed,
     /// A ticket, DIR/<slug>/issues/<NN>-<name>.md, of the spec whose slug this is, which drain runs only while that
     /// spec is SPEC_READY; the directory may have no spec.md.

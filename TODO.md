@@ -61,25 +61,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   that brings new output. Closing it means keeping their place across reads: matching the line at the top of the view
   in the new text (a TUI redraws its last screen, so the reads are not a plain append), or reading more lines while
   the reader is scrolled up. The ACP conversation keeps every event and has no such window.
-- **drain over tickets: edge cases not handled yet.** Raised as notes by the review of todo 89 (PR #600). In
-  `engine/src/cli/drain.rs` and `engine/src/cli/drain/queue.rs`:
-  - When a spec.md is deleted mid-drain, its ready tickets drop out of the end report, which can say all specs
-    cleared and exit 0.
-  - A spec that is not `ready-for-agent` is not made `done` when its last ticket merges.
-  - `--dry-run` does not list held tickets: it prints its order and exits 0 where the real drain exits 1.
-  - A blocker `02-old-name` matches any ticket numbered 02.
-  - A `Blocked by:` line `- 03` or `none yet, 03` names no blocker, since its first word decides, so the ticket it
-    belongs to can start before 03 is resolved. A spec's line is read the same way: `none yet, base-spec` lets the
-    spec start before base-spec is `done`.
-  - The line is split on commas before each entry is cut to its first word, so `02 (same file, also the UI)` yields an
-    entry `also the UI)`: the ticket is held for a human although 02 is a good blocker.
-  - A spec run whole whose blocker spec is `wontfix` waits forever (drain exits 5, "waits on:"), where a ticket in the
-    same place is held for a human. This was so before #600.
-  - A ticket's stale `Run:` line under a held spec stops the drain, as a spec's does.
-  - An unreadable ticket file anywhere in DIR stops `read_queue`, and with it the whole drain.
-
-  Each closes when drain handles it, or when the user rules it stays.
-
 - **summary.md, the pull request body and metrics.json do not say a role's model was not offered.** Ticket
   herdr-gui-decoupling 15: a turn records the model its agent ran on and the role's model it was not offered
   (`TurnRecord::unoffered_model`), but the roles table of summary.md (`run_summary`, `engine/src/summary.rs`) and of

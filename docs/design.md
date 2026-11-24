@@ -413,8 +413,11 @@ notes why after it, and a merged ticket is written `resolved (PR #<n> merged)` i
 `done`, without the release: drain cannot know which release a merge made in an arbitrary project.
 
 Drain reads every directory's tickets, whatever its spec's status, and even without a `spec.md`: a ticket's
-`<slug>/NN` blocker is that ticket's own status, and a ticket's open pull request is followed while its spec is
-held, so its merge is not lost. It starts a ticket only while its spec is `ready-for-agent`. A ticket's `Blocked
+`<slug>/NN` blocker is that ticket's own status, and a ticket's open pull request, once its `PR:` line records it,
+is followed while its spec is held, so its merge is not lost. A ticket's `Run:` line is read only while its spec is
+`ready-for-agent` and not held, so that a stale run under a held spec stops nothing; a run that opened its pull
+request before the spec was held is caught up once the spec is ready again. It starts a ticket only while its spec
+is `ready-for-agent`. A ticket's `Blocked
 by:` is the tracker's free text, so an entry drain cannot read, or a blocker that is `wontfix` and so never
 finishes, holds only that ticket for the human: the rest of the drain goes on, and drain ends with exit status `1`
 naming each held ticket and why, rather than waiting on it forever. A spec blocked by a `wontfix` spec is held the

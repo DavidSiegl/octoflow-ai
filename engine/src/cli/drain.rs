@@ -25,15 +25,16 @@ pub const DRAIN_DIR: &str = ".scratch";
 /// The values of a spec's Status: line that drain acts on. A spec moves from SPEC_READY to SPEC_IN_REVIEW, its pull
 /// request open, to SPEC_DONE, merged; or to SPEC_FOR_HUMAN, for a run that failed, did not succeed, conflicts, or
 /// opened no pull request (RunState::nothing_to_publish), which drain leaves only for SPEC_IN_REVIEW, once a succeeded
-/// run's conflict is cleared (refreshed_headers). Drain leaves a spec with any other value, or none, alone. A value is
-/// the line's first word (queue::status_word), so a note may follow it.
+/// run's conflict is cleared (refreshed_headers). Drain runs no spec with any other value, or none; a spec with tickets
+/// it may still make SPEC_DONE, as Kind::Ticketed says. A value is the line's first word (queue::status_word), so a
+/// note may follow it.
 pub const SPEC_READY: &str = "ready-for-agent";
 pub const SPEC_IN_REVIEW: &str = "in-review";
 pub const SPEC_DONE: &str = "done";
 pub const SPEC_FOR_HUMAN: &str = "ready-for-human";
 /// A ticket moves as a spec does, through the same values, but to TICKET_RESOLVED, written `resolved (PR #<n>
 /// merged)`, in place of SPEC_DONE (pull_request_header). Its spec turns SPEC_DONE once each of its tickets is
-/// TICKET_RESOLVED or TICKET_WONTFIX, whatever the spec's status (Kind::Ticketed). A spec or ticket blocked by one
+/// TICKET_RESOLVED or TICKET_WONTFIX, as Kind::Ticketed says when. A spec or ticket blocked by one
 /// that is TICKET_WONTFIX is held for the human (held).
 pub const TICKET_RESOLVED: &str = "resolved";
 pub const TICKET_WONTFIX: &str = "wontfix";
@@ -279,12 +280,13 @@ fn print_changes(queue: &[Queued], world: &Connected) {
 }
 
 /// Those of queue, by by_slug, that a drain which can start nothing more leaves to report: each it drains that was
-/// SPEC_READY as drain last read it, and each Ticketed spec so that is held for the human (held), which may have no
-/// ticket to report it.
+/// SPEC_READY as drain last read it, each Ticketed spec so that is held for the human (held), which may have no ticket
+/// to report it, and each Ticketed spec with a ticket drain cannot read (Queued::unread), whatever its status.
 fn left<'q>(queue: &'q [Queued], by_slug: &HashMap<String, usize>) -> Vec<&'q Queued> {
     let ready = |s: &Queued| s.status_as_read().as_deref() == Some(SPEC_READY);
     let held_ticketed = |s: &Queued| s.kind == Kind::Ticketed && held(s, queue, by_slug).is_some();
-    queue.iter().filter(|s| ready(s) && (drains(s, queue, by_slug) || held_ticketed(s))).collect()
+    let unread_ticket = |s: &Queued| s.kind == Kind::Ticketed && !s.unread.is_empty();
+    queue.iter().filter(|s| (ready(s) && (drains(s, queue, by_slug) || held_ticketed(s))) || unread_ticket(s)).collect()
 }
 
 /// Print what is left once drain can start nothing (left), and return its exit status: 0 when nothing is;
@@ -371,15 +373,16 @@ pub fn refreshed_headers(
         let set = refreshed.headers.iter().find(|(at, _)| *at == i).and_then(|(_, e)| entry(e, STATUS_KEY));
         set.map(|s| status_word(s).to_string()).or_else(|| queue[i].status())
     };
-    // A Ticketed spec with a ticket it could not read (Queued::unread) is not done; nor is one without a Status: line,
-    // which has no line to set.
+    // A held Ticketed spec, one with a ticket it could not read among them, is not done while the human has yet to
+    // act; nor is a wontfix one, which the human closed with nothing merged, or one without a Status: line, which has
+    // no line to set.
     let mut done = vec![];
     for (i, spec) in queue.iter().enumerate() {
         let status = spec.status();
         if spec.kind != Kind::Ticketed
-            || !spec.unread.is_empty()
+            || held(spec, queue, &by_slug).is_some()
             || status.is_none()
-            || status.as_deref() == Some(SPEC_DONE)
+            || [SPEC_DONE, TICKET_WONTFIX].contains(&status.as_deref().unwrap_or_default())
         {
             continue;
         }
