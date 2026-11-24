@@ -30,7 +30,9 @@ use crate::paths::file_name;
 use crate::pipeline::{Pipeline, Step, DONE, PUBLISH, QUALITY};
 use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
-use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
+use crate::pull_request::{
+    branch_name, commit_note, commit_title, pr_body, provenance, spec_title, GateEvidence, QualityFile,
+};
 use crate::quality::parse_gate;
 use crate::run_commands::RunCommands;
 use crate::runs::{local_host, RUNNING};
@@ -1245,13 +1247,13 @@ impl<'a> Workflow<'a> {
         Ok(true)
     }
 
-    /// The title of the run's commit and pull request, at most 72 characters: spec's title, else the first line of
-    /// the task, else the run id.
+    /// The title of the run's commit and pull request, cut as commit_title cuts it: spec's title, else the first line
+    /// of the task, else the run id.
     fn change_title(&self, spec: &str) -> String {
         let s = &self.state;
-        let first_line = s.task.trim().split('\n').next().unwrap_or_default().to_string();
+        let first_line = s.task.trim().lines().next().unwrap_or_default().to_string();
         let title = spec_title(spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
-        if title.is_empty() { s.run_id.clone() } else { title }.chars().take(72).collect()
+        commit_title(if title.is_empty() { &s.run_id } else { &title })
     }
 
     /// Commit every change in the work dir wd, if it has any, as the run's one commit: title, commit_note, and the

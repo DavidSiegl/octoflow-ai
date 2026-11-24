@@ -65,6 +65,41 @@ fn workflow_without_a_spec_step() {
 }
 
 #[test]
+fn a_task_line_over_72_characters_titles_the_commit_and_pull_request_cut_at_a_word() {
+    let quick = quick();
+    let mut state = new_run(&quick);
+    state.task = "add a rate limiter to every endpoint of the public API, with a token bucket per client".into();
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+    );
+
+    assert_eq!(f.workflow(with_pipeline(&quick)).run(), verdict(APPROVE));
+
+    let title = "add a rate limiter to every endpoint of the public API, with a token…";
+    assert_eq!(f.host.state().prs[0].title, title);
+    let commit = commit_args(&f);
+    assert_eq!(commit[commit.iter().position(|a| a == "-m").unwrap() + 1], title);
+}
+
+#[test]
+fn a_task_written_with_crlf_titles_the_pull_request_without_its_carriage_return() {
+    let quick = quick();
+    let mut state = new_run(&quick);
+    state.task = "add a rate limiter\r\nwith a token bucket per client".into();
+    let f = Fixture::on(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("build", vec![build_turn(1)]), ("review", vec![review_turn(1, APPROVE)])],
+    );
+
+    assert_eq!(f.workflow(with_pipeline(&quick)).run(), verdict(APPROVE));
+
+    assert_eq!(f.host.state().prs[0].title, "add a rate limiter");
+}
+
+#[test]
 fn verdict_step_of_another_name_gets_one_retry() {
     let mut build = Step::new("build", "build", "build-{n}.md", "Build {task}; report to {build_path}.");
     (build.again, build.edits) = (Some("Fix {prev_check_path}; report to {build_path}.".into()), true);
