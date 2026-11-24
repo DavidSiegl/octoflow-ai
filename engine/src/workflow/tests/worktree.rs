@@ -239,6 +239,32 @@ fn an_approved_run_that_changed_nothing_removes_its_empty_worktree_and_deletes_i
 }
 
 #[test]
+fn an_approved_run_whose_worktree_holds_only_the_engine_s_files_removes_it() {
+    let host = FakeHost::default();
+    host.state().ignored.insert(format!("{WORKTREE}/.octoflow-ai/.gitignore"));
+    let f = approved_without_change(host);
+    assert!(f.host.state().worktrees.is_empty());
+    let said = format!("branch {RUN_BRANCH} deleted; removed worktree {WORKTREE}");
+    assert!(f.told.lines().iter().any(|l| l.ends_with(&said)), "{:?}", f.told.lines());
+}
+
+#[test]
+fn an_approved_run_whose_empty_worktree_git_will_not_remove_keeps_it_detached_and_says_why() {
+    let host = FakeHost::default();
+    let refusal = "fatal: working trees containing submodules cannot be moved or removed";
+    host.state().remove_error = Some(refusal.to_string());
+    let f = approved_without_change(host);
+    assert_eq!(
+        f.host.state().worktrees.iter().map(|(p, b)| (p.to_string(), b.clone())).collect::<Vec<_>>(),
+        [(WORKTREE.into(), "HEAD".into())]
+    );
+    let said = format!(
+        "branch {RUN_BRANCH} deleted; worktree {WORKTREE} kept, detached, as git would not remove it: {refusal}"
+    );
+    assert!(f.told.lines().iter().any(|l| l.ends_with(&said)), "{:?}", f.told.lines());
+}
+
+#[test]
 fn an_approved_run_that_wrote_only_ignored_files_keeps_its_worktree_detached_and_deletes_its_branch() {
     let host = FakeHost::default();
     host.state().ignored.insert(format!("{WORKTREE}/.scratch/design.md"));

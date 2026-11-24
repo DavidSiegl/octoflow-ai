@@ -9,8 +9,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use super::{
-    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS,
-    GIT_STATUS_IGNORED_ARGS, ORIGIN_READ,
+    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ,
 };
 use crate::constants::{METRICS_FILE, SUMMARY_FILE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
@@ -165,7 +164,7 @@ pub(crate) struct FakeState {
     pub branch: String,
     /// The paths of the uncommitted changes.
     pub changed: BTreeSet<String>,
-    /// The paths of files git ignores, which only `git status --ignored` (GIT_STATUS_IGNORED_ARGS) lists.
+    /// The paths of files git ignores, which only `git status --ignored` (GIT_STATUS_ARGS and `--ignored`) lists.
     pub ignored: BTreeSet<String>,
     /// The arguments of each git command, in order.
     pub git_calls: Vec<Vec<String>>,
@@ -445,8 +444,10 @@ impl FakeState {
                 Some(ok(""))
             }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
-            args if args == GIT_STATUS_IGNORED_ARGS => {
-                let ignored = self.ignored.iter().filter(|p| p.starts_with(&format!("{cwd}/")));
+            [status @ .., "--ignored"] if status == GIT_STATUS_ARGS => {
+                // Relative to cwd, as git lists them.
+                let inside = format!("{cwd}/");
+                let ignored = self.ignored.iter().filter_map(|p| p.strip_prefix(&inside));
                 let listed: String = ignored.map(|p| format!("!! {p}\n")).collect();
                 Some(ok(&(porcelain(&self.changed_in(cwd)) + &listed)))
             }

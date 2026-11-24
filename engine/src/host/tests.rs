@@ -1810,6 +1810,34 @@ fn worktree_steps() {
 }
 
 #[test]
+fn a_worktree_holds_nothing_until_a_file_outside_the_engine_s_directory_is_in_it() {
+    let c = Clones::new();
+    let wt = format!("{}/.octoflow-ai/worktrees/a1b2c3", c.a);
+    c.host.add_worktree(&c.a, &wt, "HEAD").unwrap();
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    // The engine's own, ignored by a .gitignore of its own (Orchestrator::ignore_project_dir) or not.
+    put(&format!("{wt}/.octoflow-ai/.gitignore"), "*\n");
+    put(&format!("{wt}/.octoflow-ai/proof-copies/1/proof.txt"), "x\n");
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    // An ignored file elsewhere, and an untracked one.
+    put(&format!("{wt}/.gitignore"), "*.log\n");
+    c.sh(&["git", "-C", &wt, "add", ".gitignore"]);
+    c.sh(&["git", "-C", &wt, "commit", "--quiet", "-m", "ignore logs"]);
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    put(&format!("{wt}/build.log"), "x\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_file(format!("{wt}/build.log")).unwrap();
+    put(&format!("{wt}/new.py"), "x\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_file(format!("{wt}/new.py")).unwrap();
+    // A locked one holds nothing, yet git will not remove it.
+    c.sh(&["git", "-C", &c.a, "worktree", "lock", &wt]);
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    let refusal = c.host.try_remove_worktree(&c.a, &wt).unwrap();
+    assert!(refusal.as_deref().is_some_and(|r| r.contains("locked")), "{refusal:?}");
+}
+
+#[test]
 fn a_deleted_worktree_is_no_worktree() {
     let c = Clones::new();
     let wt = format!("{}/wt", c.dir());

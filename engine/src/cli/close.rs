@@ -124,10 +124,10 @@ struct Plan<'r> {
 /// What close does to a run's worktree.
 enum WorktreeFate<'r> {
     /// Nothing: the run has none (an in-place run, whose checkout is the human's), or a finished run's went with its
-    /// pull request.
+    /// pull request, or, holding nothing, when the run found nothing to publish.
     None,
     /// A finished run's worktree, at this path, holds a --no-pr run's change, or what a run with nothing to publish
-    /// wrote in ignored files (RunState::nothing_to_publish), so it stays.
+    /// wrote in ignored files (RunState::nothing_to_publish), or git refused to remove it, so it stays.
     Kept(&'r str),
     /// A failed or stale run's worktree, at path, goes, and so may its branch.
     Discarded {
@@ -176,10 +176,10 @@ pub fn close_command(
 /// Every run loses its agents' place and its local refs (crate::state::refs_prefix), which hold the files its steps
 /// locked and which nothing else deletes once it is closed. A failed or stale --worktree run also loses its worktree,
 /// changes and all (listed first), and its branch if that holds no commit beyond the run's base. A finished run's
-/// worktree is a --no-pr run's change or a run's ignored files (WorktreeFate::Kept), and an in-place run's checkout
-/// and branch are the human's to sort out, so both stay. Each step skips what is already gone, so a close that failed
-/// part way can be run again; closed is recorded only once every step has succeeded. A run already closed is left as
-/// it is, and its closed returned.
+/// worktree, where it is still there, is a --no-pr run's change, a run's ignored files or one git refused to remove
+/// (WorktreeFate::Kept), and an in-place run's checkout and branch are the human's to sort out, so both stay. Each step
+/// skips what is already gone, so a close that failed part way can be run again; closed is recorded only once every
+/// step has succeeded. A run already closed is left as it is, and its closed returned.
 ///
 /// Errors: no run or several match run_ref; the run is Decision::Refused; its agents' backend or git cannot tell what
 /// is there; a step fails; or the state.json changed since it was read.

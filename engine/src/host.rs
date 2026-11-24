@@ -8,7 +8,9 @@
 
 use indexmap::IndexMap;
 
-use crate::constants::{CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, REMOTE, RUNS_DIR, SUMMARY_FILE};
+use crate::constants::{
+    CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, PROJECT_DIR, REMOTE, RUNS_DIR, SUMMARY_FILE,
+};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use crate::json::ValueExt;
@@ -1624,17 +1626,6 @@ pub(crate) fn git_diff<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> 
 pub(crate) const GIT_STATUS_ARGS: &[&str] =
     &["-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"];
 
-/// GIT_STATUS_ARGS with `--ignored`: ignored files are listed too, each on a `!! ` line.
-pub(crate) const GIT_STATUS_IGNORED_ARGS: &[&str] = &[
-    "-c",
-    "core.quotePath=false",
-    "status",
-    "--porcelain",
-    "--untracked-files=all",
-    "--ignore-submodules=none",
-    "--ignored",
-];
-
 /// What `git status --porcelain` lists in cwd, one change or untracked file to a line, under the user's settings that
 /// GIT_STATUS_ARGS names overridden. Empty means a clean working tree. Every `git status` of the engine's runs through
 /// it or holds_nothing. Errors: as Host::git's.
@@ -1642,11 +1633,16 @@ pub(crate) fn git_status<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String
     host.git(cwd, GIT_STATUS_ARGS)
 }
 
-/// Whether the working tree at cwd holds nothing that is not committed: no change, no untracked file and no ignored
-/// one (GIT_STATUS_IGNORED_ARGS). Such a worktree goes with `git worktree remove` without losing a file. Errors: as
-/// Host::git's.
+/// Whether the working tree at cwd holds nothing of its own but the engine's: no change, no untracked file and no
+/// ignored one, as `git status --ignored` lists them under GIT_STATUS_ARGS's settings, outside its PROJECT_DIR, where
+/// only the engine writes (Orchestrator::ignore_project_dir, the proofs' copies). Removing such a worktree loses no
+/// file a run or a human wrote, though git may still refuse to (Host::try_remove_worktree). Errors: as Host::git's.
 pub(crate) fn holds_nothing<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<bool, OrchestratorError> {
-    Ok(host.git(cwd, GIT_STATUS_IGNORED_ARGS)?.trim().is_empty())
+    let args = [GIT_STATUS_ARGS, &["--ignored"]].concat();
+    let listed = host.git(cwd, &args)?;
+    // Each line is "XY path", a path in quotes when it has a quote, a backslash or a control character in it.
+    let engines = format!("{PROJECT_DIR}/");
+    Ok(listed.lines().all(|line| line.get(3..).is_some_and(|path| path.starts_with(&engines))))
 }
 
 /// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended

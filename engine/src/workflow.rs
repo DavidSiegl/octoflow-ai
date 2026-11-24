@@ -1274,9 +1274,11 @@ impl<'a> Workflow<'a> {
 
     /// For a run with nothing to publish (RunState::nothing_to_publish): take its work dir off its branch and delete
     /// the branch, which has no commits of its own, then say so. The project's checkout goes back to the base branch,
-    /// as leave_work_dir has it. A worktree that holds nothing (host::holds_nothing) is removed; one that holds a
-    /// file, if only an ignored one, is kept, detached, since removing it would delete what the run wrote there. Each
-    /// step is safe to take again, for a resume that finds an earlier orchestrator stopped in it.
+    /// as leave_work_dir has it. A worktree that holds nothing but the engine's files (host::holds_nothing) is
+    /// removed, without force; one that holds a file, if only an ignored one, is kept, detached, since removing it
+    /// would delete what the run wrote there, and so is one git refuses to remove (a locked one, one with a submodule),
+    /// its refusal logged. Each step is safe to take again, for a resume that finds an earlier orchestrator stopped in
+    /// it.
     fn drop_unpublished_branch(&mut self) -> Outcome<()> {
         let s = &self.state;
         let Some(branch) = s.branch.clone() else { return Ok(()) };
@@ -1289,13 +1291,21 @@ impl<'a> Workflow<'a> {
             }
             Some(worktree) => {
                 if self.host.is_worktree(&s.cwd, worktree)? {
-                    if holds_nothing(self.host, worktree)? {
-                        self.host.remove_worktree(&s.cwd, worktree, false)?;
-                        worktree_fate = format!("; removed worktree {worktree}");
+                    // None once removed; else why the worktree stays.
+                    let kept = if holds_nothing(self.host, worktree)? {
+                        self.host.try_remove_worktree(&s.cwd, worktree)?.map(|refusal| {
+                            format!("worktree {worktree} kept, detached, as git would not remove it: {refusal}")
+                        })
                     } else {
-                        self.host.git(worktree, &["switch", "--quiet", "--detach"])?;
-                        worktree_fate = format!("; what the run wrote is in worktree {worktree}");
-                    }
+                        Some(format!("what the run wrote is in worktree {worktree}"))
+                    };
+                    worktree_fate = match kept {
+                        None => format!("; removed worktree {worktree}"),
+                        Some(why) => {
+                            self.host.git(worktree, &["switch", "--quiet", "--detach"])?;
+                            format!("; {why}")
+                        }
+                    };
                 } else {
                     // Its directory gone, git still counts the branch as checked out there, and refuses to delete it.
                     self.host.prune_worktrees(&s.cwd)?;
