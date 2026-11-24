@@ -295,7 +295,7 @@ fn command(request: &Value, commands: &dyn Commands) -> Value {
         Err(CommandError::NoAgent) => error("no_agent", &format!("the {role} role has no agent running")),
         Err(CommandError::NotWaiting) => error(
             "not_waiting",
-            &format!("the {role} agent is not waiting for a message: it is working, or the run does not wait on you"),
+            &format!("the {role} agent is not waiting for a message: it is working or stopped, or the run does not wait on you"),
         ),
         Err(CommandError::Unwritten(e)) => error("unwritten", &e.0),
         // Only an answer is refused so, and it is answered above.

@@ -669,7 +669,8 @@ fn the_usage_of_a_prompt_pending_at_an_end_a_restart_or_a_settle_is_recorded() {
 }
 
 /// An agent that answers neither its prompt nor the cancel is waited for once: the run's end that follows its settle
-/// kills it at once. A settle once the run's Ctrl-C is raised waits for none and cancels none.
+/// kills it at once. A settle once the run's Ctrl-C is raised cancels it at once, without SETTLE_MS's wait for its
+/// prompt, and waits KILL_SETTLE_MS for the cancel's answer.
 #[test]
 fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     let f = Fixture::new();
@@ -690,18 +691,18 @@ fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     f.interrupt.raise();
     let settling = Instant::now();
     agents.settle(&f.run);
-    assert!(settling.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", settling.elapsed());
-    // The fake agent logs a cancel within milliseconds of getting it: one logged only after this sleep lets a wrong
-    // settle pass, and never fails a right one.
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(cancels(), cancelled_before, "{}", f.log());
+    let waited = settling.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(cancels(), cancelled_before + 1, "{}", f.log());
 }
 
-/// Agents dropped with prompts pending, as a run released as interrupted drops them, are cancelled and given
-/// KILL_SETTLE_MS to answer, so the usage an answer carries is recorded; one that never answers is killed once that
-/// is up, not SETTLE_MS later (cross-review 275 F5).
+/// Agents settled at a Ctrl-C with prompts pending, as an interrupted run settles them before its release, are
+/// cancelled and given KILL_SETTLE_MS to answer, so the usage an answer carries is recorded; the wait for one that
+/// never answers ends once that is up, not SETTLE_MS later (cross-review 275 F5). A message from the human to a
+/// stopped agent is refused: nothing would cancel its prompt (cross-review 311 F2).
 #[test]
-fn agents_dropped_at_a_ctrl_c_are_cancelled_and_the_usage_of_their_answers_recorded() {
+fn agents_settled_at_a_ctrl_c_are_cancelled_and_the_usage_of_their_answers_recorded() {
     let f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
@@ -711,14 +712,16 @@ fn agents_dropped_at_a_ctrl_c_are_cancelled_and_the_usage_of_their_answers_recor
     }
     f.interrupt.raise();
 
-    let dropping = Instant::now();
-    drop(agents);
+    let settling = Instant::now();
+    agents.settle(&f.run);
 
-    let waited = dropping.elapsed();
+    let waited = settling.elapsed();
     assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
     assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
     assert_eq!(f.log().matches("session/cancel ").count(), 2, "{}", f.log());
     assert_eq!(session_usage(&read(&usage_file(&f.run)), "s-1").len(), 1, "the HANG agent's answer to its cancel");
+    agents.await_human(&f.run, "builder", Waiting::Idle);
+    assert_eq!(agents.message("builder", "go on"), Err(CommandError::NotWaiting));
 }
 
 #[test]
@@ -1048,14 +1051,11 @@ fn a_resumed_role_s_journal_goes_on_numbering_and_its_reopened_session_is_journa
 
     let lines = journal(&f);
     let kinds: Vec<&str> = lines.iter().filter_map(|l| l["kind"].as_str()).collect();
-    // The drop cancelled the first agent's permission and prompt before it killed it.
-    let first = ["session", "prompt", "permission", "answered", "turn_end", "exited"];
-    assert_eq!(kinds, [&first[..], &["session", "prompt", "permission"]].concat());
-    assert_eq!(lines[4]["by"], "stop");
+    assert_eq!(kinds, ["session", "prompt", "permission", "exited", "session", "prompt", "permission"]);
     let seqs: Vec<u64> = lines.iter().filter_map(|l| l["seq"].as_u64()).collect();
-    assert_eq!(seqs, (1..=9).collect::<Vec<u64>>());
-    assert_eq!(lines[7]["resumed"], true);
-    assert_eq!(lines[9]["request"], 2);
+    assert_eq!(seqs, [1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(lines[5]["resumed"], true);
+    assert_eq!(lines[7]["request"], 2);
     // Request 1 was the session before's: this connection never had it.
     assert_eq!(agents.answer("builder", 1, "allow"), Err(CommandError::NoRequest));
 }

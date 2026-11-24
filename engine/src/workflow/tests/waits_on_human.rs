@@ -7,22 +7,41 @@ use super::*;
 use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
 use crate::herdr::fake::FakeHerdr;
 use crate::human::Human;
+use crate::interrupt::Interrupt;
 use crate::workflow::{Collaborators, Workflow};
 
 /// The fixture's FakeHerdr as the run's Agents, with each Agents::await_human and Agents::settle it is asked
 /// recorded.
 struct Awaited<'f> {
     herdr: &'f FakeHerdr,
+    /// The run's Ctrl-C, as the run's agents see it.
+    interrupt: Interrupt,
     /// Each await_human's role and why, in order.
     asked: RefCell<Vec<(String, Waiting)>>,
-    /// For each settle, in order, whether any turn of the run had its tokens counted by then.
-    settled: RefCell<Vec<bool>>,
+    /// The run as each settle found it, in order.
+    settled: RefCell<Vec<Settle>>,
+}
+
+/// The run as a settle found it.
+#[derive(Debug, PartialEq)]
+struct Settle {
+    /// Some turn of the run had its tokens counted.
+    counted: bool,
+    /// The run still had an owner: it was not released yet.
+    owned: bool,
+    /// The run's Ctrl-C was raised and not yet caught.
+    interrupted: bool,
 }
 
 impl<'f> Awaited<'f> {
-    /// herdr as the run's Agents, nothing asked yet.
-    fn new(herdr: &'f FakeHerdr) -> Awaited<'f> {
-        Awaited { herdr, asked: RefCell::default(), settled: RefCell::default() }
+    /// The fixture's herdr as the run's Agents, nothing asked yet.
+    fn new(f: &'f Fixture) -> Awaited<'f> {
+        Awaited {
+            herdr: &f.herdr,
+            interrupt: f.interrupt.clone(),
+            asked: RefCell::default(),
+            settled: RefCell::default(),
+        }
     }
 }
 
@@ -73,7 +92,11 @@ impl Agents for Awaited<'_> {
         self.herdr.whereabouts(run, role)
     }
     fn settle(&self, run: &RunState) {
-        self.settled.borrow_mut().push(run.turns.iter().any(|t| t.tokens.is_set()));
+        self.settled.borrow_mut().push(Settle {
+            counted: run.turns.iter().any(|t| t.tokens.is_set()),
+            owned: run.owner.is_some(),
+            interrupted: self.interrupt.is_raised(),
+        });
         self.herdr.settle(run)
     }
 }
@@ -100,7 +123,7 @@ fn an_idle_interview_and_a_stalled_agent_wait_on_the_human_and_a_working_one_doe
             write(&review, &format!("VERDICT: {APPROVE}\n"));
         }
     });
-    let agents = Awaited::new(&f.herdr);
+    let agents = Awaited::new(&f);
 
     let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
         .expect("Workflow::new takes the settings")
@@ -132,7 +155,7 @@ fn an_agent_that_reports_a_wait_waits_on_the_human_before_it_would_stall() {
             host.write(&build, "report", false).unwrap();
         }
     });
-    let agents = Awaited::new(&f.herdr);
+    let agents = Awaited::new(&f);
 
     let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
         .expect("Workflow::new takes the settings")
@@ -151,12 +174,34 @@ fn a_finished_run_s_agents_settle_before_its_tokens_are_counted() {
         ("build", vec![build_turn(1)]),
         ("review", vec![review_turn(1, APPROVE)]),
     ]);
-    let agents = Awaited::new(&f.herdr);
+    let agents = Awaited::new(&f);
 
     let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
         .expect("Workflow::new takes the settings")
         .run();
 
     assert_eq!(ran, verdict(APPROVE));
-    assert_eq!(agents.settled.into_inner(), [false]);
+    assert_eq!(agents.settled.into_inner(), [Settle { counted: false, owned: true, interrupted: false }]);
+}
+
+/// An interrupted run's agents settle before its release, with the Ctrl-C still raised: an ACP agent then gets a
+/// short wait to answer its cancel with its usage, and the run reads as released only once that is recorded
+/// (cross-review 311 F1).
+#[test]
+fn an_interrupted_run_s_agents_settle_before_its_release() {
+    let f = Fixture::new(vec![("spec", vec![idle()])]);
+    let interrupt = f.interrupt.clone();
+    f.clock.hook(move |now| {
+        if now > 100.0 {
+            interrupt.raise();
+        }
+    });
+    let agents = Awaited::new(&f);
+
+    let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
+        .expect("Workflow::new takes the settings")
+        .run();
+
+    assert_eq!(ran, Err(Stopped::Interrupted));
+    assert_eq!(agents.settled.into_inner(), [Settle { counted: false, owned: true, interrupted: true }]);
 }

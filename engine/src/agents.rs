@@ -191,10 +191,11 @@ pub trait Agents: RunPlaces {
     /// Where the human finds the role's agent, as a message names it (herdr: `pane w1:p2`).
     fn whereabouts(&self, run: &RunState, role: &str) -> String;
 
-    /// Let what the agents are still doing end and be recorded, once the run's turns are over and before their tokens
-    /// are counted; the agents run on. ACP: an agent's usage is recorded only when it answers a prompt, which can come
-    /// after the turn's file, so each prompt still pending is given a bounded time to be answered, then cancelled and
-    /// given that time again. herdr: nothing to do, the harnesses' session logs hold the usage.
+    /// Let what the agents are still doing end and be recorded, once the run's turns are over, before their tokens
+    /// are counted, or once it is interrupted, before its release; the agents run on. ACP: an agent's usage is recorded
+    /// only when it answers a prompt, which can come after the turn's file, so each prompt still pending is given a
+    /// bounded time to be answered, then cancelled and given that time again; once the run's Ctrl-C is raised,
+    /// cancelled at once and given a shorter time. herdr: nothing to do, the harnesses' session logs hold the usage.
     fn settle(&self, run: &RunState);
 }
 

@@ -53,9 +53,9 @@ const REQUEST_SECONDS: u64 = 120;
 /// turn. Tests, whose fake agent answers at once or never, wait less.
 const SETTLE_MS: u64 = if cfg!(test) { 2_000 } else { 10_000 };
 
-/// How long agents killed with prompts pending (AcpAgents' drop, as at the run's Ctrl-C) have, once cancelled, to
-/// answer the cancel, in milliseconds: long enough for an agent that is still reading to answer with its usage, short
-/// enough that a Ctrl-C is not held up. Tests wait less.
+/// How long agents settled once the run's Ctrl-C is raised (AcpAgents::settle_all) have, once cancelled, to answer
+/// the cancel, in milliseconds: long enough for an agent that is still reading to answer with its usage, short enough
+/// that a Ctrl-C is not held up. A second Ctrl-C does not cut it short. Tests wait less.
 const KILL_SETTLE_MS: u64 = if cfg!(test) { 500 } else { 2_000 };
 
 /// How often, in milliseconds, a settle looks at the run's Ctrl-C while it waits.
@@ -65,8 +65,8 @@ const SETTLE_SLICE_MS: u64 = 100;
 const PROTOCOL_VERSION: u64 = 1;
 
 /// The agents of one run, which its orchestrator drives over ACP: each role's, once started, until it exits or is
-/// ended; and the run's socket, from the run's open on. Dropping it kills the agents, their pending prompts cancelled
-/// first (its Drop), and closes the socket.
+/// ended; and the run's socket, from the run's open on. Dropping it kills the agents (Connection's drop) and closes
+/// the socket.
 pub struct AcpAgents<'h> {
     /// Told an agent's error, as find comes upon it.
     human: &'h dyn Human,
@@ -98,8 +98,8 @@ pub enum CommandError {
     AlreadyAnswered { option: String, by: String },
     /// The request offers no such option.
     BadOption,
-    /// The run does not wait on the human's message to the agent (Agents::await_human), or a prompt of it is
-    /// pending.
+    /// The run does not wait on the human's message to the agent (Agents::await_human), a prompt of it is pending,
+    /// or the agent was stopped (Connection::stop), as the run's stop or its end does.
     NotWaiting,
     /// The answer or message was taken, but could not be written to the agent, which has exited.
     Unwritten(OrchestratorError),
@@ -388,34 +388,24 @@ impl AcpAgents<'_> {
     /// Give the agents of connections SETTLE_MS to answer every prompt they have pending, then cancel what each has
     /// left (Connection::stop: its prompts, and the permissions they wait on) and give them as long again, so that
     /// the usage each answer carries is recorded. An agent cancelled before (Connection::cancelled), which answered
-    /// the cancel then or never will, is not waited for again; nor is any, once the run's Ctrl-C is raised. What
-    /// answers neither is left as it is, for the caller to kill or keep.
+    /// the cancel then or never will, is not cancelled again, nor waited for. Once the run's Ctrl-C is raised, before
+    /// or during the first wait, what is left is cancelled at once, and every agent, those cancelled before (as by
+    /// the app's stop) among them, is given KILL_SETTLE_MS instead. What answers neither is left as it is, for
+    /// the caller to kill or keep.
     fn settle_all(&self, connections: &[Arc<Connection>]) {
         let interrupt = &self.running.interrupt;
         let pending = connections.iter().filter(|c| !c.cancelled()).collect();
         let pending = still_pending(pending, interrupt);
-        if pending.is_empty() || interrupt.is_raised() {
-            return;
-        }
         for connection in &pending {
             connection.stop();
         }
-        still_pending(pending, interrupt);
-    }
-}
-
-impl Drop for AcpAgents<'_> {
-    /// Cancel what every agent still running has pending and give them KILL_SETTLE_MS to answer, so that the usage
-    /// each answer carries is recorded, before their connections' drop kills them. end drains the agents it kills, so
-    /// this is the way out of a run whose orchestrator stops without ending them: its Ctrl-C, or an error.
-    fn drop(&mut self) {
-        let connections = self.connections();
-        for connection in &connections {
-            connection.stop();
-        }
-        let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
-        for connection in &connections {
-            connection.wait_answered(deadline);
+        if interrupt.is_raised() {
+            let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
+            for connection in connections {
+                connection.wait_answered(deadline);
+            }
+        } else if !pending.is_empty() {
+            still_pending(pending, interrupt);
         }
     }
 }
