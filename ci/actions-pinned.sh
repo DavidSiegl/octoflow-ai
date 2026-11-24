@@ -1,11 +1,12 @@
 #!/bin/sh
-# Check, from the repository's top level, that every `uses:` of a GitHub workflow (.github/workflows/*.yml, *.yaml) or
-# a local action (an action.yml or action.yaml under .github) names its action by a commit sha, 40 lower-case hex
-# digits after the @, and write the verdict to target/actions-pinned/junit.xml as a JUnit report of one test,
-# actions-pinned.by-sha, which fails naming the file:line of each `uses:` that does not. A local action (./...) and a
-# docker:// image pinned by digest (@sha256: and 64 hex digits) pass too: neither can be moved under the name the
-# workflow gives. A tag, a branch, a short sha or no ref at all fails. Exits 0 whether or not one fails, the gate
-# judging the report, as ci/rustfmt.sh does; exits non-zero, with no report, when the files could not be read.
+# Check, from the repository's top level, that every `uses:` GitHub runs names its action by a commit sha, 40
+# lower-case hex digits after the @, and write the verdict to target/actions-pinned/junit.xml as a JUnit report of one
+# test, actions-pinned.by-sha, which fails naming the file:line of each `uses:` that does not. It reads the workflows
+# (.github/workflows/*.yml, *.yaml, the top level only, as GitHub does) and every action.yml or action.yaml in the
+# repository outside .git, target, node_modules and .scratch, wherever a workflow's ./ may name it. A local action
+# (./...) and a docker:// image pinned by digest (@sha256: and 64 hex digits) pass too: neither can be moved under the
+# name the workflow gives. A tag, a branch, a short sha or no ref at all fails. Exits 0 whether or not one fails, the
+# gate judging the report, as ci/rustfmt.sh does; exits non-zero, with no report, when the files could not be read.
 #
 #   ci/actions-pinned.sh
 #
@@ -13,8 +14,11 @@
 # .github/dependabot.yml keeps a sha when it raises one, but the gate's actionlint accepts any ref, and a tag can be
 # moved to code nobody reviewed, run in a job that holds a token.
 #
-# It reads a `uses:` as YAML's block style writes it, one to a line, as a key or as a list item's first key, its value
-# quoted or not and followed or not by a comment; a `uses:` in flow style ({uses: ...}) is not read.
+# A `uses:` GitHub runs is a step's (a key of an item of a `steps:` list, in a workflow's job or a composite action's
+# runs) or a job's (a key of a job under the top-level `jobs:`, calling a reusable workflow); a key named uses anywhere
+# else, such as a with: input, and a line of a block or multi-line scalar (a run: | script) is not one. It reads block
+# style, and a flow mapping that opens and closes on one line (- {uses: ...}); a flow collection spread over lines is
+# not read (TODO.md, "actions-pinned.sh does not read a flow collection spread over lines").
 set -eu
 
 # -P: as ci/rustfmt.sh does, so that the files are named from the top level.
@@ -23,34 +27,103 @@ out=target/actions-pinned
 mkdir -p "$out"
 rm -f "$out/junit.xml"
 
-# One line per unpinned `uses:`, "file:line: uses: value", in file and line order.
-: > "$out/unpinned"
-if [ -d .github ]; then
-    find .github -type f \( \( -path '.github/workflows/*' \( -name '*.yml' -o -name '*.yaml' \) \) \
-        -o -name action.yml -o -name action.yaml \) \
-        -exec awk '
-            # hex(s, n): whether s is exactly n lower-case hex digits; mawk has no {n} in its regular expressions.
-            function hex(s, n) { return length(s) == n && s ~ /^[0-9a-f]+$/ }
-            /^[ \t]*(-[ \t]+)?["\047]?uses["\047]?[ \t]*:/ {
-                ref = $0
-                sub(/^[ \t]*(-[ \t]+)?["\047]?uses["\047]?[ \t]*:[ \t]*/, "", ref)
-                sub(/[ \t]+#.*$/, "", ref)
-                sub(/[ \t]+$/, "", ref)
-                if (ref ~ /^".*"$/ || ref ~ /^\047.*\047$/) ref = substr(ref, 2, length(ref) - 2)
-                if (ref ~ /^\.\//) next
-                if (ref ~ /^docker:\/\//) {
-                    at = index(ref, "@sha256:")
-                    if (at > 0 && hex(substr(ref, at + 8), 64)) next
-                } else {
-                    at = index(ref, "@")
-                    if (at > 0 && hex(substr(ref, at + 1), 40)) next
-                }
-                print FILENAME ":" FNR ": uses: " ref
-            }
-        ' {} + > "$out/unsorted"
-    # Sorted by file, then numerically by line: find lists the files in no set order.
-    sort -t: -k1,1 -k2,2n "$out/unsorted" > "$out/unpinned"
-fi
+# The awk program that prints, for each file it is given, one line per unpinned `uses:`: "file:line: uses: value".
+# Its $0 and $... are awk's, not the shell's.
+# shellcheck disable=SC2016
+unpinned='
+    # hex(s, n): whether s is exactly n lower-case hex digits; mawk has no {n} in its regular expressions.
+    function hex(s, n) { return length(s) == n && s ~ /^[0-9a-f]+$/ }
+
+    # Report ref, the value of the uses: on this line, unless it is pinned.
+    function judge(ref,    at) {
+        sub(/[ \t]+#.*$/, "", ref)
+        sub(/[ \t]+$/, "", ref)
+        if (ref ~ /^".*"$/ || ref ~ /^\047.*\047$/) ref = substr(ref, 2, length(ref) - 2)
+        if (ref ~ /^\.\//) return
+        if (ref ~ /^docker:\/\//) {
+            at = index(ref, "@sha256:")
+            if (at > 0 && hex(substr(ref, at + 8), 64)) return
+        } else {
+            at = index(ref, "@")
+            if (at > 0 && hex(substr(ref, at + 1), 40)) return
+        }
+        print name ":" FNR ": uses: " ref
+    }
+
+    # Whether a uses: key at this place is one GitHub runs: that of a step, the open key being steps, or that of a
+    # job calling a reusable workflow, the open keys being jobs at the top level and the job.
+    function runs() {
+        return (depth >= 1 && key[depth] == "steps") || (depth == 2 && key[1] == "jobs" && col[1] == 0)
+    }
+
+    # Judge each uses: key of the flow collection s whose entries sit at nesting level n: 1 for a mapping, 2 for
+    # the mappings of a sequence; the collections nested deeper are skipped.
+    function flow(s, n,    i, c, level, quote, item) {
+        level = 0; quote = ""; item = ""
+        for (i = 1; i <= length(s); i++) {
+            c = substr(s, i, 1)
+            if (quote != "") { if (c == quote) quote = ""; item = item c; continue }
+            if (c == "\"" || c == "\047") { quote = c; item = item c; continue }
+            if (c == "{" || c == "[") { level++; if (level == n) item = ""; else item = item c; continue }
+            if (c == "}" || c == "]") { if (level == n) flow_entry(item); else item = item c; level--; continue }
+            if (c == "," && level == n) { flow_entry(item); item = ""; continue }
+            item = item c
+        }
+    }
+    function flow_entry(entry) {
+        if (entry ~ /^[ \t]*["\047]?uses["\047]?[ \t]*:/) {
+            sub(/^[ \t]*["\047]?uses["\047]?[ \t]*:[ \t]*/, "", entry)
+            judge(entry)
+        }
+    }
+
+    FNR == 1 { name = substr(FILENAME, 3); depth = 0; scalar = -1 }
+    {
+        line = $0
+        sub(/\r$/, "", line)
+        if (line ~ /^[ \t]*(#.*)?$/) next
+        match(line, /^ */)
+        at = RLENGTH
+        # The lines of a scalar, block (|, >) or multi-line, sit deeper than the key it is the value of.
+        if (scalar >= 0 && at > scalar) next
+        scalar = -1
+        text = substr(line, at + 1)
+        # A list item: its content starts after "- ", a column deeper.
+        while (text ~ /^-([ \t]|$)/) {
+            match(text, /^-[ \t]*/)
+            at += RLENGTH
+            text = substr(text, RLENGTH + 1)
+        }
+        # Close the keys this line is not inside: those at its column or deeper.
+        while (depth > 0 && col[depth] >= at) depth--
+        if (text ~ /^\{/) {
+            if (runs()) flow(text, 1)
+            next
+        }
+        if (!match(text, /^("[^"]*"|\047[^\047]*\047|[^ \t#"\047:][^:]*)[ \t]*:([ \t]|$)/)) next
+        k = substr(text, 1, RLENGTH)
+        sub(/[ \t]*:[ \t]*$/, "", k)
+        gsub(/^["\047]|["\047]$/, "", k)
+        v = substr(text, RLENGTH + 1)
+        sub(/^[ \t]+/, "", v)
+        if (k == "uses" && runs()) judge(v)
+        if (k == "steps" && v ~ /^\[/) flow(v, 2)
+        depth++
+        key[depth] = k
+        col[depth] = at
+        sub(/[ \t]+#.*$/, "", v)
+        # A value on the line of the key itself, other than an anchor or tag, is a scalar or a flow collection, and the
+        # deeper lines after it belong to it, not to keys of their own.
+        if (v != "" && v !~ /^[&!][^ \t]*$/) scalar = at
+    }
+'
+# The workflows GitHub reads, at the top level of .github/workflows, and every action a ./ can name, outside what
+# git, cargo, npm and the issue tracker keep.
+find . \( -name .git -o -name target -o -name node_modules -o -name .scratch \) -prune -o -type f \
+    \( \( -path './.github/workflows/*' ! -path './.github/workflows/*/*' \( -name '*.yml' -o -name '*.yaml' \) \) \
+    -o -name action.yml -o -name action.yaml \) -exec awk "$unpinned" {} + > "$out/unsorted"
+# Sorted by file, then numerically by line: find lists the files in no set order.
+sort -t: -k1,1 -k2,2n "$out/unsorted" > "$out/unpinned"
 
 if [ -s "$out/unpinned" ]; then
     count=$(wc -l < "$out/unpinned" | tr -d ' ')

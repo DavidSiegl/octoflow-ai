@@ -164,11 +164,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   (`engine/src/workflow.rs`) runs `check_before_interview`, which checks gitleaks, only at round 0, so an ungated
   `--pr` run resumed after gitleaks was removed spends its remaining turns and fails only at publish. A gated run is
   checked again on resume (`gate_switch::check_gate_mid_run`). Raised by cross-review 250 (pre-existing).
-- **Nothing checks that a workflow's actions stay pinned by sha.** todo/65 pinned every `uses:` in
-  `.github/workflows/` by commit sha, and `.github/dependabot.yml` keeps a sha a sha, but the Gate stage's actionlint
-  accepts a tag: a later `uses: actions/cache@v4` in a job that holds `AUTOMERGE_TOKEN` passes every check and brings
-  back the moved-tag risk. Raised by cross-review 235 (F3). Closes with a check in the gate that fails a `uses:` whose
-  ref is not 40 hex digits (zizmor's `unpinned-uses`, or a grep in `ci/`).
+- **actions-pinned.sh does not read a flow collection spread over lines.** `ci/actions-pinned.sh` reads a `uses:` in
+  block style and in a flow mapping or sequence that opens and closes on one line, but skips the lines of one spread
+  over several (`steps: [` on one line, its items on the next), so a tag there passes. Nothing in `.github` writes
+  one. Raised by cross-review 292 (F4). Closes with the check reading such a collection, or refusing a workflow that
+  holds one.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against

@@ -1,8 +1,9 @@
-//! ci/actions-pinned.sh, which fails its one JUnit test when a workflow or local action under .github uses an action
-//! by anything but a commit sha: run in a checkout of its own, a temporary directory holding a copy of the script and
-//! the .github files a test writes, and on this checkout's own .github.
+//! ci/actions-pinned.sh, which fails its one JUnit test when a workflow or local action uses an action by anything but
+//! a commit sha: run in a checkout of its own, a temporary directory holding a copy of the script and the files a test
+//! writes, and on this checkout.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -61,7 +62,12 @@ fn script() -> String {
 /// Run ci/actions-pinned.sh of the checkout at root.
 fn run(root: &Path) -> Run {
     let output = Command::new("sh").arg(root.join("ci/actions-pinned.sh")).output().expect("sh runs");
-    let junit = fs::read_to_string(root.join("target/actions-pinned/junit.xml")).unwrap_or_default();
+    let path = root.join("target/actions-pinned/junit.xml");
+    let junit = match fs::read_to_string(&path) {
+        Ok(junit) => junit,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => panic!("could not read {}: {e}", path.display()),
+    };
     Run { output, junit }
 }
 
@@ -129,20 +135,55 @@ fn every_workflow_and_local_action_is_read_and_nothing_else() {
     let composite = format!(
         "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v4\n    - uses: actions/cache@{SHA}\n"
     );
+    let action = "runs:\n  using: composite\n  steps:\n    - uses: a/b@v1\n";
     let run = check(&[
         (".github/workflows/a.yaml", &workflow(&["- uses: actions/checkout@v7"])),
         (".github/workflows/b.yml", &workflow(&[&format!("- uses: actions/checkout@{SHA}")])),
         (".github/actions/setup/action.yml", &composite),
-        (".github/actions/other/action.yaml", "runs:\n  using: composite\n  steps:\n    - uses: a/b@v1\n"),
-        // Neither a workflow nor an action: GitHub runs no `uses:` from them.
+        (".github/actions/other/action.yaml", action),
+        // A local action outside .github, which a workflow names by ./ci/actions/x or ./.
+        ("ci/actions/x/action.yml", action),
+        ("action.yml", action),
+        // Neither a workflow nor an action GitHub runs: a file of another kind, a workflow below the top level, and
+        // what git, cargo, npm and the issue tracker keep.
         (".github/dependabot.yml", "uses: a/b@v1\n"),
         (".github/workflows/notes.md", "uses: a/b@v1\n"),
-        ("action.yml", "runs:\n  steps:\n    - uses: a/b@v1\n"),
+        (".github/workflows/sub/c.yml", &workflow(&["- uses: a/b@v1"])),
+        ("ui/node_modules/p/action.yml", action),
+        ("target/x/action.yml", action),
+        (".scratch/x/action.yml", action),
     ]);
     run.assert_unpinned(&[
         ".github/actions/other/action.yaml:4",
         ".github/actions/setup/action.yml:4",
         ".github/workflows/a.yaml:6",
+        "action.yml:4",
+        "ci/actions/x/action.yml:4",
+    ]);
+}
+
+#[test]
+fn only_a_uses_github_runs_is_judged() {
+    let text = format!(
+        "on: push\njobs:\n  build:\n    runs-on: x\n    env:\n      uses: a/env@v1\n    steps:\n      - run: |\n          \
+         uses: a/script@v1\n          steps:\n            - uses: a/script-steps@v1\n      - name: >-\n          uses: a/folded@v1\n      - uses: a/b@{SHA}\n        with:\n          \
+         uses: a/input@v1\n      - {{uses: a/b@{SHA}, with: {{uses: a/nested@v1}}}}\n"
+    );
+    check(&[(".github/workflows/ci.yml", &text)]).assert_pinned();
+}
+
+#[test]
+fn a_reusable_workflow_a_flow_style_step_and_crlf_lines_are_read() {
+    let text = format!(
+        "on: push\r\njobs:\r\n  call:\r\n    uses: o/r/.github/workflows/w.yml@v1\r\n  build:\r\n    steps:\r\n      \
+         - uses: a/b@{SHA}\r\n      - uses: a/crlf@v1\r\n      - {{uses: a/flow@v4, with: {{x: 1}}}}\r\n  \
+         other:\r\n    steps: [{{uses: a/b@{SHA}}}, {{uses: a/sequence@v2}}]\r\n"
+    );
+    check(&[(".github/workflows/ci.yml", &text)]).assert_unpinned(&[
+        ".github/workflows/ci.yml:4",
+        ".github/workflows/ci.yml:8",
+        ".github/workflows/ci.yml:9",
+        ".github/workflows/ci.yml:11",
     ]);
 }
 
