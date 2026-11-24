@@ -1624,11 +1624,29 @@ pub(crate) fn git_diff<H: Host + ?Sized>(host: &H, cwd: &str, args: &[&str]) -> 
 pub(crate) const GIT_STATUS_ARGS: &[&str] =
     &["-c", "core.quotePath=false", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"];
 
+/// GIT_STATUS_ARGS with `--ignored`: ignored files are listed too, each on a `!! ` line.
+pub(crate) const GIT_STATUS_IGNORED_ARGS: &[&str] = &[
+    "-c",
+    "core.quotePath=false",
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+    "--ignore-submodules=none",
+    "--ignored",
+];
+
 /// What `git status --porcelain` lists in cwd, one change or untracked file to a line, under the user's settings that
 /// GIT_STATUS_ARGS names overridden. Empty means a clean working tree. Every `git status` of the engine's runs through
-/// it. Errors: as Host::git's.
+/// it or holds_nothing. Errors: as Host::git's.
 pub(crate) fn git_status<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
     host.git(cwd, GIT_STATUS_ARGS)
+}
+
+/// Whether the working tree at cwd holds nothing that is not committed: no change, no untracked file and no ignored
+/// one (GIT_STATUS_IGNORED_ARGS). Such a worktree goes with `git worktree remove` without losing a file. Errors: as
+/// Host::git's.
+pub(crate) fn holds_nothing<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<bool, OrchestratorError> {
+    Ok(host.git(cwd, GIT_STATUS_IGNORED_ARGS)?.trim().is_empty())
 }
 
 /// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended
