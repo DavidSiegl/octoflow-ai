@@ -685,15 +685,16 @@ impl RunState {
     }
 
     /// Whether the run has the quality gate now: quality_job names one. An empty name, which no release writes but a
-    /// hand-edited state.json can hold, is none. Every check of whether a run is gated asks this, so that they agree.
+    /// hand-edited state.json can hold, is none. Every check of whether a run is gated asks this, so that they agree;
+    /// only resume's migration of a Jenkins job (cli/start.rs, resumed_state) reads the name itself, to replace it.
     pub fn has_quality_gate(&self) -> bool {
         self.quality_job.as_deref().is_some_and(|job| !job.is_empty())
     }
 
     /// Whether the run has the quality gate, or had it until resume turned it off: whether it may have quality
-    /// files.
+    /// files. Unlike has_quality_gate, an empty quality_job counts: the files may be there whatever the name says.
     pub fn had_quality_gate(&self) -> bool {
-        self.has_quality_gate() || self.quality_gate_disabled
+        self.quality_job.is_some() || self.quality_gate_disabled
     }
 
     /// The Builder's last report in round n, once its quality rounds are over: the one the Reviewer reads.

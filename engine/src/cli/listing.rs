@@ -301,7 +301,10 @@ fn quality_gate_line(s: &RunState) -> Option<String> {
     if s.quality_gate_disabled {
         return Some("off (turned off by resume)".to_string());
     }
-    let job = s.quality_job.as_deref().filter(|_| s.has_quality_gate())?;
+    if !s.has_quality_gate() {
+        return None;
+    }
+    let job = s.quality_job.as_deref()?;
     if job == LOCAL_GATE {
         return Some(job.to_string());
     }
