@@ -92,14 +92,15 @@ is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent
 When a run ends, done, failed or interrupted, it writes `summary.md` in its run directory: the task, run id and
 workflow, each role's harness and the model its agent ran on, the outcome (verdict or error), the pull request and
 branch, the wall time from the first known start to the end, a Markdown table of the turns (`?` for what is not known,
-the interview marked as human-paced, a duration that holds permission waits written as "3m 44s (3m 19s waiting)", a
-model the harness did not offer as "sonnet (opus not offered)", or "default (o3 not offered)" when its session named
-none it took instead), and each round's quality
-gates and the verdict of each verdict step that judged it, read from the handoff files. A resume that ends again
-rewrites it with every turn; a run that is already `done` is not rewritten, unless the orchestrator that ended it
-stopped before releasing it, which it does once both files are written: a resume then writes them again, releases the
-run, tells the human it finished and closes a published run's workspace (`Workflow::run`). The pull request's body ends
-with the same table up to publishing, collapsed under "Run timings", and `show` prints a line per turn.
+the interview marked as human-paced, a duration that holds permission waits written as "3m 44s (3m 19s waiting)"), and
+each round's quality gates and the verdict of each verdict step that judged it, read from the handoff files. Where a
+harness did not offer the role's model, the roles and turns tables name the one its agent ran on instead and the one
+asked for: "sonnet (opus not offered)", or "default (o3 not offered)" when its session named none it took. A resume that
+ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the orchestrator that
+ended it stopped before releasing it, which it does once both files are written: a resume then writes them again,
+releases the run, tells the human it finished and closes a published run's workspace (`Workflow::run`). The pull
+request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a line per
+turn.
 
 ## Run metrics
 

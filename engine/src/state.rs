@@ -376,6 +376,15 @@ impl TurnRecord {
     pub fn under_way(&self) -> bool {
         self.ended_at.is_none()
     }
+
+    /// The model the turn's agent ran on, as model and unoffered_model record it; an empty model, which an earlier
+    /// engine saved for a role given an empty one, counts as none. Meaningless for a quality analysis (no harness).
+    pub fn model_ran_on(&self) -> ModelRanOn<'_> {
+        ModelRanOn {
+            model: self.model.as_deref().filter(|m| !m.is_empty()),
+            unoffered: self.unoffered_model.as_deref(),
+        }
+    }
 }
 
 /// Whether verdicts, a run's (RunState::verdicts), came from more than one verdict step: whether what the run
@@ -547,7 +556,8 @@ impl RunState {
     }
 
     /// The model the role's agent runs on: the role's (models; an empty one counts as none), unless its started
-    /// agent's session did not offer that one (AgentRecord::unoffered_model).
+    /// agent's session did not offer that one (AgentRecord::unoffered_model). models is what the run last set, so an
+    /// agent started before a resume changed the role's model is named with the new one (todo 115).
     pub fn model_ran_on(&self, role: &str) -> ModelRanOn<'_> {
         match self.agents.get(role).and_then(|a| a.unoffered_model.as_ref()) {
             Some(u) => ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) },

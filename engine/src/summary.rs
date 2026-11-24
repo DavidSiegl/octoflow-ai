@@ -4,7 +4,7 @@
 use crate::harness::{Tokens, Usage};
 use crate::json::{Object, ValueExt};
 use crate::pipeline::Pipeline;
-use crate::state::{ModelRanOn, RunState, TurnRecord};
+use crate::state::{RunState, TurnRecord};
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde_json::json;
@@ -82,10 +82,7 @@ impl TurnCells {
             q => format!("{} q{q}", t.round),
         };
         let model = match &harness {
-            Some(_) => {
-                let model = t.model.as_deref().filter(|m| !m.is_empty());
-                ModelRanOn { model, unoffered: t.unoffered_model.as_deref() }.to_string()
-            }
+            Some(_) => t.model_ran_on().to_string(),
             None => "-".into(),
         };
         let start = match set(&t.started_at) {
@@ -246,7 +243,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
                 "step": t.step,
                 "role": t.role,
                 "harness": t.harness,
-                "model": t.model,
+                "model": t.model_ran_on().model,
                 "round": t.round,
                 "quality_round": t.quality_round,
                 "human_paced": t.human_paced,
@@ -258,8 +255,8 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
             if let Some(waited) = t.waited_seconds {
                 turn["waited_seconds"] = waited.into();
             }
-            if let Some(asked) = &t.unoffered_model {
-                turn["unoffered_model"] = asked.as_str().into();
+            if let Some(asked) = t.unoffered_model.as_deref() {
+                turn["unoffered_model"] = asked.into();
             }
             turn
         })

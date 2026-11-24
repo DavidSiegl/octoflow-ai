@@ -286,7 +286,11 @@ fn the_summary_names_the_model_a_role_ran_on_and_the_one_not_offered() {
 
 #[test]
 fn the_metrics_name_the_model_a_role_ran_on_and_the_one_not_offered() {
-    let metrics = run_metrics(&run_with_unoffered_models(), 1_791_000_000 + 2100);
+    let mut s = run_with_unoffered_models();
+    // An empty model, as an earlier engine saved for a role given one, is none, as in the roles.
+    s.models.insert("spec".to_string(), String::new());
+    s.turns[0].model = Some(String::new());
+    let metrics = run_metrics(&s, 1_791_000_000 + 2100);
 
     assert_eq!(
         metrics["roles"],
