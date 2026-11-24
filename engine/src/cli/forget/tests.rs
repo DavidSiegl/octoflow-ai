@@ -466,3 +466,24 @@ fn a_dead_holders_lock_another_took_over_first_is_put_back() {
     assert!(kept(&cli, CLOSED));
     assert_eq!(locks(&cli), [(lock(), live)]);
 }
+
+#[test]
+fn a_lock_moved_aside_for_an_instant_is_made_again_and_the_sweep_goes_on() {
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    add(&cli, FINISHED, Some("workspace closed"), true);
+    // While the first run is forgotten, another's take_over has the lock moved aside, to put it back after.
+    let aside = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let (moved, host) = (std::rc::Rc::clone(&aside), std::rc::Rc::clone(&cli.f.host));
+    cli.f.host.state().after_write = Some(Box::new(move |path| {
+        if path.ends_with("/metrics-archive.jsonl") && moved.borrow().is_none() {
+            *moved.borrow_mut() = host.state().files.shift_remove(&lock());
+        }
+    }));
+    let runs = sweep(&cli).unwrap();
+    assert!(runs.iter().all(|run| run.outcome == super::Outcome::Forgotten), "{runs:?}");
+    assert!(!kept(&cli, CLOSED) && !kept(&cli, FINISHED));
+    // The lock was made again with the same text, and released at the end.
+    assert!(aside.borrow().as_deref().is_some_and(|text| text.contains(&format!("\"pid\":{}", this_pid()))));
+    assert!(locks(&cli).is_empty());
+}

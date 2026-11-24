@@ -315,16 +315,24 @@ impl<'w, 'a> ForgetLock<'w, 'a> {
         }
     }
 
-    /// Renew the lock's heartbeat, before forgetting the next run. Errors: the lock is no longer this one's, as when
-    /// another forget took it for left by the dead, and the sweep must stop; it cannot be read or touched.
+    /// Renew the lock's heartbeat, before forgetting the next run. A lock gone from its path is made again: it may only
+    /// be moved aside for an instant by another's take_over, which puts it back, and finding it there then refuses
+    /// that other. Errors: another holder's lock is at its path, as when another forget took this one for dead, and
+    /// the sweep must stop; the lock cannot be read, made or touched.
     fn renew(&self) -> Result<(), OrchestratorError> {
-        if self.world.host.read(&self.path)?.as_deref() != Some(self.text.as_str()) {
+        let world = self.world;
+        let held = match world.host.read(&self.path)? {
+            None if world.host.create_new(&self.path, &self.text)? => return Ok(()),
+            None => world.host.read(&self.path)?,
+            held => held,
+        };
+        if held.as_deref() != Some(self.text.as_str()) {
             return Err(OrchestratorError(format!(
                 "the forget lock {} was taken over by another forget, which took this one for dead: stopped",
                 self.path
             )));
         }
-        self.world.host.touch(&self.path)
+        world.host.touch(&self.path)
     }
 }
 
@@ -363,8 +371,9 @@ fn left_by_the_dead(world: &Forgetter, path: &str, held: &str) -> Result<bool, O
 /// Remove the forget lock at path, read as held and found left by the dead, unless it changed since. It is moved aside
 /// first, to a name nonce makes this process's own, and removed there only if it is still held: so of two processes
 /// that found it so at once, the second moves the first's new lock, sees that, and puts it back. Should the first have
-/// released it in between, the lock put back has nobody to renew it and is taken over once silent LOCK_SILENCE; should
-/// a third have made one in between, the put-back fails and the first stops at its next ForgetLock::renew. Errors: the
+/// released it in between, the lock put back has nobody to renew it and is taken over once its heartbeat is late, as
+/// left_by_the_dead says; should the first renew it in between, it makes it again, and the put-back fails, as it does
+/// should a third have made one, whose holder the first then finds at its next ForgetLock::renew and stops. Errors: the
 /// lock cannot be moved (other than for being gone), read, put back or removed.
 fn take_over(world: &Forgetter, path: &str, held: &str, nonce: &str) -> Result<(), OrchestratorError> {
     let aside = format!("{path}.{nonce}");
