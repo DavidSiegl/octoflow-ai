@@ -487,6 +487,11 @@ impl<'a> Workflow<'a> {
             self.check_worktree()?;
         }
         self.check_branch()?;
+        // gitleaks and the gate's tools may have gone since the run last started.
+        self.check_gitleaks()?;
+        if self.quality_gate_on {
+            local_gate::preflight(self.host)?;
+        }
         Ok(())
     }
 
@@ -496,13 +501,7 @@ impl<'a> Workflow<'a> {
         if self.state.worktree.is_some() {
             self.open_worktree()?;
         }
-        // A run that publishes scans what it pushes, and a gated one each snapshot; one that does both is told of
-        // its pushes, which it asked for with its pull request.
-        if self.state.pull_request {
-            self.host.check_gitleaks(Scanned::Unpublished)?;
-        } else if self.quality_gate_on {
-            self.host.check_gitleaks(Scanned::SinceBase)?;
-        }
+        self.check_gitleaks()?;
         if self.quality_gate_on {
             self.check_gate()?;
         }
@@ -887,15 +886,34 @@ impl<'a> Workflow<'a> {
         Ok(())
     }
 
+    /// Whether publish is still to push the run's branch: the run ends in a pull request, has not opened it, and has
+    /// not found it has nothing to publish.
+    fn will_push(&self) -> bool {
+        let s = &self.state;
+        s.pull_request && !s.nothing_to_publish && s.pr_url.as_deref().is_none_or(str::is_empty)
+    }
+
+    /// Fail if the rest of the run needs gitleaks and it cannot run here (Host::check_gitleaks): a run that will push
+    /// scans what it pushes, and a gated one each snapshot; one that does both is told of its pushes, which it asked
+    /// for with its pull request.
+    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
+        if self.will_push() {
+            self.host.check_gitleaks(Scanned::Unpublished)
+        } else if self.quality_gate_on {
+            self.host.check_gitleaks(Scanned::SinceBase)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Fail if HEAD is not the run's branch, which holds the Builder's uncommitted change until publishing; a run
     /// with nothing to publish, whose branch publish is leaving, is not checked.
     ///
     /// Otherwise the commit lands on whatever the human checked out, and the run's branch is pushed without it.
     fn check_branch(&self) -> Result<(), OrchestratorError> {
         let s = &self.state;
-        let unpublished = s.pull_request && !s.nothing_to_publish && s.pr_url.as_deref().is_none_or(str::is_empty);
         let branch = match &s.branch {
-            Some(b) if unpublished && !b.is_empty() => b,
+            Some(b) if self.will_push() && !b.is_empty() => b,
             _ => return Ok(()),
         };
         let current = self.host.git(s.work_dir(), &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();

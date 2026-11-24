@@ -53,8 +53,9 @@ pub fn turn_quality_gate_on(
 }
 
 /// Check that host can run the local gate for the run in state, which gets it on resume, before any turn: from round 1
-/// on, gitleaks runs and local_gate::preflight passes. Round 0 is left to the Workflow's own preflight before the
-/// interview, which checks the same, as for run --quality-gate.
+/// on, gitleaks runs and local_gate::preflight passes. Workflow::check_start checks the same at every start; this
+/// check fails before the switch changes the run's state. Round 0 is left to the Workflow's own preflight before the
+/// interview, which also checks the tree, as for run --quality-gate.
 ///
 /// Errors: either check fails.
 pub fn check_gate_mid_run(state: &RunState, host: &dyn Host) -> Result<(), OrchestratorError> {

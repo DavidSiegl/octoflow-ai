@@ -220,6 +220,23 @@ fn a_run_that_pushes_or_is_gated_needs_gitleaks_before_the_interview_and_is_told
 }
 
 #[test]
+fn a_run_resumed_past_round_0_needs_gitleaks_again_before_its_next_turn() {
+    let (pushes, snapshots) = ("this run pushes, and every push is scanned", "the quality gate scans each snapshot");
+    for (gate, pr, why) in [(false, true, pushes), (true, false, snapshots)] {
+        let host = FakeHost::default();
+        // On the run's branch, so that only gitleaks is missing.
+        (host.state().gitleaks_missing, host.state().branch) = (true, "octoflow-ai/limiter".into());
+        let mut state = saved_run("review", 1, FULL);
+        (state.pull_request, state.branch) = (pr, Some("octoflow-ai/limiter".into()));
+        let f = Fixture::resume(Rc::new(host), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
+        let f = if gate { f.gated() } else { f };
+        let e = failure(f.workflow(f.as_saved()).run());
+        assert!(e.starts_with(why) && e.contains("install gitleaks 8.19"), "gate {gate}, pr {pr}: {e}");
+        assert!(names(&f, "prompt").is_empty(), "gate {gate}, pr {pr}");
+    }
+}
+
+#[test]
 fn a_run_that_pushes_nothing_needs_no_gitleaks() {
     let host = FakeHost::default();
     host.state().gitleaks_missing = true;
