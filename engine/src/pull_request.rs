@@ -16,6 +16,25 @@ pub fn spec_title(spec: &str) -> Option<String> {
     (title.len() < rest.len() && !title.is_empty()).then(|| title.trim().to_string())
 }
 
+/// title as the title of a run's commit and pull request: at most 72 characters (git's and GitHub's customary width
+/// for a commit's first line). A longer one is cut at its last blank that leaves room for a "…" after it, which
+/// marks the cut, with the blanks before the cut dropped; one with no such blank is cut inside its first word.
+pub fn commit_title(title: &str) -> String {
+    const LIMIT: usize = 72;
+    if title.chars().count() <= LIMIT {
+        return title.to_string();
+    }
+    // The longest head that fits with the "…", taken whole when a blank follows it.
+    let head: String = title.chars().take(LIMIT - 1).collect();
+    let at_blank = title.chars().nth(LIMIT - 1).is_some_and(char::is_whitespace);
+    let kept = match head.rfind(char::is_whitespace) {
+        _ if at_blank => head.trim_end(),
+        Some(i) if !head[..i].trim_end().is_empty() => head[..i].trim_end(),
+        _ => &head,
+    };
+    format!("{kept}…")
+}
+
 /// The branch a run publishes its change on: BRANCH_PREFIX, the title lower-cased with each run of characters other
 /// than a-z and 0-9 as one "-", cut to 40 characters and without a "-" at its ends, then "-" and the run's key; the
 /// key alone when the title leaves nothing.
