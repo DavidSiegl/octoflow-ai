@@ -1,53 +1,75 @@
 #!/bin/sh
 # Print the notes of release v$VERSION from the docs/releases/ under the current directory: the notes of every version
-# from just above $LATEST, the latest version already released, up to $VERSION, newest first, so that a version main
-# reached but never released, by a failed main build or by stacked pull requests merged in one, still has its notes on
-# a release page. Each is docs/releases/v<version>.md, and a version without one is left out. When only $VERSION's
-# own file is among them, it is printed as it is; when several are, each comes under a `# v<version>` heading of its
-# own. Prints nothing when none of them has a file. An empty $LATEST, no release yet, takes $VERSION's file alone.
-# Versions are compared as sort -V orders them, as ci/version-raised.sh does. Exits 0 having printed the notes; exits
-# 1, saying why on standard error, when a notes file cannot be read; exits 2 on a usage error.
+# above the highest version released yet, up to $VERSION, newest first, so that a version main reached but never
+# released, by a failed main build or by stacked pull requests merged in one, still has its notes on a release page.
+# The releases there are come on standard input, one tag a line, such as v0.9.0; a line not starting with "v" is
+# skipped, and no line at all means no release yet, when $VERSION's notes are taken alone. A version's notes are
+# docs/releases/v<version>.md, and a version without that file is left out. When only $VERSION's own file is taken, it
+# is printed as it is; when several are, each comes under a `# v<version>` heading of its own, and a last heading,
+# `# Pull requests`, stands over what GitHub appends. Prints nothing when none of them has a file. Versions are
+# compared as sort -V orders them, as ci/version-raised.sh does. Exits 0 having printed the notes; exits 1, saying why
+# on standard error, when a notes file or standard input cannot be read or sort fails; exits 2 on a usage error.
 #
-#   ci/release-notes.sh VERSION LATEST
+#   ci/release-notes.sh VERSION < TAGS
 #
 # The Jenkinsfile's Release stage runs it from the repository's top level, giving GitHub what it prints as the
 # release's own words, which it puts before the notes it generates from the pull requests. A skipped version gets no
-# tag of its own: its commits were never built as a release, so there are no assets to give it.
+# tag of its own: its commits were never built as a release, so there are no assets to give it. The highest release
+# counts, not the latest made: two main builds may release out of order, and then the later one already carries the
+# notes of the versions below it.
 set -eu
 
-[ $# -eq 2 ] || { echo "usage: release-notes.sh VERSION LATEST" >&2; exit 2; }
+[ $# -eq 1 ] || { echo "usage: release-notes.sh VERSION < TAGS" >&2; exit 2; }
 version=$1
-latest=$2
 
-# Whether version $1 is greater than version $2.
-greater() {
-    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
-}
+tags=$(cat) || { echo "release-notes.sh: cannot read the release tags from standard input" >&2; exit 1; }
+released=$(printf '%s\n' "$tags" | sed -n 's/^v//p' | sort -V) ||
+    { echo "release-notes.sh: cannot sort the released versions" >&2; exit 1; }
+latest=$(printf '%s\n' "$released" | tail -n 1)
 
-# Whether version $1 is one to take the notes of: $VERSION itself, or one between $LATEST and it.
-taken() {
-    [ "$1" = "$version" ] || { [ -n "$latest" ] && greater "$version" "$1" && greater "$1" "$latest"; }
-}
-
-# Those with a notes file, newest first.
-versions=$(
+# Every version with notes, and $LATEST and $VERSION, oldest first, each once.
+listed=$(
     for f in docs/releases/v*.md; do
         [ -f "$f" ] || continue
         v=${f#docs/releases/v}
-        v=${v%.md}
-        ! taken "$v" || echo "$v"
-    done | sort -rV
+        echo "${v%.md}"
+    done
+    [ -z "$latest" ] || echo "$latest"
+    echo "$version"
 )
+sorted=$(printf '%s\n' "$listed" | sort -uV) || { echo "release-notes.sh: cannot sort the versions" >&2; exit 1; }
 
-[ -n "$versions" ] || exit 0
-if [ "$versions" = "$version" ]; then
-    cat "docs/releases/v$version.md" || { echo "release-notes.sh: cannot read docs/releases/v$version.md" >&2; exit 1; }
-    exit 0
-fi
-first=true
-for v in $versions; do
-    $first || echo
-    first=false
-    printf '# v%s\n\n' "$v"
-    cat "docs/releases/v$v.md" || { echo "release-notes.sh: cannot read docs/releases/v$v.md" >&2; exit 1; }
+# Those with notes above $LATEST, up to $VERSION, newest first; with no release yet, $VERSION alone.
+versions=
+above=false
+for v in $sorted; do
+    if [ "$v" = "$version" ] || $above; then
+        [ ! -f "docs/releases/v$v.md" ] || versions="$v $versions"
+    fi
+    [ "$v" != "$version" ] || break
+    [ "$v" != "$latest" ] || above=true
 done
+
+# The notes of version $1; exits 1 when they cannot be read. Each is read before anything is printed, so that a
+# file that cannot be read prints no notes.
+notes_of() {
+    cat "docs/releases/v$1.md" || { echo "release-notes.sh: cannot read docs/releases/v$1.md" >&2; exit 1; }
+}
+case "$versions" in
+"") ;;
+"$version ")
+    notes=$(notes_of "$version")
+    printf '%s\n' "$notes"
+    ;;
+*)
+    notes=$(
+        for v in $versions; do
+            printf '# v%s\n\n' "$v"
+            notes_of "$v"
+            echo
+        done
+        echo "# Pull requests"
+    )
+    printf '%s\n' "$notes"
+    ;;
+esac
