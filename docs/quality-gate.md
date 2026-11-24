@@ -300,9 +300,10 @@ The job mails a failed build, with the log attached, and the first build that pa
 A build of `main` that passes then releases the version in `engine/Cargo.toml` (`ci/release-version.sh`): if GitHub has
 no release `v<version>` yet, `gh release create` makes one, with the tag at the commit built, notes generated from the
 pull requests merged since the last release, after the words of `docs/releases/v<version>.md` where there is one, and
-the Linux binary and desktop app with their `.sha256` attached. To release, raise that `version` in the pull request; a
-merge that leaves it alone releases nothing. A release that already exists is skipped whole, so its files are never
-replaced.
+those of each version above the highest release that `main` reached without a release of its own, such as one whose
+`main` build failed (`ci/release-notes.sh`), and the Linux binary and desktop app with their `.sha256` attached. To
+release, raise that `version` in the pull request; a merge that leaves it alone releases nothing. A release that
+already exists is skipped whole, so its files are never replaced.
 
 ## Orchestrator loop
 

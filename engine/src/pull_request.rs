@@ -16,6 +16,23 @@ pub fn spec_title(spec: &str) -> Option<String> {
     (title.len() < rest.len() && !title.is_empty()).then(|| title.trim().to_string())
 }
 
+/// title as the title of a run's commit and pull request: at most 72 chars, Unicode scalar values rather than what
+/// a reader sees as one character (72 is git's and GitHub's customary width for a commit's first line). A longer one
+/// is cut at its last blank that leaves room for a "…" after it, which marks the cut, with the blanks before the cut
+/// dropped; one with no such blank is cut inside its first word, which may split a character built of several
+/// chars, such as a flag.
+pub fn commit_title(title: &str) -> String {
+    const LIMIT: usize = 72;
+    if title.chars().count() <= LIMIT {
+        return title.to_string();
+    }
+    // A blank among the first LIMIT chars ends a word that fits with the "…" after it, the LIMIT-th's included.
+    let window: String = title.chars().take(LIMIT).collect();
+    let words = window.rfind(char::is_whitespace).map(|i| window[..i].trim_end()).filter(|w| !w.is_empty());
+    let head: String = title.chars().take(LIMIT - 1).collect();
+    format!("{}…", words.unwrap_or(&head))
+}
+
 /// The branch a run publishes its change on: BRANCH_PREFIX, the title lower-cased with each run of characters other
 /// than a-z and 0-9 as one "-", cut to 40 characters and without a "-" at its ends, then "-" and the run's key; the
 /// key alone when the title leaves nothing.
@@ -251,8 +268,10 @@ fn review_details(state: &RunState, reviews: &[(String, String)]) -> Vec<String>
 
 /// The pull request's body: the conflict warning and the note on a gate turned off where they apply, how the run
 /// ended, its provenance as a table, the spec, the last report, the last quality file, the reviews and the run's
-/// timings. reviews are the verdict files of the last round, as review_details takes them. quality is what the gate
-/// said of the change, as provenance takes it. state must have a verdict, as every run that publishes has.
+/// timings. The spec's section is left out when spec is blank, as it is for a run with no contract step, or one whose
+/// spec file is missing or empty. reviews are the verdict files of the last round, as review_details takes them.
+/// quality is what the gate said of the change, as provenance takes it. state must have a verdict, as every run that
+/// publishes has.
 pub fn pr_body(
     state: &RunState,
     spec: &str,
@@ -279,7 +298,9 @@ pub fn pr_body(
     }
     parts.push(head);
     parts.push(table.join("\n"));
-    parts.push(details("Spec", spec, true));
+    if !spec.trim().is_empty() {
+        parts.push(details("Spec", spec, true));
+    }
     parts.push(details(&format!("Builder report (round {})", s.round), report, false));
     if let Some(last) = &quality.last {
         let label = if quality.unjudged {

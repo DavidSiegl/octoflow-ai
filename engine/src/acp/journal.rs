@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 
 use crate::error::OrchestratorError;
-use crate::summary::iso_utc;
+use crate::summary::{epoch_seconds, iso_utc};
 
 /// The version of the journal's lines and of the run socket's messages, one number for both: raised by a change an
 /// older reader would get wrong (a field renamed or removed, a meaning changed), not by a field or kind added, which
@@ -67,6 +67,47 @@ pub fn replay(text: &str, after: u64) -> Result<Replay, Option<u64>> {
         }
     }
     Ok(Replay { session_start, events })
+}
+
+/// The waits of crate::acp::waited_seconds (which says how each is measured) from `from` to `to`, in seconds since the
+/// epoch, in the journal whose text is text. A line that does not read, or whose `at` is not a time, is passed over;
+/// an empty text has no waits.
+pub(super) fn waited_seconds_in(text: &str, from: i64, to: i64) -> i64 {
+    let mut asked: Vec<(u64, i64)> = vec![];
+    let mut waits: Vec<(i64, i64)> = vec![];
+    // The `at` of the last line read.
+    let mut last = from;
+    for line in text.lines() {
+        let Ok(event) = serde_json::from_str::<Value>(line) else { continue };
+        let Some(at) = event.get("at").and_then(Value::as_str).and_then(|at| epoch_seconds(at).ok()) else { continue };
+        let request = event.get("request").and_then(Value::as_u64);
+        match event.get("kind").and_then(Value::as_str) {
+            Some("permission") => asked.extend(request.map(|r| (r, at))),
+            Some("answered") => {
+                if let Some(i) = asked.iter().position(|&(r, _)| Some(r) == request) {
+                    waits.push((asked.swap_remove(i).1, at));
+                }
+            }
+            Some("exited") => waits.extend(asked.drain(..).map(|(_, start)| (start, at))),
+            Some("session") => waits.extend(asked.drain(..).map(|(_, start)| (start, last))),
+            _ => {}
+        }
+        last = at;
+    }
+    waits.extend(asked.into_iter().map(|(_, start)| (start, to)));
+    // The waits clipped to [from, to], then merged in order of their start, so that an overlap counts once.
+    let mut clipped: Vec<(i64, i64)> =
+        waits.into_iter().map(|(a, b)| (a.max(from), b.min(to))).filter(|(a, b)| a < b).collect();
+    clipped.sort_unstable();
+    let (mut total, mut covered) = (0, from);
+    for (a, b) in clipped {
+        let a = a.max(covered);
+        if a < b {
+            total += b - a;
+            covered = b;
+        }
+    }
+    total
 }
 
 /// A role's journal file, open for appending.
@@ -156,6 +197,93 @@ impl Lines {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
+    /// A journal's text of the lines given as (seconds since the epoch, kind, the kind's fields), numbered in order.
+    fn journal(lines: &[(i64, &str, Value)]) -> String {
+        let mut text = format!("{}\n", json!({"journal": PROTOCOL}));
+        for (i, (at, kind, fields)) in lines.iter().enumerate() {
+            let mut event = json!({"seq": i + 1, "at": iso_utc(*at), "kind": kind});
+            event.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+            text.push_str(&format!("{event}\n"));
+        }
+        text
+    }
+
+    #[test]
+    fn waited_seconds_sums_each_permission_until_its_answer() {
+        let text = journal(&[
+            (100, "session", json!({"session": "s", "harness": "claude", "resumed": false})),
+            (110, "permission", json!({"request": 1})),
+            (150, "answered", json!({"request": 1, "option": "allow", "by": "human"})),
+            (160, "permission", json!({"request": 2})),
+            (163, "answered", json!({"request": 2, "option": "allow", "by": "human"})),
+        ]);
+
+        assert_eq!(waited_seconds_in(&text, 100, 200), 43);
+    }
+
+    #[test]
+    fn waited_seconds_counts_overlapping_waits_once() {
+        let text = journal(&[
+            (110, "permission", json!({"request": 1})),
+            (120, "permission", json!({"request": 2})),
+            (130, "answered", json!({"request": 1, "option": "allow", "by": "human"})),
+            (140, "answered", json!({"request": 2, "option": "allow", "by": "human"})),
+        ]);
+
+        assert_eq!(waited_seconds_in(&text, 100, 200), 30);
+    }
+
+    #[test]
+    fn waited_seconds_counts_only_the_part_of_a_wait_between_from_and_to() {
+        let text = journal(&[
+            (90, "permission", json!({"request": 1})),
+            (110, "answered", json!({"request": 1, "option": "allow", "by": "human"})),
+            (190, "permission", json!({"request": 2})),
+            (220, "answered", json!({"request": 2, "option": "allow", "by": "human"})),
+        ]);
+
+        assert_eq!(waited_seconds_in(&text, 100, 200), 20);
+    }
+
+    #[test]
+    fn an_unanswered_permission_waits_until_its_session_ends_or_until_to() {
+        let text = journal(&[
+            (110, "permission", json!({"request": 1})),
+            (120, "exited", json!({})),
+            (130, "session", json!({"session": "t", "harness": "claude", "resumed": true})),
+            (140, "permission", json!({"request": 2})),
+        ]);
+
+        assert_eq!(waited_seconds_in(&text, 100, 200), 10 + 60);
+    }
+
+    #[test]
+    fn a_wait_cut_off_by_a_lost_orchestrator_ends_at_its_session_s_last_line() {
+        // The orchestrator dies twice while the role's agent waits, and each resume starts it a new session; nothing
+        // journals the old agent's end, as end_leftovers kills it without a line.
+        let text = journal(&[
+            (110, "permission", json!({"request": 1})),
+            (115, "update", json!({"update": {}})),
+            (3700, "session", json!({"session": "t", "harness": "claude", "resumed": true})),
+            (3710, "permission", json!({"request": 2})),
+            (3800, "session", json!({"session": "u", "harness": "claude", "resumed": true})),
+        ]);
+
+        assert_eq!(waited_seconds_in(&text, 100, 4000), 5);
+    }
+
+    #[test]
+    fn waited_seconds_passes_over_a_line_that_does_not_read() {
+        let mut text = journal(&[(110, "permission", json!({"request": 1}))]);
+        text.push_str(
+            "{\"seq\": 2, \"at\": \"not a time\", \"kind\": \"answered\", \"request\": 1}\n{\"seq\": 3, \"at\n",
+        );
+        text.push_str(&format!("{}\n", json!({"seq": 4, "at": iso_utc(115), "kind": "answered", "request": 1})));
+
+        assert_eq!(waited_seconds_in(&text, 100, 200), 5);
+        assert_eq!(waited_seconds_in("", 100, 200), 0);
+    }
 
     #[test]
     fn a_journal_that_cannot_be_read_is_an_error_not_a_new_file() {

@@ -129,6 +129,23 @@ fn spec_titles() {
 }
 
 #[test]
+fn commit_titles() {
+    // Run 6a68c3's task, which 72 characters cut after "and", and one more with the ellipsis inside "and".
+    let task = "please check projects readme for any problems/issues/inconsistencies and update where/if needed";
+    assert_eq!(commit_title(task), "please check projects readme for any problems/issues/inconsistencies…");
+    // Within the limit, kept whole.
+    assert_eq!(commit_title(&"a".repeat(72)), "a".repeat(72));
+    // A word that ends right at the limit is kept: the blank after it is the cut.
+    let ends_at_limit = "word ".repeat(14) + "a tail";
+    assert_eq!(commit_title(&ends_at_limit), "word ".repeat(14) + "a…");
+    // Characters, not bytes; and one word longer than the limit is cut inside it.
+    assert_eq!(commit_title(&"ü".repeat(80)), "ü".repeat(71) + "…");
+    for title in [task.to_string(), ends_at_limit, "ü".repeat(80)] {
+        assert!(commit_title(&title).chars().count() <= 72, "{title}");
+    }
+}
+
+#[test]
 fn branch_names() {
     assert_eq!(
         branch_name("Add a Token-Bucket limiter!", "20260929-120000-a1b2c3"),
@@ -186,6 +203,16 @@ fn no_conflicts_no_warning_and_long_sections_are_truncated() {
     assert!(pr_body(&s, "spec", "r", &one("VERDICT: APPROVE"), &GateEvidence::default()).starts_with("Opened by"));
     let body = pr_body(&s, &"x".repeat(PR_SECTION_LIMIT * 2), "r", &one("VERDICT: APPROVE"), &GateEvidence::default());
     assert!(body.chars().count() < 65536 && body.contains("truncated"));
+}
+
+#[test]
+fn a_run_without_a_spec_has_no_spec_section() {
+    let s = state(|_| {});
+    let body = |spec: &str| pr_body(&s, spec, "r", &one("VERDICT: APPROVE"), &GateEvidence::default());
+    for blank in ["", " \n\t\n"] {
+        assert!(!body(blank).contains("<summary>Spec</summary>"), "{blank:?}");
+    }
+    assert!(body("# The spec").contains("<details open>\n<summary>Spec</summary>\n\n# The spec\n\n</details>"));
 }
 
 fn evidence(round: u32, q: u32, text: &str, unjudged: bool) -> GateEvidence {

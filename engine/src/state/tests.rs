@@ -201,6 +201,15 @@ fn turn_with(fields: &[(&str, Option<&str>)]) -> String {
 }
 
 #[test]
+fn a_turn_record_saved_before_waits_were_kept_has_none() {
+    let text = saved_with(&[("turns", Some(&turn_with(&[("waited_seconds", None)])))]);
+
+    let state = RunState::from_text(&text).unwrap();
+
+    assert_eq!(state.turns[0].waited_seconds, None);
+}
+
+#[test]
 fn agent_and_turn_records_keep_the_fields_they_do_not_know_after_their_own() {
     let agents = r#"{"build": {"name": "build-r1", "pane": "p2", "kind": "pi", "later": 1}}"#;
     let turns = turn_with(&[("later", Some("[2]"))]);
