@@ -340,7 +340,7 @@ fn a_run_finishes_and_opens_a_ready_pull_request() {
     assert_eq!(f.workflow(with_pipeline(&solo)).run(), verdict(FINISHED));
     let pr = f.host.state().prs[0].clone();
     assert!(!pr.draft);
-    // The head line, then the commit's trailers, then the spec.
+    // The head line, then the commit's trailers, then, since solo has no spec, the Builder's report.
     let parts: Vec<&str> = pr.body.splitn(3, "\n\n").collect();
     assert_eq!(
         parts[0],
@@ -352,8 +352,8 @@ fn a_run_finishes_and_opens_a_ready_pull_request() {
         "| Commit trailer | Value |\n| --- | --- |\n| Octoflow-Run | `20260929-120000-a1b2c3` |\n| \
          Octoflow-Workflow | `solo` |\n| Octoflow-Role | `build=claude/default` |"
     );
-    assert!(parts[2].starts_with("<details open>\n<summary>Spec</summary>"));
-    assert!(pr.body.contains("<summary>Builder report (round 1)</summary>\n\nsolo report"));
+    assert!(parts[2].starts_with("<details>\n<summary>Builder report (round 1)</summary>\n\nsolo report"));
+    assert!(!pr.body.contains("<summary>Spec"));
     assert!(!pr.body.contains("<summary>Review"));
     let commit = commit_args(&f);
     assert_eq!(
@@ -415,7 +415,8 @@ fn a_gate_that_still_fails_is_not_finished() {
          and the quality gate still did not pass after the last quality round, so this is a draft."
     );
     assert!(parts[1].split('\n').any(|l| l == "| Octoflow-Gate | `ERROR after 2 quality rounds` |"), "{}", parts[1]);
-    assert!(parts[2].starts_with("<details open>"));
+    // solo has no spec, so the Builder's report follows the trailers.
+    assert!(parts[2].starts_with("<details>\n<summary>Builder report"), "{}", parts[2]);
     assert!(!pr.body.contains("Reviewer"));
     assert!(pr.body.contains("<summary>Quality gate (round 1)</summary>\n\nGATE: ERROR"));
     assert_eq!(commit_args(&f)[5], "Orchestrator run 20260929-120000-a1b2c3: QUALITY_GATE_FAILED, unreviewed.");
