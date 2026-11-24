@@ -57,9 +57,10 @@ pub enum Outcome {
     Forgotten,
     /// Left as it is, and why.
     Left(Left),
-    /// A Sweep::Listed run the project did not have at its turn, or that the Forgetter's scope left out.
+    /// A run the project did not have at its turn, or that the Forgetter's scope left out: of a Sweep::Listed, or of
+    /// a Sweep::All one another forget forgot since the sweep listed it.
     Gone,
-    /// Its forget failed, and why; part of its directory may be gone. For a Sweep::Listed run, also its state.json
+    /// Its forget failed, and why; part of its directory may be gone. For a sweep but a dry run, also its state.json
     /// that could not be read at its turn, or is not a JSON object naming its run.
     Failed(String),
 }
@@ -146,7 +147,7 @@ pub fn forget_command(
 /// that took this sweep's lock over while it was silent, and released it since) is Outcome::Gone, not forgotten twice.
 ///
 /// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::All, the
-/// project's runs cannot be read at the start (a Sweep::Listed run that cannot be read at its turn is Outcome::Failed);
+/// project's runs cannot be read at the start (a run that cannot be read at its turn is Outcome::Failed);
 /// the forget lock cannot be taken (ForgetLock::take), or another forget holds it mid-sweep, having taken it over,
 /// which stops the sweep (ForgetLock::renew).
 pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunForgotten>, OrchestratorError> {
@@ -204,7 +205,7 @@ fn sweep_one(world: &Forgetter, cwd: &str, run: &SavedRun, dry_run: bool) -> Out
 }
 
 /// forget_all's closing line: how many runs of outcomes were forgotten (with dry_run, are to be), not closed, waiting
-/// for prune, skipped and failed; the last two only when some are, and a listed run that was gone counts as skipped.
+/// for prune, skipped and failed; the last two only when some are, and a run that was gone counts as skipped.
 fn say_counts(world: &Forgetter, outcomes: &[RunForgotten], dry_run: bool) {
     let count = |of: fn(&Outcome) -> bool| outcomes.iter().filter(|run| of(&run.outcome)).count();
     let forgotten = count(|o| *o == Outcome::Forgotten);
