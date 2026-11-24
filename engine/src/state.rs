@@ -20,7 +20,8 @@ pub fn run_dir(cwd: &str, run_id: &str) -> String {
     format!("{cwd}/{RUNS_DIR}/{run_id}")
 }
 
-/// How summary.md and `show` word the pull request of a run that had nothing to publish (RunState::nothing_to_publish).
+/// How summary.md and `show` word the pull request of a run that had nothing to publish (RunState::nothing_to_publish);
+/// the desktop app's run view (ui/src/components/RunDetail.tsx) says the same in a sentence of its own.
 pub const NOTHING_TO_PUBLISH: &str = "none: nothing tracked changed since the base, so there was nothing to publish";
 
 /// What a run has done so far, saved as state.json in its run directory.

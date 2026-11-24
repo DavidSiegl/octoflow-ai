@@ -114,6 +114,11 @@ describe("RunMap", () => {
     expect(screen.getByText("done · APPROVE · pull request open")).toBeInTheDocument();
   });
 
+  it("says at publish that a run with nothing to publish had nothing to publish", () => {
+    render(<RunMap record={record({ phase: "done", health: null, verdict: "APPROVE", pr: null, nothing_to_publish: true })} />);
+    expect(stations().at(-1)).toHaveAccessibleName("publish, nothing to publish, done");
+  });
+
   it("asks the human when the run waits on them", () => {
     const { rerender } = render(<RunMap record={record({ waiting: { reason: "interview", detail: "spec" } })} />);
     expect(screen.getByText("your answer?")).toBeInTheDocument();

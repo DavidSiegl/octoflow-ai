@@ -194,6 +194,10 @@ table.runs {
   color: var(--amber);
 }
 
+.no-pr {
+  color: var(--muted-mint);
+}
+
 ol.progress {
   display: flex;
   flex-wrap: nowrap;

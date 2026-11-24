@@ -124,10 +124,10 @@ describe("the run detail", () => {
       render(<RunDetail api={api} project={{ cwd: "/home/me/proj" }} entry={{ record: r, receivedAt: NOW, files: [] }} onClose={() => {}} />);
 
     const { unmount } = shown(nothing);
-    expect(screen.getByText(/nothing to publish/)).toBeInTheDocument();
+    expect(screen.getByText(/^No pull request: nothing tracked changed/)).toBeInTheDocument();
     unmount();
 
     shown({ ...nothing, nothing_to_publish: false });
-    expect(screen.queryByText(/nothing to publish/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^No pull request:/)).not.toBeInTheDocument();
   });
 });

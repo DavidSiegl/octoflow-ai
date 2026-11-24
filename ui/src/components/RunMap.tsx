@@ -329,7 +329,7 @@ function stationTexts(stage: Stage, record: RunRecord): StationTexts {
   const holder =
     stage.kind === "step" ? (stage.roleLabel ?? "")
     : stage.kind === "quality" ? "quality gate"
-    : stage.kind === "publish" ? (record.pr ? prLabel(record.pr.url) : "pull request")
+    : stage.kind === "publish" ? (record.pr ? prLabel(record.pr.url) : record.nothing_to_publish ? "nothing to publish" : "pull request")
     : "";
   const last = stage.turns.at(-1);
   return { holder, harness: last ? harnessOf(last) : "", reason: last ? unofferedReason(last) : "" };
