@@ -1153,3 +1153,38 @@ fn a_message_is_refused_until_the_run_waits_on_the_human_and_then_sent_once_as_t
     assert_eq!((&last_prompt["text"], &last_prompt["from"]), (&json!("use 10"), &json!("human")));
     assert_eq!(f.log().matches("use 10").count(), 1, "{}", f.log());
 }
+
+#[test]
+fn a_journal_line_cut_mid_character_costs_only_that_line_of_the_waits() {
+    let tmp = TempDir::new();
+    let run = RunState::new("20261124-120000-a1b2c3", "t", &tmp.path());
+    std::fs::create_dir_all(run.dir()).unwrap();
+    let line = |at: &str, kind: &str| format!(r#"{{"seq":1,"at":"{at}","kind":"{kind}","request":1}}"#).into_bytes();
+    let mut text = br#"{"journal":1}"#.to_vec();
+    for part in [
+        b"\n".to_vec(),
+        line("2026-11-24T12:00:10+00:00", "permission"),
+        b"\n{\"seq\":2,\"kind\":\"update\",\"text\":\"\xe2\x80\n".to_vec(),
+        line("2026-11-24T12:00:25+00:00", "answered"),
+        b"\n".to_vec(),
+    ] {
+        text.extend(part);
+    }
+    std::fs::write(format!("{}/{}", run.dir(), journal_name("build")), text).unwrap();
+    let from = crate::summary::epoch_seconds("2026-11-24T12:00:00+00:00").unwrap();
+
+    assert_eq!(waited_seconds(&run, "build", from, from + 60), Ok(15));
+    assert_eq!(waited_seconds(&run, "review", from, from + 60), Ok(0));
+}
+
+#[test]
+fn a_journal_that_is_there_but_cannot_be_read_is_an_error_not_a_turn_without_waits() {
+    let tmp = TempDir::new();
+    let run = RunState::new("20261124-120000-a1b2c3", "t", &tmp.path());
+    let path = format!("{}/{}", run.dir(), journal_name("build"));
+    std::fs::create_dir_all(&path).unwrap();
+
+    let err = waited_seconds(&run, "build", 0, 60).unwrap_err();
+
+    assert!(err.0.starts_with(&format!("cannot read {path}: ")), "{}", err.0);
+}

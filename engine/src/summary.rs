@@ -71,8 +71,9 @@ struct TurnCells {
 
 impl TurnCells {
     /// A turn record's values as the tables show them, its start in zone. A start or duration that is not known
-    /// shows as ?: a file written before turns were recorded, or a turn still open. A quality analysis runs in no
-    /// harness.
+    /// shows as ?: a file written before turns were recorded, or a turn still open. A duration that holds waits for
+    /// the human's answer to a permission says how much of it they took: "3m 44s (3m 19s waiting)". A quality
+    /// analysis runs in no harness.
     fn of(t: &TurnRecord, zone: &TimeZone) -> TurnCells {
         let set = |text: &Option<String>| text.clone().filter(|t| !t.is_empty());
         let harness = t.harness.clone();
@@ -103,13 +104,20 @@ impl TurnCells {
             harness: harness.unwrap_or_else(|| "-".into()),
             model,
             start,
-            duration: t.seconds.map_or("?".into(), format_duration),
+            duration: match (t.seconds, t.waited_seconds) {
+                (None, _) => "?".into(),
+                (Some(seconds), Some(waited)) if waited > 0 => {
+                    format!("{} ({} waiting)", format_duration(seconds), format_duration(waited))
+                }
+                (Some(seconds), _) => format_duration(seconds),
+            },
             file: t.file.clone(),
         }
     }
 }
 
-/// The turns as a Markdown table, the human-paced ones marked: their time is the human's as much as the agent's.
+/// The turns as a Markdown table, the human-paced ones marked: their time is the human's as much as the agent's; a
+/// turn's waits for a permission's answer show in its duration (TurnCells::of).
 pub fn turns_table(turns: &[TurnRecord]) -> String {
     let head = ["step", "role", "round", "harness", "model", "start (UTC)", "duration", "file"].map(String::from);
     let mut rows = vec![head.to_vec(), vec!["---".to_string(); head.len()]];
@@ -233,7 +241,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
                 Some(_) if t.tokens.is_set() => t.tokens.clone(),
                 Some(_) => Value::from("unknown"),
             };
-            json!({
+            let mut turn = json!({
                 "step": t.step,
                 "role": t.role,
                 "harness": t.harness,
@@ -245,7 +253,11 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
                 "ended_at": t.ended_at,
                 "seconds": t.seconds,
                 "tokens": tokens,
-            })
+            });
+            if let Some(waited) = t.waited_seconds {
+                turn["waited_seconds"] = waited.into();
+            }
+            turn
         })
         .collect();
     let roles: Object = s
