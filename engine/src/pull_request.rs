@@ -16,23 +16,21 @@ pub fn spec_title(spec: &str) -> Option<String> {
     (title.len() < rest.len() && !title.is_empty()).then(|| title.trim().to_string())
 }
 
-/// title as the title of a run's commit and pull request: at most 72 characters (git's and GitHub's customary width
-/// for a commit's first line). A longer one is cut at its last blank that leaves room for a "…" after it, which
-/// marks the cut, with the blanks before the cut dropped; one with no such blank is cut inside its first word.
+/// title as the title of a run's commit and pull request: at most 72 chars, Unicode scalar values rather than what
+/// a reader sees as one character (72 is git's and GitHub's customary width for a commit's first line). A longer one
+/// is cut at its last blank that leaves room for a "…" after it, which marks the cut, with the blanks before the cut
+/// dropped; one with no such blank is cut inside its first word, which may split a character built of several
+/// chars, such as a flag.
 pub fn commit_title(title: &str) -> String {
     const LIMIT: usize = 72;
     if title.chars().count() <= LIMIT {
         return title.to_string();
     }
-    // The longest head that fits with the "…", taken whole when a blank follows it.
+    // A blank among the first LIMIT chars ends a word that fits with the "…" after it, the LIMIT-th's included.
+    let window: String = title.chars().take(LIMIT).collect();
+    let words = window.rfind(char::is_whitespace).map(|i| window[..i].trim_end()).filter(|w| !w.is_empty());
     let head: String = title.chars().take(LIMIT - 1).collect();
-    let at_blank = title.chars().nth(LIMIT - 1).is_some_and(char::is_whitespace);
-    let kept = match head.rfind(char::is_whitespace) {
-        _ if at_blank => head.trim_end(),
-        Some(i) if !head[..i].trim_end().is_empty() => head[..i].trim_end(),
-        _ => &head,
-    };
-    format!("{kept}…")
+    format!("{}…", words.unwrap_or(&head))
 }
 
 /// The branch a run publishes its change on: BRANCH_PREFIX, the title lower-cased with each run of characters other

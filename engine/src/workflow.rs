@@ -1251,7 +1251,7 @@ impl<'a> Workflow<'a> {
     /// of the task, else the run id.
     fn change_title(&self, spec: &str) -> String {
         let s = &self.state;
-        let first_line = s.task.trim().split('\n').next().unwrap_or_default().to_string();
+        let first_line = s.task.trim().lines().next().unwrap_or_default().to_string();
         let title = spec_title(spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
         commit_title(if title.is_empty() { &s.run_id } else { &title })
     }
