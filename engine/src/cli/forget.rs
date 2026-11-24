@@ -220,7 +220,7 @@ fn forget(world: &Forgetter, cwd: &str, run_id: &str, dry_run: bool) -> Result<(
         world.say(&format!("would forget run {run_id}: delete {dir}"));
         return Ok(());
     }
-    world.host.forget_run(cwd, run_id)?;
+    world.host.forget_run(cwd, run_id, world.scope)?;
     world.say(&format!("forgot run {run_id}: deleted {dir}"));
     Ok(())
 }
