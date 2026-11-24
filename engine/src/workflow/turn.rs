@@ -481,10 +481,12 @@ impl Workflow<'_> {
     /// in a row before it that found it standing, which this one updates. The human is told of a wait once, at its
     /// second poll, not its first: a poll can read the file between the agent's emptying it and its writing what it
     /// waits on. A rewritten reason is not told again; a withdrawal goes to the log. The turn's record follows the
-    /// wait from its first poll (record_wait). Errors: as waiting_on's and record_wait's.
+    /// wait from that second poll too (record_wait). Errors: as waiting_on's and record_wait's.
     fn poll_wait(&mut self, role: &str, path: &str, polls: &mut u32) -> Outcome<bool> {
         let waiting = self.waiting_on(path)?;
-        self.record_wait(file_name(path), waiting.as_deref())?;
+        if waiting.is_none() || *polls > 0 {
+            self.record_wait(file_name(path), waiting.as_deref())?;
+        }
         match &waiting {
             Some(what) if *polls == 1 => self.ask_human(role, &format!("is waiting on {what}")),
             None if *polls > 0 => self.human.log(&format!("[{role}] is no longer waiting")),

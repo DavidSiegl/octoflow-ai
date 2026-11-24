@@ -115,6 +115,34 @@ fn a_withdrawn_wait_s_seconds_are_recorded_apart_from_the_turn_s() {
 }
 
 #[test]
+fn a_wait_found_at_one_poll_only_is_not_recorded() {
+    let f = Fixture::new(vec![
+        ("spec", vec![spec_turn()]),
+        ("build", vec![idle()]),
+        ("review", vec![review_turn(1, APPROVE)]),
+    ]);
+    let host = Rc::clone(&f.host);
+    let mut polls = 0;
+    // The file stands for one poll, as one read between the agent's creating it empty and its withdrawing the wait.
+    f.clock.hook(move |_| {
+        if !host.state().files.contains_key(&format!("{D}/spec.md")) || host.state().files.contains_key(&build_1()) {
+            return;
+        }
+        polls += 1;
+        match polls {
+            1 => host.write(&waiting_1(), "", false).unwrap(),
+            2 => host.remove(&waiting_1()).unwrap(),
+            _ => host.write(&build_1(), "report 1", false).unwrap(),
+        }
+    });
+    let mut wf = f.workflow(no_pr());
+    assert_eq!(wf.run(), verdict(APPROVE));
+    let turn = build_1_turn(&wf);
+    assert_eq!((turn.outside_wait_seconds, turn.waiting_on), (None, None));
+    assert_eq!(waits_told(&f), 0);
+}
+
+#[test]
 fn a_turn_that_reported_no_wait_records_none() {
     let f = Fixture::new(vec![
         ("spec", vec![spec_turn()]),

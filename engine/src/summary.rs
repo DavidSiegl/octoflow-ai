@@ -73,8 +73,8 @@ impl TurnCells {
     /// A turn record's values as the tables show them, its start in zone. A start or duration that is not known
     /// shows as ?: a file written before turns were recorded, or a turn still open. A duration that holds waits says
     /// how much of it they took, those for the human's answer to a permission apart from those the role reported on
-    /// something outside the run: "12m 03s (3m 19s waiting for you, 6m 00s waiting outside the run)". A quality
-    /// analysis runs in no harness.
+    /// something outside the run: "12m 03s (3m 19s waiting for you, 6m 00s waiting outside the run)"; the two can
+    /// overlap (TurnRecord::outside_wait_seconds). A quality analysis runs in no harness.
     fn of(t: &TurnRecord, zone: &TimeZone) -> TurnCells {
         let set = |text: &Option<String>| text.clone().filter(|t| !t.is_empty());
         let harness = t.harness.clone();

@@ -76,7 +76,8 @@ is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent
 `TurnRecord::waited_seconds`'s (engine/src/state.rs). Apart from those, `outside_wait_seconds` counts the seconds the
 agent reported waiting on something outside the run (its handoff file's `.waiting` file), and while such a wait
 stands, `waiting_on` holds what it waits on and since when, which the desktop app shows on the running turn;
-`TurnRecord::outside_wait_seconds`'s doc says when a wait starts and ends.
+`TurnRecord::outside_wait_seconds`'s doc says when a wait starts and ends. The two are measured apart, so a permission
+asked while the agent reported such a wait counts in both.
 
 - An agent's turn starts when its prompt is first sent. The prompt counts as delivered once the agent takes it:
   herdr reports it `working` or `blocked`, or its handoff file appears, within `PROMPT_DELIVERY_SECONDS`. One it

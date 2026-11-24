@@ -338,11 +338,11 @@ pub struct TurnRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waited_seconds: Option<i64>,
     /// Of seconds, how many the turn's role reported waiting on something outside the run (its waiting file,
-    /// crate::workflow::turn's waiting_path), its waits closed so far summed. A wait counts from the poll that first
-    /// finds it to the one that finds it gone, the turn's end, or the pass that finds its session not going on, so a
+    /// crate::workflow::turn's waiting_path), its waits closed so far summed. A wait counts from the second poll in a
+    /// row that finds it, as the human is told of it (Workflow::poll_wait says why), to the one that finds it gone, the turn's end, or the pass that finds its session not going on, so a
     /// wait withdrawn while no orchestrator watched counts until the next one looks. None, and so absent from
     /// state.json and metrics.json, for a turn that reported none, and in a record saved by an engine that did not
-    /// keep it.
+    /// keep it. Measured apart from waited_seconds, so a permission asked while such a wait stood counts in both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outside_wait_seconds: Option<i64>,
     /// The wait on something outside the run that stands on the turn now, not yet in outside_wait_seconds; None, and
@@ -400,18 +400,18 @@ pub struct StandingWait {
 
 impl TurnRecord {
     /// End the turn's standing wait at `at`, in seconds since the epoch, adding the seconds since it started (none
-    /// for an `at` before then) to outside_wait_seconds. Whether a wait stood. Errors: its start is not a time, which
-    /// leaves the wait standing.
-    pub fn end_wait(&mut self, at: i64) -> Result<bool, OrchestratorError> {
+    /// for an `at` before then) to outside_wait_seconds; nothing while none stands. Errors: its start is not a time,
+    /// which leaves the wait standing.
+    pub fn end_wait(&mut self, at: i64) -> Result<(), OrchestratorError> {
         let Some(wait) = &self.waiting_on else {
-            return Ok(false);
+            return Ok(());
         };
         let since = epoch_seconds(&wait.since).map_err(|e| {
             OrchestratorError(format!("the wait of the turn that writes {} started at no time: {e}", self.file))
         })?;
         let total = self.outside_wait_seconds.unwrap_or(0) + (at - since).max(0);
         (self.outside_wait_seconds, self.waiting_on) = (Some(total), None);
-        Ok(true)
+        Ok(())
     }
 
     /// Whether the turn is under way: its file has not been found written.

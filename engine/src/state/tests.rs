@@ -234,16 +234,16 @@ fn build_1_under_way() -> TurnRecord {
 fn ending_a_wait_adds_its_seconds_to_those_of_the_waits_ended_before() {
     let at = |s: i64| crate::summary::iso_utc(1_791_000_000 + s);
     let mut turn = build_1_under_way();
-    assert_eq!(turn.end_wait(1_791_000_100), Ok(false));
+    assert_eq!(turn.end_wait(1_791_000_100), Ok(()));
     assert_eq!(turn.outside_wait_seconds, None);
 
     turn.waiting_on = Some(StandingWait { on: "x".into(), since: at(10) });
-    assert_eq!(turn.end_wait(1_791_000_040), Ok(true));
+    assert_eq!(turn.end_wait(1_791_000_040), Ok(()));
     turn.waiting_on = Some(StandingWait { on: "y".into(), since: at(100) });
-    assert_eq!(turn.end_wait(1_791_000_105), Ok(true));
+    assert_eq!(turn.end_wait(1_791_000_105), Ok(()));
     // A wait found after the turn's end, as its file's mtime gives it, counts nothing.
     turn.waiting_on = Some(StandingWait { on: "z".into(), since: at(200) });
-    assert_eq!(turn.end_wait(1_791_000_150), Ok(true));
+    assert_eq!(turn.end_wait(1_791_000_150), Ok(()));
 
     assert_eq!((turn.outside_wait_seconds, turn.waiting_on), (Some(35), None));
 }
