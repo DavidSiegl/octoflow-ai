@@ -19,8 +19,9 @@
 # A `uses:` GitHub runs is a step's (a key of an item of a `steps:` list, in a workflow's job or a composite action's
 # runs) or a job's (a key of a job under the top-level `jobs:`, calling a reusable workflow); a key named uses anywhere
 # else, such as a with: input, and a line of a block or multi-line scalar (a run: | script) is not one. It reads only
-# block style: a step, a steps: list, a job, jobs: or an action's runs: written in flow style ({...} or [...]) fails as
-# not read, naming its line, since reading flow style by line is where a tag would slip through.
+# plain block style: a step, a steps: list, a job, jobs: or an action's runs: written in flow style ({...} or [...]),
+# on its key's line or below it, or carrying an anchor (&), a tag (!) or an alias (*), fails as not read, naming its
+# line, since reading those by line is where a tag would slip through.
 set -eu
 
 # -P: as ci/rustfmt.sh does, so that the files are named from the top level.
@@ -30,7 +31,7 @@ mkdir -p "$out"
 rm -f "$out/junit.xml"
 
 # The awk program that prints, for each file it is given, one line per unpinned `uses:`, "file:line: uses: value", and
-# one per step or job in flow style, "file:line: <key> in flow style ...".
+# one per step or job it does not read, "file:line: <what> in flow style ..." or "... with an anchor, tag or alias ...".
 # Its $0 and $... are awk's, not the shell's.
 # shellcheck disable=SC2016
 unpinned='
@@ -59,9 +60,20 @@ unpinned='
         return (depth >= 1 && key[depth] == "steps") || (depth == 2 && key[1] == "jobs" && col[1] == 0)
     }
 
-    # Report the step or job, or the list or mapping of them, written in flow style on this line, as not read.
-    function flow(what) {
-        print FILENAME ":" FNR ": " what " in flow style, which this check does not read: write it in block style"
+    # What a line whose content is not a key sits in, at this place, if steps or jobs are written there: a step
+    # (an item of steps), a job (its keys), jobs: or runs: (their keys); "" elsewhere.
+    function place() {
+        if (depth >= 1 && key[depth] == "steps") return "a step"
+        if (depth == 2 && key[1] == "jobs" && col[1] == 0) return "job " key[2]
+        if (depth == 1 && col[1] == 0 && (key[1] == "jobs" || key[1] == "runs")) return key[1] ":"
+        return ""
+    }
+
+    # Report what, written as node (a flow collection, or one that starts with an anchor, a tag or an alias) on this
+    # line, as not read.
+    function unread(what, node,    how) {
+        how = node ~ /^[{[]/ ? "in flow style" : "with an anchor, tag or alias"
+        print FILENAME ":" FNR ": " what " " how ", which this check does not read: write it out in block style"
     }
 
     FNR == 1 { depth = 0; scalar = -1 }
@@ -83,8 +95,9 @@ unpinned='
         }
         # Close the keys this line is not inside: those at its column or deeper.
         while (depth > 0 && col[depth] >= at) depth--
-        if (text ~ /^[{[]/) {
-            if (runs()) flow("a step")
+        if (text ~ /^[{[&!*]/) {
+            what = place()
+            if (what != "") unread(what, text)
             next
         }
         if (!match(text, /^("[^"]*"|\047[^\047]*\047|[^ \t#"\047:][^:]*)[ \t]*:([ \t]|$)/)) next
@@ -97,13 +110,13 @@ unpinned='
         sub(/(^|[ \t]+)#.*$/, "", v)
         if (k == "uses" && runs()) judge(v)
         # Where steps and jobs sit: the steps: of a job or of runs:, a job, and jobs: and runs: themselves.
-        if (v ~ /^[{[]/) {
+        if (v ~ /^[{[&!*]/) {
             if (k == "steps" && ((depth == 2 && key[1] == "jobs") || (depth == 1 && key[1] == "runs")))
-                flow("steps:")
+                unread("steps:", v)
             else if (depth == 1 && key[1] == "jobs" && col[1] == 0)
-                flow("job " k)
+                unread("job " k, v)
             else if (depth == 0 && (k == "jobs" || k == "runs"))
-                flow(k ":")
+                unread(k ":", v)
         }
         depth++
         key[depth] = k
@@ -127,13 +140,13 @@ sort -t: -k1,1 -k2,2n "$out/unsorted" > "$out/unpinned"
 
 if [ -s "$out/unpinned" ]; then
     count=$(wc -l < "$out/unpinned" | tr -d ' ')
-    echo "actions-pinned.sh: $count uses: not pinned by a commit sha:" >&2
+    echo "actions-pinned.sh: $count uses: not pinned by a commit sha, or not read:" >&2
     cat "$out/unpinned" >&2
     # Escaped for XML: & first, as the others' escapes hold one.
     escaped=$(sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' "$out/unpinned")
-    message="$count uses: not pinned by a commit sha: $(printf '%s\n' "$escaped" | sed 's/: .*//' | paste -sd ' ' -)"
+    message="$count uses: not pinned by a commit sha, or not read: $(printf '%s\n' "$escaped" | sed 's/: .*//' | paste -sd ' ' -)"
     failure="<failure message=\"$message\">$escaped
-Pin each by the commit sha of its release, with the tag as a comment: uses: owner/action@&lt;40 hex digits&gt; # v1.2.3</failure>"
+Pin each by the commit sha of its release, with the tag as a comment: uses: owner/action@&lt;40 hex digits&gt; # v1.2.3; write out each one not read in plain block style.</failure>"
 else
     failure=
 fi

@@ -36,7 +36,7 @@ impl Run {
     /// report and on standard error.
     fn assert_unpinned(&self, places: &[&str]) {
         assert!(self.output.status.success(), "the script failed: {}", self.stderr());
-        let message = format!("{} uses: not pinned by a commit sha: {}\"", places.len(), places.join(" "));
+        let message = format!("{} uses: not pinned by a commit sha, or not read: {}\"", places.len(), places.join(" "));
         assert!(self.junit.contains(&message), "the report does not say {message:?}: {}", self.junit);
         let stderr = self.stderr();
         let named: Vec<&str> = stderr.lines().skip(1).filter_map(|line| line.split(": ").next()).collect();
@@ -239,6 +239,41 @@ fn a_step_or_job_in_flow_style_fails_as_not_read_even_when_pinned() {
     let stderr = run.stderr();
     let step = ".github/workflows/ci.yml:6: a step in flow style, which this check does not read";
     assert!(stderr.contains(step), "{stderr}");
+}
+
+#[test]
+fn a_flow_collection_below_its_key_or_an_anchor_tag_or_alias_fails_as_not_read() {
+    let anchored = "on: push\njobs:\n  a:\n    steps: &s [{uses: a/b@v1}]\n  b:\n    steps: !!seq [{uses: a/b@v1}]\n  \
+                    c: &j {uses: o/r/w.yml@v1}\n  d:\n    steps: *s\n";
+    let run = check(&[
+        (".github/workflows/anchors.yml", anchored),
+        (".github/workflows/ci.yml", &workflow(&[&format!("- &x {{uses: a/b@{SHA}}}"), "- &k uses: a/b@v1"])),
+        (".github/workflows/job-below.yml", "on: push\njobs:\n  build:\n    {runs-on: x, steps: [{uses: a/b@v1}]}\n"),
+        (".github/workflows/jobs-anchor.yml", "on: push\njobs: &j {build: {steps: [{uses: a/b@v1}]}}\n"),
+        (".github/workflows/jobs-below.yml", "on: push\njobs:\n  {build: {steps: [{uses: a/b@v1}]}}\n"),
+        ("action.yml", "runs:\n  {using: composite, steps: [{uses: a/c@v1}]}\n"),
+    ]);
+    run.assert_unpinned(&[
+        ".github/workflows/anchors.yml:4",
+        ".github/workflows/anchors.yml:6",
+        ".github/workflows/anchors.yml:7",
+        ".github/workflows/anchors.yml:9",
+        ".github/workflows/ci.yml:6",
+        ".github/workflows/ci.yml:7",
+        ".github/workflows/job-below.yml:4",
+        ".github/workflows/jobs-anchor.yml:2",
+        ".github/workflows/jobs-below.yml:3",
+        "action.yml:2",
+    ]);
+    let stderr = run.stderr();
+    for said in [
+        ".github/workflows/ci.yml:6: a step with an anchor, tag or alias, which this check does not read",
+        ".github/workflows/job-below.yml:4: job build in flow style",
+        ".github/workflows/jobs-below.yml:3: jobs: in flow style",
+        "action.yml:2: runs: in flow style",
+    ] {
+        assert!(stderr.contains(said), "{said}: {stderr}");
+    }
 }
 
 #[test]
