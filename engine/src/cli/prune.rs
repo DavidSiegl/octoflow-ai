@@ -58,16 +58,16 @@ impl PrunedRun {
 /// for CLOSED_BRANCH_GRACE by world's wall clock, and record what became of each in its state.json
 /// (branch_cleanup); with dry_run, decide each and change nothing.
 ///
-/// A local branch goes when it is at or behind its pull request's head commit, origin's when it is at it, deleted
-/// under a lease; a branch checked out in a worktree stays, unless that is the run's own --worktree under
-/// WORKTREES_DIR, which is removed first (git worktree remove, without force, so with its ignored files) when it
-/// has no uncommitted changes and is at or behind the head too. Worktrees whose directory is gone are forgotten
-/// first (Host::prune_worktrees), unless dry_run. Only runs with no branch_cleanup yet are candidates, and with
-/// revisit the runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator did
-/// not make, and one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run
-/// whose state cannot be read (SavedRun::problem) is skipped with that reason, and so is a run whose branch another
-/// run that is not closed records as its base_branch, naming that run: its pull request targets origin's branch,
-/// which GitHub closes if the branch is deleted, so the run waits for prune until that run is closed. Returns each candidate and each such
+/// A local branch goes when it is at or behind its pull request's head commit, origin's when it is at it, deleted under
+/// a lease; a branch checked out in a worktree stays, unless that is the run's own --worktree under WORKTREES_DIR,
+/// which is removed first (git worktree remove, without force, so with its ignored files) when it has no uncommitted
+/// changes and is at or behind the head too. Worktrees whose directory is gone are forgotten first
+/// (Host::prune_worktrees), unless dry_run. Only runs with no branch_cleanup yet are candidates, and with revisit the
+/// runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator did not make, and
+/// one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run whose state
+/// cannot be read (SavedRun::problem) is skipped with that reason, and so is a run whose branch another run that is not
+/// closed records as its base_branch, naming that run: its pull request targets origin's branch, which GitHub closes if
+/// the branch is deleted, so the run waits for prune until that run is closed. Returns each candidate and each such
 /// run, in run_states' order, but those after gh was found unusable or origin unreachable, which ends the sweep. A
 /// failure on one run is logged and skips that run.
 ///
@@ -160,11 +160,11 @@ fn is_prune_candidate(run: &SavedRun, world: &Connected, revisit: bool) -> bool 
         && !run.health(world.local_host, world.with.pid_alive).is_some_and(|(h, _)| h == RUNNING)
 }
 
-/// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and
-/// record the result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to
-/// its worktree, and loses the branch of a worktree removed. Errors: GhError::Unusable when gh is, or when prune_remote fails as origin_unreachable says (its read of
-/// origin's branch after every try, or a deletion there, which is tried once), either of which no other run can get
-/// past; else GhError::Failed with what failed.
+/// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and record
+/// the result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to its
+/// worktree, and loses the branch of a worktree removed. Errors: GhError::Unusable when gh is, or when prune_remote
+/// fails as origin_unreachable says (its read of origin's branch after every try, or a deletion there, which is tried
+/// once), either of which no other run can get past; else GhError::Failed with what failed.
 fn prune_run(
     world: &Connected,
     cwd: &str,
