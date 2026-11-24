@@ -275,6 +275,9 @@ pub(crate) struct FakeState {
     /// Run before each rename, given its path and new path, when set, before the fake renames: a test's own step,
     /// such as changing the world meanwhile.
     pub before_rename: Option<BeforeRename>,
+    /// Run before each read, given its path, when set, before the fake reads: a test's own step, such as another
+    /// process finishing a file between two reads of it.
+    pub before_read: Option<BeforeRead>,
     /// Run before each git command, given its directory and arguments, when set, before the fake plays it: a test's
     /// own step, such as failing remove_worktree's command.
     pub before_git: Option<BeforeGit>,
@@ -299,6 +302,8 @@ pub(crate) type BeforeWrite = Box<dyn FnMut(&str, &str) -> Result<(), Orchestrat
 pub(crate) type AfterWrite = Box<dyn FnMut(&str)>;
 /// A test's hook on renames (FakeState::before_rename).
 pub(crate) type BeforeRename = Box<dyn FnMut(&str, &str)>;
+/// A test's hook on reads (FakeState::before_read).
+pub(crate) type BeforeRead = Box<dyn FnMut(&str)>;
 /// A test's hook on git commands (FakeState::before_git).
 pub(crate) type BeforeGit = Box<dyn FnMut(&str, &[&str])>;
 /// A test's stand-in for the programs the host runs (FakeState::run_command).
@@ -365,6 +370,7 @@ impl FakeHost {
                 before_write: None,
                 after_write: None,
                 before_rename: None,
+                before_read: None,
                 before_git: None,
                 run_states_with: None,
                 processes: None,
@@ -748,6 +754,12 @@ impl Host for FakeHost {
     }
 
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
+        // Run with the host's state released, as before_write is.
+        let hook = self.state().before_read.take();
+        if let Some(mut hook) = hook {
+            hook(path);
+            self.state().before_read = Some(hook);
+        }
         Ok(self.state().files.get(path).cloned())
     }
 

@@ -475,15 +475,83 @@ fn a_lock_moved_aside_for_an_instant_is_made_again_and_the_sweep_goes_on() {
     // While the first run is forgotten, another's take_over has the lock moved aside, to put it back after.
     let aside = std::rc::Rc::new(std::cell::RefCell::new(None));
     let (moved, host) = (std::rc::Rc::clone(&aside), std::rc::Rc::clone(&cli.f.host));
+    let remade = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = std::rc::Rc::clone(&remade);
     cli.f.host.state().after_write = Some(Box::new(move |path| {
-        if path.ends_with("/metrics-archive.jsonl") && moved.borrow().is_none() {
-            *moved.borrow_mut() = host.state().files.shift_remove(&lock());
+        if path.ends_with("/metrics-archive.jsonl") {
+            if moved.borrow().is_none() {
+                *moved.borrow_mut() = host.state().files.shift_remove(&lock());
+            } else {
+                seen.set(host.state().files.contains_key(&lock()));
+            }
         }
     }));
     let runs = sweep(&cli).unwrap();
     assert!(runs.iter().all(|run| run.outcome == super::Outcome::Forgotten), "{runs:?}");
     assert!(!kept(&cli, CLOSED) && !kept(&cli, FINISHED));
-    // The lock was made again with the same text, and released at the end.
+    // The lock was made again with the same text before the second run, and released at the end.
     assert!(aside.borrow().as_deref().is_some_and(|text| text.contains(&format!("\"pid\":{}", this_pid()))));
+    assert!(remade.get());
+    assert!(locks(&cli).is_empty());
+}
+
+#[test]
+fn a_run_another_forget_forgot_after_taking_this_ones_lock_over_is_gone_not_forgotten_twice() {
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    add(&cli, FINISHED, Some("workspace closed"), true);
+    // While the first run is forgotten, this sweep falls silent past LOCK_SILENCE: another forget takes its lock
+    // over, forgets the second run and releases the lock.
+    let done = std::rc::Rc::new(std::cell::Cell::new(false));
+    let (once, host) = (std::rc::Rc::clone(&done), std::rc::Rc::clone(&cli.f.host));
+    cli.f.host.state().after_write = Some(Box::new(move |path| {
+        if path.ends_with("/metrics-archive.jsonl") && !once.replace(true) {
+            let mut s = host.state();
+            s.files.shift_remove(&lock());
+            s.files.retain(|path, _| !path.starts_with(&format!("{}/", dir(FINISHED))));
+        }
+    }));
+    let runs = sweep(&cli).unwrap();
+    let outcome = |id: &str, outcome| RunForgotten { run_id: id.to_string(), outcome };
+    assert_eq!(runs, [outcome(CLOSED, super::Outcome::Forgotten), outcome(FINISHED, super::Outcome::Gone)]);
+    assert!(!cli.take_out().contains(&format!("forgot run {FINISHED}")));
+    assert!(locks(&cli).is_empty());
+}
+
+#[test]
+fn a_lock_read_while_another_writes_it_back_is_read_again_and_the_sweep_goes_on() {
+    let cli = cli();
+    add(&cli, CLOSED, Some("workspace closed"), true);
+    add(&cli, FINISHED, Some("workspace closed"), true);
+    // After the first run, another's take_over puts this sweep's lock back: the renew's first read finds it partly
+    // written, the next finds it whole. Steps: 0 not begun, 1 partly written, 2 read so once, 3 whole again.
+    let step = std::rc::Rc::new(std::cell::Cell::new(0));
+    let whole = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let (at, text, host) = (std::rc::Rc::clone(&step), std::rc::Rc::clone(&whole), std::rc::Rc::clone(&cli.f.host));
+    cli.f.host.state().after_write = Some(Box::new(move |path| {
+        if path.ends_with("/metrics-archive.jsonl") && at.get() == 0 {
+            let mut s = host.state();
+            let held = s.files[&lock()].clone();
+            s.files.insert(lock(), held[..held.len() / 2].to_string());
+            *text.borrow_mut() = held;
+            at.set(1);
+        }
+    }));
+    let (at, text, host) = (std::rc::Rc::clone(&step), std::rc::Rc::clone(&whole), std::rc::Rc::clone(&cli.f.host));
+    cli.f.host.state().before_read = Some(Box::new(move |path| {
+        if path == lock() {
+            match at.get() {
+                1 => at.set(2),
+                2 => {
+                    host.state().files.insert(lock(), text.borrow().clone());
+                    at.set(3);
+                }
+                _ => {}
+            }
+        }
+    }));
+    let runs = sweep(&cli).unwrap();
+    assert!(runs.iter().all(|run| run.outcome == super::Outcome::Forgotten), "{runs:?}");
+    assert_eq!(step.get(), 3);
     assert!(locks(&cli).is_empty());
 }

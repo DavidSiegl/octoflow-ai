@@ -142,16 +142,17 @@ pub fn forget_command(
 /// forgotten (or to be), skipped or failed, then a count of each outcome. The runs are every run of the project
 /// world's scope reads (RunScope), in run id order, or a Sweep::Listed's, in its order. A raised Interrupt starts no further run.
 /// A sweep but a dry run holds the project's forget lock throughout, and is refused while another forget of the
-/// project holds it (FORGET_LOCK).
+/// project holds it (FORGET_LOCK); it reads each run again at its turn, so a run another forget forgot meanwhile (one
+/// that took this sweep's lock over while it was silent, and released it since) is Outcome::Gone, not forgotten twice.
 ///
 /// Returns each run looked at, in that order; none after an Interrupt. Errors: for Sweep::DryRun and Sweep::All, the
 /// project's runs cannot be read at the start (a Sweep::Listed run that cannot be read at its turn is Outcome::Failed);
-/// the forget lock cannot be taken (ForgetLock::take), or another forget took it over mid-sweep, which stops the sweep
-/// (ForgetLock::renew).
+/// the forget lock cannot be taken (ForgetLock::take), or another forget holds it mid-sweep, having taken it over,
+/// which stops the sweep (ForgetLock::renew).
 pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunForgotten>, OrchestratorError> {
     let dry_run = matches!(sweep, Sweep::DryRun);
     let lock = if dry_run { None } else { ForgetLock::take(world, cwd)? };
-    // Every run of the project, read once here; none for a Sweep::Listed, whose runs are read at their turns.
+    // Every run of the project, read once here; none for a Sweep::Listed. Only a dry run acts on these states.
     let mut every = match sweep {
         Sweep::DryRun | Sweep::All => world.scope.states(world.host, cwd)?,
         Sweep::Listed(_) => vec![],
@@ -170,8 +171,8 @@ pub fn forget_all(world: &Forgetter, cwd: &str, sweep: Sweep) -> Result<Vec<RunF
             lock.renew()?;
         }
         let outcome = match every.get(i) {
-            Some(run) => sweep_one(world, cwd, run, dry_run),
-            None => match world.scope.state(world.host, cwd, run_id) {
+            Some(run) if dry_run => sweep_one(world, cwd, run, dry_run),
+            _ => match world.scope.state(world.host, cwd, run_id) {
                 Ok(Some(run)) => sweep_one(world, cwd, &run, dry_run),
                 Ok(None) => Outcome::Gone,
                 Err(e) => Outcome::Failed(e.0),
@@ -315,17 +316,22 @@ impl<'w, 'a> ForgetLock<'w, 'a> {
         }
     }
 
-    /// Renew the lock's heartbeat, before forgetting the next run. A lock gone from its path is made again: it may only
-    /// be moved aside for an instant by another's take_over, which puts it back, and finding it there then refuses
-    /// that other. Errors: another holder's lock is at its path, as when another forget took this one for dead, and
-    /// the sweep must stop; the lock cannot be read, made or touched.
+    /// Renew the lock's heartbeat, before forgetting the next run. A lock gone from its path is made again: another's
+    /// take_over may have moved it aside for an instant, to put it back, and finding it there then refuses that
+    /// other; or another forget took it for dead, swept and released it, and this sweep goes on, finding the runs it
+    /// forgot gone (forget_all). A text naming no holder is one another's create_new is still writing, and is read
+    /// once more. Errors: another holder's lock is at its path, as when another forget took this one for dead and
+    /// still holds it, and the sweep must stop; the lock cannot be read, made or touched.
     fn renew(&self) -> Result<(), OrchestratorError> {
         let world = self.world;
-        let held = match world.host.read(&self.path)? {
+        let mut held = match world.host.read(&self.path)? {
             None if world.host.create_new(&self.path, &self.text)? => return Ok(()),
             None => world.host.read(&self.path)?,
             held => held,
         };
+        if held.as_deref().is_some_and(|text| holder_of(text).is_none()) {
+            held = world.host.read(&self.path)?;
+        }
         if held.as_deref() != Some(self.text.as_str()) {
             return Err(OrchestratorError(format!(
                 "the forget lock {} was taken over by another forget, which took this one for dead: stopped",
