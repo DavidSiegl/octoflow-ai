@@ -312,11 +312,14 @@ pipeline {
                         for f in octoflow-third-party-licenses.html octoflow-desktop-npm-licenses.html; do
                             [ -f "dist/$f" ] || { echo "no dist/$f; run the whole build" >&2; exit 1; }
                         done
-                        # A release's own words, docs/releases/v<version>.md, when there is such a file: GitHub puts
-                        # them before the notes it generates from the pull requests.
-                        notes=docs/releases/$tag.md
+                        # A release's own words, docs/releases/v<version>.md, with those of the versions since the
+                        # latest release that main reached without a release of their own (ci/release-notes.sh): GitHub
+                        # puts them before the notes it generates from the pull requests. The newest release that is
+                        # not a draft is the latest: Jenkins releases versions in the order main reaches them.
+                        latest=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+                        ci/release-notes.sh "$version" "${latest#v}" > release-notes.md
                         set --
-                        [ ! -f "$notes" ] || set -- --notes-file "$notes"
+                        [ ! -s release-notes.md ] || set -- --notes-file release-notes.md
                         # Publishing it starts .github/workflows/macos-binary.yml, which adds the macOS binary and app.
                         gh release create "$tag" "$@" \
                             dist/octoflow-linux-x86_64 dist/octoflow-linux-x86_64.sha256 \
