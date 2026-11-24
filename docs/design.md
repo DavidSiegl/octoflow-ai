@@ -417,8 +417,10 @@ Drain reads every directory's tickets, whatever its spec's status, and even with
 held, so its merge is not lost. It starts a ticket only while its spec is `ready-for-agent`. A ticket's `Blocked
 by:` is the tracker's free text, so an entry drain cannot read, or a blocker that is `wontfix` and so never
 finishes, holds only that ticket for the human: the rest of the drain goes on, and drain ends with exit status `1`
-naming each held ticket and why, rather than waiting on it forever. A spec's bad `Blocked by:` still stops drain
-before it runs anything, and so does a cycle among what drain waits on, a spec's tickets included.
+naming each held ticket and why, rather than waiting on it forever. A spec blocked by a `wontfix` spec is held the
+same way, and so is a spec with a ticket file drain cannot read, with all its tickets, and the spec is not made
+`done` while it is held. A spec's bad `Blocked by:` still stops drain before it runs anything, and so does a cycle
+among what drain waits on, a spec's tickets included.
 
 **What one drain does, in order.** It first asks `gh` about each `in-review` spec's pull request: merged makes it
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`
@@ -430,8 +432,9 @@ the spec for a later drain. A `ready-for-agent` spec with a `Run:` line is one a
 if finished, sets the spec's status, and one that makes it `in-review` has its
 pull request asked about at once, so a pull request merged meanwhile makes it `done` in this drain; if not
 finished, drain stops and says what to do: wait for it, `resume` it, or delete the `Run:` line to start the spec
-over. Tickets are followed the same way, and a spec whose tickets are each `resolved` or `wontfix` then turns
-`done`, so its dependants can run in this drain. Then drain sweeps the branches of earlier runs once, and runs each
+over. Tickets are followed the same way, but a ticket's `Run:` line is read only while its spec is
+`ready-for-agent` and not held, since no ticket of a held spec runs. A spec whose tickets are each `resolved` or
+`wontfix` then turns `done`, whatever its status, so its dependants can run in this drain. Then drain sweeps the branches of earlier runs once, and runs each
 spec whose blockers are all `done`, and each ticket whose blockers are all `resolved`.
 
 **Specs edited while drain runs.** Drain reads each spec again before choosing the next and before each header
@@ -443,7 +446,8 @@ next chooses is run as before. A run another orchestrator takes over with `resum
 `ready-for-agent` for the next drain to pick up.
 
 **Where it stops.** Once nothing more can start, drain prints the specs left with their blockers and pull
-requests, and each `ready-for-agent` spec that is gone as `<slug>: gone (<why>)`, and exits `5`. The first run that
+requests, and each `ready-for-agent` spec that is gone, and each ready ticket of one, as `<slug>: gone (<why>)`, and
+exits `5`. The first run that
 does not end in an approved pull request without conflicts stops it at once. Either way it prints what it changed
 in each spec first.
 
