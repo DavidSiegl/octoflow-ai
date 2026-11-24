@@ -21,7 +21,7 @@ use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError};
 use crate::host::spawn_detached;
-use crate::host::{Host, RunFileText, RunScope};
+use crate::host::{Host, RunFile, RunFileText, RunScope};
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::SetUpFile;
@@ -204,18 +204,23 @@ impl ProjectRuns {
         run_record(run, here, &*self.pid_alive, &self.target)
     }
 
-    /// The run's files, oldest first, as a JSON list of {"name", "mtime"}, mtime in seconds since the epoch; [] for a
-    /// run without a directory. Only the files read would give are listed: none that leads out of the run directory
-    /// through a symbolic link, and none of a run whose directory leads out of the runs directory
-    /// (Host::run_files_inside). Errors: Refused for a run id that is not a plain name, Failed when the directory
+    /// The run's files, oldest first, as a JSON list of {"name", "mtime", "size"}, mtime in seconds since the epoch and
+    /// size in bytes: a file written again within the second it was listed in can keep its mtime but not, as a rule,
+    /// its size, so the two together tell the app when to read it again. [] for a run without a directory. Only the
+    /// files read would give are listed: none that leads out of the run directory through a symbolic link, and none of
+    /// a run whose directory leads out of the runs directory (Host::run_files_inside). Errors: Refused for a run id that is not a plain name, Failed when the directory
     /// cannot be listed.
     pub fn files(&self, run_id: &str) -> Result<Value, RunReadError> {
         let files = self.host.run_files_inside(&self.dir(run_id)?)?;
-        let entry = |path: &str, mtime: i64| {
-            let name = file_name(path);
-            Value::Object(object([("name", Value::from(name)), ("mtime", Value::from(mtime))]))
+        let entry = |f: &RunFile| {
+            let fields = [
+                ("name", Value::from(file_name(&f.path))),
+                ("mtime", Value::from(f.mtime)),
+                ("size", Value::from(f.size)),
+            ];
+            Value::Object(object(fields))
         };
-        Ok(Value::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))
+        Ok(Value::Array(files.iter().map(entry).collect()))
     }
 
     /// The text of the run's file name; None when there is no such file. A symbolic link is followed only as far as

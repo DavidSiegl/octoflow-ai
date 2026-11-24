@@ -14,9 +14,10 @@
 //!   that has ended took five minutes;
 //! - a heartbeat is one second old, in heartbeat_age and in health_reason;
 //! - a file's mtime is 14:00 UTC on 2026-10-24 plus a minute for each batch before the one that first held the
-//!   file as it is, and a run's files are in the order of that time, then of their names: the order serve promises
-//!   by the real times, oldest first and by name within a second, which is checked of each list it sent before the
-//!   stand-ins replace them, since the app takes the last file for the newest.
+//!   file as it is, its mtime and size as serve sent them, and its size is FILE_SIZE in every version, the mtime
+//!   telling the versions apart; a run's files are in the order of that time, then of their names: the order serve
+//!   promises by the real times, oldest first and by name within a second, which is checked of each list it sent
+//!   before the stand-ins replace them, since the app takes the last file for the newest.
 
 use std::path::Path;
 
@@ -37,6 +38,8 @@ pub struct Batch {
 const RUN_IDS: [&str; 2] = ["20261024-090000-beef00", "20261024-140000-c0ffee"];
 /// 14:00 UTC on 2026-10-24, in seconds since the epoch: the stand-ins' first time.
 const START: i64 = 1_792_850_400;
+/// The stand-in of every file's size, in bytes.
+const FILE_SIZE: i64 = 1024;
 
 /// The recording of batches, as the module comment has it. project is the directory serve was asked for, and
 /// normalizer the world's, which learns the batches' runs here. Panics on an event that is neither a record nor a
@@ -47,8 +50,8 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
     let payloads: Vec<Value> =
         batches.iter().flat_map(|b| b.events.iter().map(|(_, payload)| payload.clone())).collect();
     normalizer.learn(&Value::Array(payloads));
-    // By run and file name, the mtime serve last sent and the number of the batch that first held it.
-    let mut versions: IndexMap<String, (i64, usize)> = IndexMap::new();
+    // By run and file name, the mtime and size serve last sent and the number of the batch that first held them.
+    let mut versions: IndexMap<String, ((i64, i64), usize)> = IndexMap::new();
     let mut out = Vec::new();
     for (n, batch) in batches.iter().enumerate() {
         // By run, in the order the batch first names them, its last record and last files.
@@ -77,25 +80,30 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
                 events.push(object([("kind", "record".into()), ("run", run_id.as_str().into()), ("record", record)]));
             }
             if let Some(files) = files {
-                let as_sent: Vec<(i64, &str)> = files
+                let as_sent: Vec<(i64, &str, i64)> = files
                     .as_array()
                     .expect("a files event's files")
                     .iter()
-                    .map(|file| (at(file, "mtime").as_i64().expect("an mtime"), str_at(file, "name")))
+                    .map(|file| {
+                        let mtime = at(file, "mtime").as_i64().expect("an mtime");
+                        (mtime, str_at(file, "name"), at(file, "size").as_i64().expect("a size"))
+                    })
                     .collect();
-                assert!(as_sent.is_sorted(), "serve sent files not oldest first after: {}: {files}", batch.after);
+                let order: Vec<(i64, &str)> = as_sent.iter().map(|(mtime, name, _)| (*mtime, *name)).collect();
+                assert!(order.is_sorted(), "serve sent files not oldest first after: {}: {files}", batch.after);
                 // Each file's name behind the number of the batch that first held it as it is.
                 let mut listed: Vec<(usize, &str)> = Vec::new();
-                for (mtime, name) in as_sent {
+                for (mtime, name, size) in as_sent {
                     let key = format!("{run}/{name}");
-                    if versions.get(&key).is_none_or(|(last_mtime, _)| *last_mtime != mtime) {
-                        versions.insert(key.clone(), (mtime, n));
+                    if versions.get(&key).is_none_or(|(last, _)| *last != (mtime, size)) {
+                        versions.insert(key.clone(), ((mtime, size), n));
                     }
                     listed.push((versions.get(&key).expect("the file's version").1, name));
                 }
                 listed.sort();
                 let files = listed.iter().map(|(first_held, name)| {
-                    object([("name", (*name).into()), ("mtime", (START + 60 * *first_held as i64).into())])
+                    let mtime = START + 60 * *first_held as i64;
+                    object([("name", (*name).into()), ("mtime", mtime.into()), ("size", FILE_SIZE.into())])
                 });
                 events.push(object([
                     ("kind", "files".into()),

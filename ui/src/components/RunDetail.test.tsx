@@ -94,7 +94,7 @@ describe("the run detail", () => {
       fileText: async () => "# The spec\n",
       agentEvents: async () => ({ session_start: null, events: [], answerable: false }),
     } as unknown as Api;
-    const entry = { record: record(), receivedAt: NOW, files: [{ name: "spec.md", mtime: 1 }] };
+    const entry = { record: record(), receivedAt: NOW, files: [{ name: "spec.md", mtime: 1, size: 10 }] };
     const { container } = render(<RunDetail api={api} project={{ cwd: "/home/me/proj" }} entry={entry} onClose={() => {}} />);
     const nowLine = () => container.querySelector(".now")?.textContent;
     await act(async () => {

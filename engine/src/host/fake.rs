@@ -1165,12 +1165,15 @@ impl Host for FakeHost {
         }
         let mut files: Vec<super::RunFile> = s
             .files
-            .keys()
-            .filter_map(|path| {
+            .iter()
+            .filter_map(|(path, text)| {
                 let name = path.strip_prefix(run_dir)?.strip_prefix('/')?;
                 let listed = !name.contains('/') && name != "state.json" && !name.contains(".tmp.");
-                listed
-                    .then(|| super::RunFile { path: path.to_string(), mtime: s.mtimes.get(path).copied().unwrap_or(0) })
+                listed.then(|| super::RunFile {
+                    path: path.to_string(),
+                    mtime: s.mtimes.get(path).copied().unwrap_or(0),
+                    size: text.len() as u64,
+                })
             })
             .collect();
         files.sort_by_key(|f| f.mtime);

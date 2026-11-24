@@ -313,7 +313,7 @@ fn a_project_is_connected_once() {
 }
 
 #[test]
-fn files_with_their_mtimes() {
+fn files_with_their_mtimes_and_sizes() {
     let host = host_with_run();
     {
         let mut s = host.state();
@@ -328,7 +328,7 @@ fn files_with_their_mtimes() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"run":"{SERVE_ID}","files":[{{"name":"spec.md","mtime":100}},{{"name":"build-1.md","mtime":200}}]}}"#
+            r#"{{"run":"{SERVE_ID}","files":[{{"name":"spec.md","mtime":100,"size":7}},{{"name":"build-1.md","mtime":200,"size":5}}]}}"#
         )
     );
 }

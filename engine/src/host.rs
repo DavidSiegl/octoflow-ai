@@ -87,6 +87,9 @@ fn cat_unless_gone(path: &str) -> String {
 /// stat -f is BSD.
 const MTIME_OF_F: &str = "m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\")";
 
+/// sh: as MTIME_OF_F, but sets m to the modification time and, after a space, the size in bytes of file $f.
+const MTIME_AND_SIZE_OF_F: &str = "m=$(stat -c \"%Y %s\" -- \"$f\" 2>/dev/null || stat -f \"%m %z\" -- \"$f\")";
+
 /// The status the scripts of run_files_inside and read_inside exit with when the file, or the run directory, leads
 /// out of where it must stay (run_dir_resolved).
 const OUTSIDE_STATUS: i32 = 5;
@@ -215,6 +218,8 @@ pub struct RunFile {
     pub path: String,
     /// When it was last modified, in seconds since the epoch by its host's clock.
     pub mtime: i64,
+    /// Its length in bytes when it was listed.
+    pub size: u64,
 }
 
 /// A run directory's file as [`Host::read_inside`] reads it.
@@ -1143,7 +1148,7 @@ pub trait Host {
     /// The files in a run directory, oldest first, those of one time by name, except state.json and write's temporary
     /// files; none for a directory that is not there. A file removed while the directory is listed, as a running
     /// run removes some, is in the list or not, never an error. Errors: stat fails on a file that is still there, or
-    /// prints what is not a time.
+    /// prints what is not a time and a size.
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
         let out = self.check(&["sh", "-c", &run_files_loop("true"), "_", run_dir], None, DEFAULT_TIMEOUT)?;
         parsed_run_files(run_dir, &out)
@@ -1318,12 +1323,12 @@ fn split_at_byte(bytes: &[u8], at: u8) -> Option<(&[u8], &[u8])> {
 }
 
 /// sh printing, for each file $f in the directory $1 that run_files lists and for which the sh condition keep
-/// succeeds, "<mtime> <path>" ended by a NUL, which no path holds: what parsed_run_files reads.
+/// succeeds, "<mtime> <size> <path>" ended by a NUL, which no path holds: what parsed_run_files reads.
 fn run_files_loop(keep: &str) -> String {
     format!(
         "for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
          case \"${{f##*/}}\" in state.json|*.tmp.*) continue;; esac; \
-         {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
+         {keep} || continue; {MTIME_AND_SIZE_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
     )
 }
 
@@ -1357,17 +1362,21 @@ fn archived_metrics(text: &str, path: &str) -> Result<Vec<Value>, OrchestratorEr
 }
 
 /// The files run_files_loop printed as out, listing run_dir, oldest first, those of one time by name. Errors: an
-/// entry whose time is not one.
+/// entry whose time or size is not one.
 fn parsed_run_files(run_dir: &str, out: &str) -> Result<Vec<RunFile>, OrchestratorError> {
     let mut files = vec![];
     for entry in out.split('\0').filter(|e| !e.is_empty()) {
-        let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
+        let (mtime, rest) = entry.split_once(' ').unwrap_or((entry, ""));
         let mtime = decimal_int(mtime)
             .ok_or_else(|| OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time")))?;
-        files.push((mtime, path.to_string()));
+        let (size, path) = rest.split_once(' ').unwrap_or((rest, ""));
+        let size = size
+            .parse::<u64>()
+            .map_err(|_| OrchestratorError(format!("listing {run_dir}: stat printed {size:?}, not a size")))?;
+        files.push((mtime, path.to_string(), size));
     }
     files.sort();
-    Ok(files.into_iter().map(|(mtime, path)| RunFile { path, mtime }).collect())
+    Ok(files.into_iter().map(|(mtime, path, size)| RunFile { path, mtime, size }).collect())
 }
 
 /// proc's output, proc being argv run on host; Errors, naming argv, the SSH target if any, and proc's standard error,

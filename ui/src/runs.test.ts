@@ -161,10 +161,10 @@ describe("wording", () => {
 describe("applyEvent", () => {
   it("keeps a run's files across a new record, and ages from the record's arrival", () => {
     let state = applyEvent(NO_RUNS, { kind: "record", run: "r", record: record() }, 1000);
-    state = applyEvent(state, { kind: "files", run: "r", files: [{ name: "spec.md", mtime: 1 }] }, 1000);
+    state = applyEvent(state, { kind: "files", run: "r", files: [{ name: "spec.md", mtime: 1, size: 10 }] }, 1000);
     state = applyEvent(state, { kind: "record", run: "r", record: record({ heartbeat_age: 0 }) }, 5000);
     const entry = state.runs.r;
-    expect(entry?.files).toEqual([{ name: "spec.md", mtime: 1 }]);
+    expect(entry?.files).toEqual([{ name: "spec.md", mtime: 1, size: 10 }]);
     expect(entry && heartbeatAge(entry, 7900)).toBe(2);
   });
 

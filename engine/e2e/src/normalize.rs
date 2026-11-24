@@ -10,9 +10,11 @@
 use indexmap::IndexMap;
 use serde_json::Value;
 
-/// The JSON keys whose numbers are times measured by a clock: a turn's or a run's seconds, a state's age, a file's
-/// modification time. Sorted.
-const TIMED_KEYS: [&str; 3] = ["heartbeat_age", "mtime", "seconds"];
+/// The JSON keys whose numbers differ between runs, each with the placeholder its number becomes: times measured by a
+/// clock (a turn's or a run's seconds, a state's age, a file's modification time), and a file's size, which follows
+/// the times and durations the file holds. Sorted by key.
+const MEASURED_KEYS: [(&str, &str); 4] =
+    [("heartbeat_age", "<seconds>"), ("mtime", "<seconds>"), ("seconds", "<seconds>"), ("size", "<bytes>")];
 /// The JSON keys whose strings word a time measured by a clock, such as run_health's "beat 3s ago".
 const TIMED_TEXT_KEYS: [&str; 1] = ["health_reason"];
 
@@ -143,9 +145,9 @@ impl Normalizer {
         });
         s = substitute(&s, |c, i| time(c, i).map(|end| (end, "<time>".to_string())));
         s = substitute(&s, |c, i| {
-            TIMED_KEYS.iter().find_map(|key| {
+            MEASURED_KEYS.iter().find_map(|(key, placeholder)| {
                 let (colon, end) = json_number(c, i, key)?;
-                Some((end, format!("\"{key}\"{colon}\"<seconds>\"")))
+                Some((end, format!("\"{key}\"{colon}\"{placeholder}\"")))
             })
         });
         s = substitute(&s, |c, i| {
@@ -172,8 +174,8 @@ impl Normalizer {
         self.pids.iter().find(|(p, _)| *p == pid).map(|(_, placeholder)| placeholder.as_str())
     }
 
-    /// node with text() applied to every string and key in it, and the ints under TIMED_KEYS and the pids under "pid"
-    /// replaced; with timed, every string is taken as timed. key is the key node is under, if any.
+    /// node with text() applied to every string and key in it, and the ints under MEASURED_KEYS and the pids under
+    /// "pid" replaced; with timed, every string is taken as timed. key is the key node is under, if any.
     pub fn json(&self, node: &Value, timed: bool, key: Option<&str>) -> Value {
         match node {
             Value::Object(map) => {
@@ -181,7 +183,7 @@ impl Normalizer {
             }
             Value::Array(items) => Value::Array(items.iter().map(|v| self.json(v, timed, key)).collect()),
             Value::String(s) => Value::String(self.text(s, timed || key.is_some_and(|k| TIMED_TEXT_KEYS.contains(&k)))),
-            Value::Number(n) if n.is_i64() && key.is_some_and(|k| TIMED_KEYS.contains(&k)) => Value::from("<seconds>"),
+            Value::Number(n) if n.is_i64() && measured(key).is_some() => Value::from(measured(key).unwrap_or_default()),
             Value::Number(n) if n.is_i64() && key == Some("pid") => {
                 let pid = n.as_i64().and_then(|p| self.pid_placeholder(p));
                 Value::from(pid.unwrap_or("<pid:?>"))
@@ -189,6 +191,11 @@ impl Normalizer {
             other => other.clone(),
         }
     }
+}
+
+/// The placeholder of the number under key, when key is one of MEASURED_KEYS.
+fn measured(key: Option<&str>) -> Option<&'static str> {
+    MEASURED_KEYS.iter().find(|(k, _)| Some(*k) == key).map(|(_, placeholder)| *placeholder)
 }
 
 impl Default for Normalizer {
@@ -478,6 +485,7 @@ mod tests {
         );
         // Compact JSON, as serve's events hold it, keeps its form.
         assert_eq!(n.text(r#"{"seconds":12,"pid":4242}"#, false), r#"{"seconds":"<seconds>","pid":"<pid:2>"}"#);
+        assert_eq!(n.text(r#"{"mtime":12,"size":7}"#, false), r#"{"mtime":"<seconds>","size":"<bytes>"}"#);
     }
 
     #[test]
@@ -490,13 +498,14 @@ mod tests {
     }
 
     #[test]
-    fn json_replaces_timed_ints_pids_and_keys() {
+    fn json_replaces_measured_ints_pids_and_keys() {
         let mut n = Normalizer::new();
         n.literal("/w", "<world>");
         n.pid(10, 1);
         let node = Value::Object(octoflow_engine::json::object([
             ("/w/x", Value::from("/w/y")),
             ("seconds", Value::from(3)),
+            ("size", Value::from(7)),
             ("pid", Value::from(10)),
             ("health_reason", Value::from("beat 3s ago")),
             ("n", Value::from(3)),
@@ -504,7 +513,7 @@ mod tests {
         let got = n.json(&node, false, None).to_string();
         assert_eq!(
             got,
-            r#"{"<world>/x":"<world>/y","seconds":"<seconds>","pid":"<pid:1>","health_reason":"beat <duration> ago","n":3}"#
+            r#"{"<world>/x":"<world>/y","seconds":"<seconds>","size":"<bytes>","pid":"<pid:1>","health_reason":"beat <duration> ago","n":3}"#
         );
     }
 

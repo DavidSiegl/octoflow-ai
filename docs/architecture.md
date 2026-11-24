@@ -275,7 +275,7 @@ started, as the human would start one from a terminal.
   | Endpoint | Gives |
   |---|---|
   | `/runs` | `{"version": 1, "runs": [...]}`, `list --json`'s document (`run_record` of each of `Host::run_states_inside`, Security below) |
-  | `/files?run=ID` | `{"run", "files"}`: the files in the run's directory that stay inside it (`Host::run_files_inside`, Security below), oldest first, each `{"name", "mtime"}` |
+  | `/files?run=ID` | `{"run", "files"}`: the files in the run's directory that stay inside it (`Host::run_files_inside`, Security below), oldest first, each `{"name", "mtime", "size"}`, size in bytes |
   | `/file?run=ID&name=NAME` | `{"run", "name", "text"}` for one of them, read through `Host::read_inside` |
   | `/agent?run=ID&role=ROLE` | for a run in herdr, `{"run", "role", "text"}`: the last lines (`&lines=N`, 200 by default) of what the run's agent of the role shows, through `herdr agent read` |
   | `POST /agent/input?run=ID&role=ROLE` | for a run in herdr, types the JSON body's `{"text"}` into that agent as a prompt (`herdr agent prompt`), or presses its `{"keys"}` (`herdr agent send-keys`) |
@@ -390,7 +390,7 @@ browser, at a far smaller download.
   ACP run's agent tab: its journal as text, collapsed thoughts, tool calls and permission buttons, and a message box
   while the run waits on the human) and
   `HandoffFile`, which renders a file with `react-markdown` and `remark-gfm`, raw
-  HTML skipped, and fetches it again whenever its mtime changes.
+  HTML skipped, and fetches it again whenever its mtime or its size changes.
 - **Tests.** Vitest with React Testing Library in jsdom: `App.test.tsx` replays `test/recorded-stream.json`
   through `test/fakes.ts`'s `FakeEventSource`, with `fetch` stubbed. The recording is the events a real
   `serve` sent over a scripted run: the e2e test `app_event_stream` (below) fails when serve no longer sends them,

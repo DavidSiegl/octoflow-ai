@@ -60,7 +60,7 @@ fn first_poll_sends_everything() {
         events.iter().map(|e| (e.kind, e.payload.get("run").and_then(Value::as_str).unwrap())).collect();
     assert_eq!(runs, [("record", SERVE_ID), ("files", SERVE_ID)]);
     assert_eq!(events[0].payload.get("record").and_then(|r| r.get("phase")), Some(&Value::from("build")));
-    assert_eq!(events[1].payload.get("files").unwrap().to_string(), r#"[{"name":"spec.md","mtime":0}]"#);
+    assert_eq!(events[1].payload.get("files").unwrap().to_string(), r#"[{"name":"spec.md","mtime":0,"size":7}]"#);
     assert_eq!(watch.poll(), vec![]);
 }
 
@@ -97,7 +97,7 @@ fn a_finished_runs_files_are_read_until_they_settle_and_then_only_when_it_change
     w.host.state().files.insert(format!("{}/summary.md", run_dir()), "done".to_string());
     let events = watch.poll();
     assert_eq!(kinds(&events), ["files"]);
-    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0,"size":4}]"#);
     // Once the finishing save is FINISHED_RUN_WRITES old, a poll that reads the same list as the one before settles
     // it, and from then on nothing lists the run's files.
     w.save(FINISHED_RUN_WRITES.as_secs(), &done);
@@ -129,7 +129,7 @@ fn a_finished_runs_file_written_later_than_a_poll_interval_is_still_sent() {
     w.save(late, &done);
     let events = watch.poll();
     assert_eq!(kinds(&events), ["files"]);
-    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0,"size":4}]"#);
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn a_finished_runs_file_written_after_its_files_settled_is_sent_once_state_json_
     w.save(settled + 40, &failed("2026-10-24T12:01:40Z"));
     let events = watch.poll();
     assert_eq!(kinds(&events), ["files"]);
-    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0}]"#);
+    assert_eq!(events[0].payload.get("files").unwrap().to_string(), r#"[{"name":"summary.md","mtime":0,"size":6}]"#);
 }
 
 #[test]
