@@ -93,6 +93,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 - **No test runs the pinned Node's real npm.** Decided against (the user's ruling, 2026-11-24, todo-tickets): the
   tests' fake npm (`acp_adapter/tests.rs`) knows only the npm rules added to it; an opt-in install against a local
   registry is not worth it, and a real install by hand at a pin raise catches a rule it does not know.
+- **A GitHub token reaches tools in directories the build user can write outside the workspace.** Accepted (the
+  user's ruling, 2026-11-24, todo-tickets; review 276, todo 91): the Version stage's comment in `Jenkinsfile` says
+  what is and is not guaranteed. It rests on only this repository's pull requests building on the agent, which the
+  job's configuration would show (whether it discovers fork pull requests); that page is admin-only, so it is
+  unchecked from here. Reopen if the job builds pull requests from forks.
 - **No coverage-guided fuzzing of the engine's parsers.** Decided against (the user's ruling, 2026-11-11): a
   cargo-fuzz pass over `handoff::first_line_word`, `parse_verdict`, `parse_gate`, `parse_blocked` and
   `parse_env_file`, looking for panics. The seeded generated-input tests (`test_support::Rng`) cover them instead.
