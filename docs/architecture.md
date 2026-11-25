@@ -372,7 +372,7 @@ browser, at a far smaller download.
   and by what that resolves to, and names the directory the AppImage was started from, `OWD`, or `PWD` where an
   extracted AppImage sets no `OWD`, so the engine, which reads the process's environment and directory where it
   needs them, and every process it starts see the user's. The process that shows the window keeps the bundle's,
-  which its GTK needs. Decided against: serving the window in the app's own process (`TODO.md`, Planned, "The
+  which its GTK needs. Decided against: serving the window in the app's own process (`TODO.md`, Open issues, "The
   desktop app as the terminal client too").
 - **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors `run_record`, `RunRequest` is `POST /run`'s body, and
   `Api` builds the URLs and makes the requests. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its
