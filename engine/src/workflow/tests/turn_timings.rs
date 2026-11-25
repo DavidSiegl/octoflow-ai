@@ -7,13 +7,10 @@
 
 use std::cell::RefCell;
 
+use super::model_saying::{unoffered, ModelSaying};
 use super::*;
-use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
-use crate::herdr::fake::FakeHerdr;
 use crate::host::fake::HOST_EPOCH;
-use crate::human::Human;
 use crate::json::object;
-use crate::state::UnofferedModel;
 use crate::test_support::GOLDEN_SUMMARY;
 use crate::workflow::{Collaborators, Workflow};
 
@@ -61,78 +58,12 @@ fn each_turn_of_an_approved_run_is_recorded_on_the_host_clock() {
     );
 }
 
-/// The fixture's FakeHerdr as the run's Agents, but for a session that does not offer the model asked of the role's
-/// agent, and names the one it runs on instead.
-struct Unoffering<'f> {
-    /// The fake that plays every agent, this role's included.
-    herdr: &'f FakeHerdr,
-    /// The role whose session does not offer the model asked of it.
-    role: &'static str,
-    /// The model that role's session runs on instead; None for a session that names none.
-    taken: Option<&'static str>,
-}
-
-impl RunPlaces for Unoffering<'_> {
-    fn place(&self, run: &RunState) -> Result<Option<String>, AgentError> {
-        self.herdr.place(run)
-    }
-    fn end(&self, run: &RunState) -> Result<(), AgentError> {
-        self.herdr.end(run)
-    }
-}
-
-impl Agents for Unoffering<'_> {
-    fn bind(&self, run: &mut RunState) {
-        self.herdr.bind(run)
-    }
-    fn open(&self, run: &mut RunState, human: &dyn Human) -> Result<bool, AgentError> {
-        self.herdr.open(run, human)
-    }
-    fn close(&self, run: &RunState, human: &dyn Human) {
-        self.herdr.close(run, human)
-    }
-    fn next_record(&self, run: &RunState, role: &str, order: &[String], kind: &str) -> Result<AgentRecord, AgentError> {
-        self.herdr.next_record(run, role, order, kind)
-    }
-    fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError> {
-        let mut started = self.herdr.start(run, role, launch)?;
-        if role == self.role {
-            let asked = launch.model.expect("a model asked of the role").to_string();
-            started.unoffered_model = Some(UnofferedModel { asked, taken: self.taken.map(String::from) });
-        }
-        Ok(started)
-    }
-    fn wait_ready(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
-        self.herdr.wait_ready(run, role, seconds)
-    }
-    fn find(&self, run: &RunState, role: &str) -> Result<Option<Seen>, AgentError> {
-        self.herdr.find(run, role)
-    }
-    fn prompt(&self, run: &RunState, role: &str, text: &str) -> Result<(), AgentError> {
-        self.herdr.prompt(run, role, text)
-    }
-    fn wait_taken(&self, run: &RunState, role: &str, seconds: u64) -> Result<bool, AgentError> {
-        self.herdr.wait_taken(run, role, seconds)
-    }
-    fn show(&self, run: &RunState, role: &str) -> Result<(), AgentError> {
-        self.herdr.show(run, role)
-    }
-    fn await_human(&self, run: &RunState, role: &str, why: Waiting) {
-        self.herdr.await_human(run, role, why)
-    }
-    fn whereabouts(&self, run: &RunState, role: &str) -> String {
-        self.herdr.whereabouts(run, role)
-    }
-    fn settle(&self, run: &RunState) {
-        self.herdr.settle(run)
-    }
-}
-
 #[test]
 fn a_turn_whose_session_did_not_offer_the_roles_model_records_the_one_it_ran_on() {
     for taken in [Some("sonnet"), None] {
         let f = Fixture::new(approved());
-        let agents = Unoffering { herdr: &f.herdr, role: "review", taken };
+        let says = |asked: &str| unoffered(asked, taken);
+        let agents = ModelSaying { herdr: &f.herdr, role: "review", says: &says };
         let models = IndexMap::from([("build".to_string(), "haiku".to_string()), ("review".into(), "opus".into())]);
         let settings = settings(|s| s.agents.models = models);
         let collaborators = Collaborators { agents: &agents, ..f.collaborators() };
@@ -449,7 +380,32 @@ fn a_run_taken_over_while_its_summary_is_written_is_not_saved_again() {
     failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
     assert!(f.saved().get("owner").is_some_and(Value::is_set), "{:?}", f.saved());
     let told = f.told.lines();
-    assert!(told.iter().any(|l| l.starts_with("could not save state.json after summary.md: run ")), "{told:?}");
+    assert!(
+        told.iter().any(|l| l.starts_with("could not save state.json after writing the run's files: run ")),
+        "{told:?}"
+    );
+}
+
+#[test]
+fn a_run_closed_while_its_summary_is_written_keeps_the_close_in_the_save_after_it() {
+    let host = Rc::new(FakeHost::default());
+    let other = Rc::downgrade(&host);
+    host.state().before_write = Some(Box::new(move |path, _| {
+        if path.ends_with("/summary.md") {
+            let host = other.upgrade().expect("the host outlives its hook");
+            let state = path.replace("/summary.md", "/state.json");
+            let mut closed: Object = serde_json::from_str(&host.state().files[&state]).unwrap();
+            closed.insert("closed".into(), Value::from("workspace closed"));
+            host.state().files.insert(state, Value::Object(closed).to_string());
+        }
+        Ok(())
+    }));
+    let f = Fixture::on(host, new_state(), vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
+    failure(f.workflow(RunSettings { turn_timeout: 60, ..RunSettings::default() }).run());
+    assert_eq!(f.host.state().writes.last(), Some(&format!("{}/state.json", f.state.dir())), "saved after the summary");
+    let saved = f.saved();
+    assert_eq!(saved.get("closed"), Some(&Value::from("workspace closed")), "{saved:?}");
+    assert!(saved.get("error").is_some_and(Value::is_set));
 }
 
 // -- metrics.json ------------------------------------------------------------------------------------------------
@@ -552,6 +508,49 @@ fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
     assert_eq!(tokens, [r#""unknown""#, r#"{"input":11,"output":4,"cache_read":6,"cache_write":8}"#, r#""unknown""#]);
 }
 
+/// The build turn of a run of backend, started at HOST_EPOCH and its file written 300 s later, closed by end_turn
+/// with the Builder's journal, on disk, holding a permission asked at 100 s and answered at 220 s.
+fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
+    let tmp = crate::test_support::TempDir::new();
+    let mut state = saved_run("build", 1, &["spec"]);
+    (state.backend, state.cwd) = (backend, tmp.path());
+    let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![]);
+    let (dir, path) = (f.state.dir(), f.state.build_path(1));
+    let line = |seq: u64, seconds: i64, kind: &str| {
+        let at = crate::timestamp::iso_utc(HOST_EPOCH + seconds);
+        format!(r#"{{"seq":{seq},"at":"{at}","kind":"{kind}","request":1}}"#)
+    };
+    let journal = [r#"{"journal":1}"#.to_string(), line(1, 100, "permission"), line(2, 220, "answered")];
+    // The journal is the orchestrator's own file, which crate::acp reads from disk, not through the host.
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(format!("{dir}/{}", crate::acp::journal_name("build")), journal.join("\n") + "\n").unwrap();
+    let mut host = f.host.state();
+    host.files.insert(path.clone(), "# Build report\n".into());
+    host.mtimes.insert(path.clone(), HOST_EPOCH + 300);
+    drop(host);
+    let mut wf = f.workflow(f.as_saved());
+    let record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH));
+    wf.state.turns.push(record);
+
+    wf.end_turn("build", &path).expect("the turn closes");
+
+    wf.state.turns.pop().unwrap()
+}
+
+#[test]
+fn an_acp_turn_records_how_long_its_agent_waited_for_permission_answers() {
+    let turn = build_turn_closed(crate::state::Backend::Acp);
+
+    assert_eq!((turn.seconds, turn.waited_seconds), (Some(300), Some(120)));
+}
+
+#[test]
+fn a_herdr_turn_records_no_wait() {
+    let turn = build_turn_closed(crate::state::Backend::Herdr);
+
+    assert_eq!((turn.seconds, turn.waited_seconds), (Some(300), None));
+}
+
 #[test]
 fn a_turn_that_changed_sessions_has_unknown_tokens() {
     let mut state = saved_run("build", 1, &["spec", "build"]);
@@ -613,7 +612,7 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
     for t in &quality {
         assert_eq!((&t.harness, &t.model, t.human_paced), (&None, &None, false));
     }
-    let seconds = |at: &Option<String>| crate::summary::epoch_seconds(at.as_deref().unwrap()).unwrap();
+    let seconds = |at: &Option<String>| crate::timestamp::epoch_seconds(at.as_deref().unwrap()).unwrap();
     for t in &turns {
         assert!(seconds(&t.started_at) <= seconds(&t.ended_at));
         assert_eq!(t.seconds, Some(seconds(&t.ended_at) - seconds(&t.started_at)));
@@ -753,7 +752,7 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
     let roles: Object = object([("spec", claude.clone()), ("build", claude.clone()), ("review", claude)]);
     assert_eq!(field(metrics, "roles"), &Value::Object(roles));
     assert_eq!(field(metrics, "started_at"), &Value::from(at(0)));
-    let ended = crate::summary::epoch_seconds(field(metrics, "ended_at").as_str().unwrap()).unwrap();
+    let ended = crate::timestamp::epoch_seconds(field(metrics, "ended_at").as_str().unwrap()).unwrap();
     assert_eq!(field(metrics, "seconds"), &Value::from(ended - HOST_EPOCH));
     assert_eq!(f.saved().get("quality_rounds"), Some(&quality_rounds));
 }

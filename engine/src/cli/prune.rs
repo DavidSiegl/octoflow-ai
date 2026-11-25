@@ -35,8 +35,8 @@ pub struct PrunedRun {
     /// What became of the run's worktree: BRANCH_DELETED, "would be deleted", or BRANCH_KEPT and why; empty when the
     /// run has none to decide (see prune_worktree).
     pub worktree: String,
-    /// Why nothing was decided: the run's state cannot be read (SavedRun::problem), the pull request is not done
-    /// yet, or pruning the run failed. Nothing is recorded then.
+    /// Why nothing was decided: the run's state cannot be read (SavedRun::problem), another run not closed builds on
+    /// its branch, the pull request is not done yet, or pruning the run failed. Nothing is recorded then.
     pub skipped: Option<String>,
     /// The run's branch_cleanup: written, or what would be in a dry run; None when skipped.
     pub cleanup: Option<String>,
@@ -58,14 +58,16 @@ impl PrunedRun {
 /// for CLOSED_BRANCH_GRACE by world's wall clock, and record what became of each in its state.json
 /// (branch_cleanup); with dry_run, decide each and change nothing.
 ///
-/// A local branch goes when it is at or behind its pull request's head commit, origin's when it is at it, deleted
-/// under a lease; a branch checked out in a worktree stays, unless that is the run's own --worktree under
-/// WORKTREES_DIR, which is removed first (git worktree remove, without force, so with its ignored files) when it
-/// has no uncommitted changes and is at or behind the head too. Worktrees whose directory is gone are forgotten
-/// first (Host::prune_worktrees), unless dry_run. Only runs with no branch_cleanup yet are candidates, and with
-/// revisit the runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator did
-/// not make, and one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run
-/// whose state cannot be read (SavedRun::problem) is skipped with that reason. Returns each candidate and each such
+/// A local branch goes when it is at or behind its pull request's head commit, origin's when it is at it, deleted under
+/// a lease; a branch checked out in a worktree stays, unless that is the run's own --worktree under WORKTREES_DIR,
+/// which is removed first (git worktree remove, without force, so with its ignored files) when it has no uncommitted
+/// changes and is at or behind the head too. Worktrees whose directory is gone are forgotten first
+/// (Host::prune_worktrees), unless dry_run. Only runs with no branch_cleanup yet are candidates, and with revisit the
+/// runs whose branch was kept too; a run without a pull request, one whose branch the orchestrator did not make, and
+/// one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run whose state
+/// cannot be read (SavedRun::problem) is skipped with that reason, and so is a run whose branch another run that is not
+/// closed records as its base_branch, naming that run: its pull request targets origin's branch, which GitHub closes if
+/// the branch is deleted, so the run waits for prune until that run is closed. Returns each candidate and each such
 /// run, in run_states' order, but those after gh was found unusable or origin unreachable, which ends the sweep. A
 /// failure on one run is logged and skips that run.
 ///
@@ -87,6 +89,7 @@ pub fn prune_branches(
         host.prune_worktrees(cwd)?;
     }
     let mut checked_out = host.checked_out_branches(cwd)?;
+    let bases = bases_of_runs_not_closed(&runs);
     let mut pruned = vec![];
     for candidate in candidates {
         let shown = candidate.shown();
@@ -100,6 +103,11 @@ pub fn prune_branches(
                 continue;
             }
         };
+        if let Some(builder) = bases.get(&run.branch) {
+            run.skipped = Some(format!("run {builder} builds on its branch"));
+            pruned.push(run);
+            continue;
+        }
         match prune_run(world, cwd, state, &mut run, &mut checked_out, dry_run) {
             Ok(()) => {}
             Err(e) if world.with.interrupt.is_raised() => return Err(e.into()),
@@ -115,6 +123,18 @@ pub fn prune_branches(
         pruned.push(run);
     }
     Ok(pruned)
+}
+
+/// Each branch that a run of runs not closed records as its base_branch, with that run's id: the first such run's,
+/// in runs' order. A run whose state cannot be read counts as far as it reads (SavedRun::shown).
+fn bases_of_runs_not_closed(runs: &[SavedRun]) -> IndexMap<String, String> {
+    let mut bases = IndexMap::new();
+    for s in runs.iter().map(SavedRun::shown).filter(|s| !s.is_closed()) {
+        if let Some(base) = s.base_branch.as_deref().filter(|b| !b.is_empty()) {
+            bases.entry(base.to_string()).or_insert_with(|| s.run_id.clone());
+        }
+    }
+    bases
 }
 
 /// Whether prune has yet to look at the branch of the run state describes: one the orchestrator made and opened a
@@ -140,11 +160,11 @@ fn is_prune_candidate(run: &SavedRun, world: &Connected, revisit: bool) -> bool 
         && !run.health(world.local_host, world.with.pid_alive).is_some_and(|(h, _)| h == RUNNING)
 }
 
-/// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and
-/// record the result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to
-/// its worktree, and loses the branch of a worktree removed. Errors: GhError::Unusable when gh is, or when prune_remote fails as origin_unreachable says (its read of
-/// origin's branch after every try, or a deletion there, which is tried once), either of which no other run can get
-/// past; else GhError::Failed with what failed.
+/// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and record
+/// the result in its state.json, on world's host, filling run in; checked_out maps each branch checked out to its
+/// worktree, and loses the branch of a worktree removed. Errors: GhError::Unusable when gh is, or when prune_remote
+/// fails as origin_unreachable says (its read of origin's branch after every try, or a deletion there, which is tried
+/// once), either of which no other run can get past; else GhError::Failed with what failed.
 fn prune_run(
     world: &Connected,
     cwd: &str,
@@ -209,7 +229,7 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
     let Some(at) = pr.closed_at.as_deref() else {
         return Err(OrchestratorError(format!("PR #{number} is closed without a closing time")));
     };
-    let Ok(closed) = crate::summary::epoch_time(at) else {
+    let Ok(closed) = crate::timestamp::epoch_time(at) else {
         return Err(OrchestratorError(format!("PR #{number} is closed at {at:?}, which is not a time")));
     };
     if now - closed > CLOSED_BRANCH_GRACE as f64 {

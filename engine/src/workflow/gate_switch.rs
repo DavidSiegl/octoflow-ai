@@ -53,8 +53,10 @@ pub fn turn_quality_gate_on(
 }
 
 /// Check that host can run the local gate for the run in state, which gets it on resume, before any turn: from round 1
-/// on, gitleaks runs and local_gate::preflight passes. Round 0 is left to the Workflow's own preflight before the
-/// interview, which checks the same, as for run --quality-gate.
+/// on, gitleaks runs and local_gate::preflight passes. Workflow::check_start checks both again at every start (gitleaks
+/// for the pushes, if the run will push), so a resume that turns the gate on runs each twice; this one fails before
+/// the switch changes the run's state. Round 0 is left to the Workflow's own preflight before the interview, which
+/// also checks the tree, as for run --quality-gate.
 ///
 /// Errors: either check fails.
 pub fn check_gate_mid_run(state: &RunState, host: &dyn Host) -> Result<(), OrchestratorError> {
@@ -71,7 +73,7 @@ fn gate_can_start<'p>(state: &RunState, pipeline: &'p Pipeline) -> Result<Option
     let s = state;
     let why = if s.phase == DONE || s.phase == PUBLISH {
         format!("is in phase {}, past its last turn", s.phase)
-    } else if s.quality_job.as_deref().is_some_and(|j| !j.is_empty()) {
+    } else if s.has_quality_gate() {
         return Ok(None);
     } else if s.quality_gate_disabled {
         "had its quality gate turned off with --no-quality-gate, which cannot be undone".to_string()
@@ -107,7 +109,7 @@ pub fn turn_quality_gate_off(
     human: &dyn Human,
 ) -> Result<(), OrchestratorError> {
     let s = state;
-    if s.phase == DONE || s.quality_job.as_deref().is_none_or(str::is_empty) {
+    if s.phase == DONE || !s.has_quality_gate() {
         let why = if s.phase == DONE { "is done" } else { "has no quality gate" };
         return Err(OrchestratorError(format!("run {} {why}, so --no-quality-gate does not apply", s.run_id)));
     }

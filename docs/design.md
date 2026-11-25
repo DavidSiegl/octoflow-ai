@@ -19,8 +19,9 @@ the process that drives them. `resume` picks the run up where `state.json` says 
   harness's own syntax: `--resume <id>` for claude, `--conversation <id>` for agy, `--session <id>` for pi and
   opencode, and `codex resume <id>`. When its session is gone, or the role runs in another harness now, a fresh one starts
   with a prompt that points it at the earlier rounds, and a Spec Collector's interview starts over.
-- `resume --agent` and `--role-agent` change the harness of each role's next agent; a role whose agent still
-  runs keeps it until it exits. A state saved by 0.3.0 resumes with every role on claude and its saved
+- `resume --agent` and `--role-agent` change the harness of each role's next agent, and `--model` and
+  `--role-model` its model; a role whose agent still runs keeps both until it exits, and the run names the model
+  that agent was started on. A state saved by 0.3.0 resumes with every role on claude and its saved
   permission mode.
 - A closed pane is split again from a surviving one, and a closed workspace is replaced by a new one. The workspace
   is looked for in the herdr server the run saved; one still open there while the resume reaches another server is
@@ -69,8 +70,15 @@ about a different run. Two runs that start together each see the other's claim a
 ## Turn timings and the summary
 
 `state.json` keeps a record per handoff file in `turns`: its step, role, round and quality round, the harness
-and model of its agent (none for a quality analysis, whose role is `quality`), whether it is human-paced, and
-`started_at`, `ended_at` and `seconds`.
+and model of its agent (none for a quality analysis, whose role is `quality`), whether it is human-paced,
+`started_at`, `ended_at` and `seconds`, and in an ACP run `waited_seconds`: how many of those seconds the agent
+waited for your answer to a permission it asked for, as its role's journal records the waits. How a wait is measured
+is `acp::waited_seconds`'s doc (engine/src/acp.rs), and when the field is absent, a herdr run's turn among them,
+`TurnRecord::waited_seconds`'s (engine/src/state.rs). Apart from those, `outside_wait_seconds` counts the seconds the
+agent reported waiting on something outside the run (its handoff file's `.waiting` file), and while such a wait
+stands, `waiting_on` holds what it waits on and since when, which the desktop app shows on the running turn;
+`TurnRecord::outside_wait_seconds`'s doc says when a wait starts and ends. The two are measured apart, so a permission
+asked while the agent reported such a wait counts in both.
 
 - An agent's turn starts when its prompt is first sent. The prompt counts as delivered once the agent takes it:
   herdr reports it `working` or `blocked`, or its handoff file appears, within `PROMPT_DELIVERY_SECONDS`. One it
@@ -87,15 +95,19 @@ and model of its agent (none for a quality analysis, whose role is `quality`), w
   start and no duration. A spec copied with `--spec` gets none, since no turn ran.
 
 When a run ends, done, failed or interrupted, it writes `summary.md` in its run directory: the task, run id and
-workflow, each role's harness and model, the outcome (verdict or error), the pull request and branch, the wall
-time from the first known start to the end, a Markdown table of the turns (`?` for what is not known, the
-interview marked as human-paced), and each round's quality gates and the verdict of each verdict step that judged
-it, read from the handoff files. A resume that ends again rewrites it with every turn; a run that is already `done`
-is not rewritten, unless the orchestrator that ended it stopped before releasing it, which it does once both files
-are written: a resume then writes them again, releases the run, tells the human it finished and closes a published
-run's workspace (`Workflow::run`). The pull
-request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a
-line per turn.
+workflow, each role's harness and the model its agent ran on, the outcome (verdict or error), the pull request and
+branch, the wall time from the first known start to the end, a Markdown table of the turns (`?` for what is not known,
+the interview marked as human-paced, a duration that holds waits written with each kind apart, as "12m 03s (3m 19s
+waiting for you, 6m 00s waiting outside the run)"), and
+each round's quality gates and the verdict of each verdict step that judged it, read from the handoff files. Where a
+harness did not offer the role's model, the roles and turns tables name the one its agent ran on instead and the one
+asked for: "sonnet (opus not offered)", or "default (o3 not offered)" when its session named none it took; an agent a
+resume relaunches into that session, asking it for the same model, keeps the name when the reopened session names no
+model. A resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the
+orchestrator that ended it stopped before releasing it, which it does once both files are written: a resume then writes
+them again, releases the run, tells the human it finished and closes a published run's workspace (`Workflow::run`). The
+pull request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a line
+per turn.
 
 ## Run metrics
 
@@ -106,10 +118,15 @@ until a resume finishes it. Its keys:
 - `version` (1), `run_id`, `workflow`, `outcome` (the verdict, `error` or `unfinished`), `rounds` and
   `max_rounds`, `quality_gate` and `max_quality_rounds`, `pull_request`, `started_at`, `ended_at` and `seconds`
   of the whole run, and `restored_locked_files`, how many locked files later turns had changed.
-- `roles`: per role whose agent ran, its `harness` and `model` (`null` for the harness's default).
+- `roles`: per role whose agent ran, its `harness` and `model`, the one its agent ran on (`null` for the harness's
+  default), and when its harness did not offer the role's model, `unoffered_model`, the one it was not offered.
 - `turns`: `turns` of `state.json` in order, each with `step`, `role`, `harness` and `model` (`null` for a quality
   analysis; `model` is the one the agent ran on, not the role's of `roles` when its harness did not offer that, and
-  also `null` for the harness's default and for a session that did not name the model it took instead), `round`, `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`.
+  also `null` for the harness's default and for a session that did not name the model it took instead), `round`,
+  `quality_round`, `human_paced`, `started_at`, `ended_at`, `seconds` and `tokens`, and in an ACP run
+  `waited_seconds`, and for a turn that reported a wait outside the run `outside_wait_seconds` ([Turn
+  timings](#turn-timings-and-the-summary)), and, for a turn whose harness did not offer the
+  role's model, `unoffered_model`, the one it was not offered.
 - `quality_rounds`: per quality round, `round`, `quality_round`, `gate`, the failed `conditions` and
   `fingerprints_by_check`: for each check or linter, the first word of a finding's rule, and `tests` for failing
   tests, the fingerprints of the findings that failed the gate (the gate's own from `quality.json`, else
@@ -151,16 +168,20 @@ log: its tokens are the `usage` each `session/prompt` response carries (`inputTo
 timed when the prompt was sent, so that a prompt answered after its handoff file still counts for its turn. A prompt
 still unanswered once the run's turns are over, or when its agent is ended or started again, is given a few seconds
 (`SETTLE_MS`) to be answered, then cancelled (`session/cancel`) and given as long again, so that the usage of the
-answer is still recorded; a Ctrl-C cuts the wait short. A session no response gave a `usage` for has `"unknown"` tokens. ACP's `usage_update` notification is not read: it carries the
-context window and a cost, not the four kinds.
+answer is still recorded; a Ctrl-C cuts the wait short. A run interrupted by a Ctrl-C or the app's stop cancels
+what its agents have pending at once and gives them `KILL_SETTLE_MS` (2 seconds) to answer before it is released and
+they are killed; a second Ctrl-C does not cut that short. A session no response gave a `usage` for has `"unknown"`
+tokens. ACP's `usage_update` notification is not read: it carries the context window and a cost, not the four kinds.
 
-An ACP run also keeps, in its run directory, each role's journal `<role>.events.jsonl`: every session the role ran,
-each prompt, ACP's session updates verbatim, each permission asked (numbered by the journal) and its answer, each
-turn's end and the agent's exit, one JSON line each after a `{"journal": 1}` header, for the app to replay. Each
-agent's process group is recorded as `<role>.acp.group` (its pgid and its leader's start time), so that a resume ends
-a group the orchestrator before it left behind, if it is still the recorded one, before starting the role again.
-While the run runs, `socket` names the Unix socket it listens on, by which the app answers a permission or stops
-the run; a run started by serve keeps its output in `run.log`.
+An ACP run also keeps, in its run directory, each role's journal `<role>.events.jsonl`: every session the role ran, each
+prompt, ACP's session updates verbatim, each permission asked (numbered by the journal) and its answer, each turn's end
+and the agent's exit, one JSON line each after a `{"journal": 1}` header, for the app to replay. A crash, or a failed
+write, can cut a line short, inside a character as well: every reader, the app's view included, passes over a line that
+does not read, and the next line appended starts on a line of its own. A first line cut short is written again, as the
+file holds nothing else yet. Each agent's process group is recorded as `<role>.acp.group` (its pgid and its leader's
+start time), so that a resume ends a group the orchestrator before it left behind, if it is still the recorded one,
+before starting the role again. While the run runs, `socket` names the Unix socket it listens on, by which the app
+answers a permission or stops the run; a run started by serve keeps its output in `run.log`.
 
 ## Evals
 
@@ -268,7 +289,7 @@ The commit a run publishes ends with git trailers that say what made it, after t
 | --- | --- |
 | `Octoflow-Run` | the run id, which names the run directory and the run's `summary.md` |
 | `Octoflow-Workflow` | the workflow's name |
-| `Octoflow-Role` | one per role whose agent ran, in the order they first started: `role=harness/model`, the model `default` when no flag or workflow file set one; a role that ran in two harnesses over resumes names the one it ended in |
+| `Octoflow-Role` | one per role whose agent ran, in the order they first started: `role=harness/model`, the model its agent ran on, `default` when no flag or workflow file set one, followed by a space and `(opus not offered)` when its harness did not offer the role's model (`sonnet (opus not offered)`, `default (o3 not offered)`); a role that ran in two harnesses over resumes names the one it ended in |
 | `Octoflow-Gate` | with `--quality-gate` only: the last quality round's gate and how many quality rounds its review round took, such as `OK after 2 quality rounds`; `, then turned off` appended, as in `ERROR after 1 quality round, then turned off`, when `resume --no-quality-gate` turned the gate off after that quality round and the Builder changed the code since, so nothing judged the final change; no trailer when the gate was turned off before any analysis finished |
 
 So which harness and model built and reviewed a change can be read from history:
@@ -409,12 +430,17 @@ notes why after it, and a merged ticket is written `resolved (PR #<n> merged)` i
 `done`, without the release: drain cannot know which release a merge made in an arbitrary project.
 
 Drain reads every directory's tickets, whatever its spec's status, and even without a `spec.md`: a ticket's
-`<slug>/NN` blocker is that ticket's own status, and a ticket's open pull request is followed while its spec is
-held, so its merge is not lost. It starts a ticket only while its spec is `ready-for-agent`. A ticket's `Blocked
+`<slug>/NN` blocker is that ticket's own status, and a ticket's open pull request, once its `PR:` line records it,
+is followed while its spec is held, so its merge is not lost. A ticket's `Run:` line is read only while its spec is
+`ready-for-agent` and not held, so that a stale run under a held spec stops nothing; a run that opened its pull
+request before the spec was held is caught up once the spec is ready again. It starts a ticket only while its spec
+is `ready-for-agent`. A ticket's `Blocked
 by:` is the tracker's free text, so an entry drain cannot read, or a blocker that is `wontfix` and so never
 finishes, holds only that ticket for the human: the rest of the drain goes on, and drain ends with exit status `1`
-naming each held ticket and why, rather than waiting on it forever. A spec's bad `Blocked by:` still stops drain
-before it runs anything, and so does a cycle among what drain waits on, a spec's tickets included.
+naming each held ticket and why, rather than waiting on it forever. A spec blocked by a `wontfix` spec is held the
+same way, and so is a spec with a ticket file drain cannot read, with all its tickets, and the spec is not made
+`done` while it is held. A spec's bad `Blocked by:` still stops drain before it runs anything, and so does a cycle
+among what drain waits on, a spec's tickets included.
 
 **What one drain does, in order.** It first asks `gh` about each `in-review` spec's pull request: merged makes it
 `done`, closed `ready-for-human`. It refreshes the run on each `in-review` and `ready-for-human` spec's `Run:`
@@ -426,8 +452,9 @@ the spec for a later drain. A `ready-for-agent` spec with a `Run:` line is one a
 if finished, sets the spec's status, and one that makes it `in-review` has its
 pull request asked about at once, so a pull request merged meanwhile makes it `done` in this drain; if not
 finished, drain stops and says what to do: wait for it, `resume` it, or delete the `Run:` line to start the spec
-over. Tickets are followed the same way, and a spec whose tickets are each `resolved` or `wontfix` then turns
-`done`, so its dependants can run in this drain. Then drain sweeps the branches of earlier runs once, and runs each
+over. Tickets are followed the same way, but a ticket's `Run:` line is read only while its spec is
+`ready-for-agent` and not held, since no ticket of a held spec runs. A spec whose tickets are each `resolved` or
+`wontfix` then turns `done`, whatever its status, so its dependants can run in this drain. Then drain sweeps the branches of earlier runs once, and runs each
 spec whose blockers are all `done`, and each ticket whose blockers are all `resolved`.
 
 **Specs edited while drain runs.** Drain reads each spec again before choosing the next and before each header
@@ -439,7 +466,8 @@ next chooses is run as before. A run another orchestrator takes over with `resum
 `ready-for-agent` for the next drain to pick up.
 
 **Where it stops.** Once nothing more can start, drain prints the specs left with their blockers and pull
-requests, and each `ready-for-agent` spec that is gone as `<slug>: gone (<why>)`, and exits `5`. The first run that
+requests, and each `ready-for-agent` spec that is gone, and each ready ticket of one, as `<slug>: gone (<why>)`, and
+exits `5`. The first run that
 does not end in an approved pull request without conflicts stops it at once. Either way it prints what it changed
 in each spec first.
 

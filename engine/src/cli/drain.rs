@@ -25,23 +25,26 @@ pub const DRAIN_DIR: &str = ".scratch";
 /// The values of a spec's Status: line that drain acts on. A spec moves from SPEC_READY to SPEC_IN_REVIEW, its pull
 /// request open, to SPEC_DONE, merged; or to SPEC_FOR_HUMAN, for a run that failed, did not succeed, conflicts, or
 /// opened no pull request (RunState::nothing_to_publish), which drain leaves only for SPEC_IN_REVIEW, once a succeeded
-/// run's conflict is cleared (refreshed_headers). Drain leaves a spec with any other value, or none, alone. A value is
-/// the line's first word (queue::status_word), so a note may follow it.
+/// run's conflict is cleared (refreshed_headers). Drain runs no spec with any other value, or none; a spec with tickets
+/// it may still make SPEC_DONE, as Kind::Ticketed says. A value is the line's first word (queue::status_word), so a
+/// note may follow it.
 pub const SPEC_READY: &str = "ready-for-agent";
 pub const SPEC_IN_REVIEW: &str = "in-review";
 pub const SPEC_DONE: &str = "done";
 pub const SPEC_FOR_HUMAN: &str = "ready-for-human";
 /// A ticket moves as a spec does, through the same values, but to TICKET_RESOLVED, written `resolved (PR #<n>
 /// merged)`, in place of SPEC_DONE (pull_request_header). Its spec turns SPEC_DONE once each of its tickets is
-/// TICKET_RESOLVED or TICKET_WONTFIX (Kind::Ticketed).
+/// TICKET_RESOLVED or TICKET_WONTFIX, as Kind::Ticketed says when. A spec or ticket blocked by one
+/// that is TICKET_WONTFIX is held for the human (held).
 pub const TICKET_RESOLVED: &str = "resolved";
 pub const TICKET_WONTFIX: &str = "wontfix";
 
 /// Run the specs and tickets in args.dir that are ready (queue::read_queue), one after another, recording each in its
 /// header, in world on the project at cwd, and say how drain ended (drain_end): with exit status 0 once none it drains
-/// is SPEC_READY, EXIT_ERROR when a ticket is held for the human (held), EXIT_WAITING when those left are blocked or
+/// is SPEC_READY, EXIT_ERROR when one is held for the human (held), EXIT_WAITING when those left are blocked or
 /// gone; or the status of the run that stopped the drain. With args.dry_run, print what it would change and run, and
-/// change nothing, exiting 0. Prints the header changes it made, however it ended.
+/// each held for the human, and change nothing, exiting EXIT_ERROR when one is held, else 0. Prints the header
+/// changes it made, however it ended.
 ///
 /// Errors (Stop::Failed), before any run starts: the workflow cannot take a spec (Pipeline::seeded_start), and as
 /// read_queue and refreshed_headers fail, and a taken-up run's state that changed since the pass read it or cannot be
@@ -68,25 +71,19 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
             refreshed.taken.into_iter().filter(|(i, _)| !unwritten.contains(i)).map(|(_, state)| state).collect();
         forget_cleared(world, cwd, &taken).map_err(stopped)?;
     }
-    let by_slug: HashMap<String, usize> = queue.iter().enumerate().map(|(i, s)| (s.slug.clone(), i)).collect();
-    if args.dry_run {
+    let by_slug = slug_indexes(&queue);
+    let ended_with = if args.dry_run {
         print_changes(&queue, world);
-        let order: Vec<&str> =
-            queue.iter().filter(|s| startable(s, &queue, &by_slug)).map(|s| s.slug.as_str()).collect();
-        world.say(&if order.is_empty() {
-            "would run no spec".to_string()
-        } else {
-            format!("would run, in order: {}", order.join(", "))
-        });
-        return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(0)) };
-    }
-    prune::sweep_branches(world, cwd).map_err(stopped)?;
-    let drained = drain_ready(args, world, cwd, &mut queue, &by_slug);
-    // The changes are printed whether the drain ended or failed.
-    print_changes(&queue, world);
-    let ended_with = match drained? {
-        Some(stopped_with) => stopped_with,
-        None => drain_end(&queue, &by_slug, world),
+        dry_run_end(&queue, &by_slug, world)
+    } else {
+        prune::sweep_branches(world, cwd).map_err(stopped)?;
+        let drained = drain_ready(args, world, cwd, &mut queue, &by_slug);
+        // The changes are printed whether the drain ended or failed.
+        print_changes(&queue, world);
+        match drained? {
+            Some(stopped_with) => stopped_with,
+            None => drain_end(&queue, &by_slug, world),
+        }
     };
     if interrupt.is_raised() {
         return Err(Stop::Interrupted(None));
@@ -116,20 +113,48 @@ fn drain_ready(
     }
 }
 
-/// Whether drain runs it: a spec it runs whole, or a ticket whose spec is SPEC_READY now; among queue, by by_slug.
+/// Each of queue's slugs, with its index in queue.
+fn slug_indexes(queue: &[Queued]) -> HashMap<String, usize> {
+    queue.iter().enumerate().map(|(i, s)| (s.slug.clone(), i)).collect()
+}
+
+/// The ticket's spec among queue, by by_slug; None for a spec, and for a ticket whose directory has no spec.md.
+fn spec_of<'q>(item: &Queued, queue: &'q [Queued], by_slug: &HashMap<String, usize>) -> Option<&'q Queued> {
+    match &item.kind {
+        Kind::Ticket(spec) => by_slug.get(spec).map(|&i| &queue[i]),
+        _ => None,
+    }
+}
+
+/// Whether drain runs it: a spec it runs whole, or a ticket whose spec is SPEC_READY as drain last read it
+/// (Queued::status_as_read), so that a ticket whose spec went gone while ready is still drain's, to report gone;
+/// among queue, by by_slug.
 fn drains(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> bool {
     match &item.kind {
         Kind::Spec => true,
         Kind::Ticketed => false,
-        Kind::Ticket(spec) => by_slug.get(spec).is_some_and(|&i| queue[i].status().as_deref() == Some(SPEC_READY)),
+        Kind::Ticket(_) => {
+            spec_of(item, queue, by_slug).is_some_and(|s| s.status_as_read().as_deref() == Some(SPEC_READY))
+        }
     }
 }
 
-/// Whether drain runs it next: it drains, is SPEC_READY, is not held for the human (held), and waits for nothing
-/// unfinished among queue, by by_slug (waits_for, Queued::finished).
+/// Why it is gone (Queued::gone): its own file, or for a ticket its spec's, which then never runs it; None while both
+/// can be read. queue and by_slug are as drains's.
+fn gone(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> Option<String> {
+    if let Some(gone) = &item.gone {
+        return Some(gone.clone());
+    }
+    let spec = spec_of(item, queue, by_slug)?;
+    spec.gone.as_ref().map(|gone| format!("its spec {} is gone: {gone}", spec.slug))
+}
+
+/// Whether drain runs it next: it drains, is SPEC_READY, is not gone, is not held for the human (held), and waits for
+/// nothing unfinished among queue, by by_slug (waits_for, Queued::finished).
 fn startable(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> bool {
     drains(item, queue, by_slug)
         && item.status().as_deref() == Some(SPEC_READY)
+        && gone(item, queue, by_slug).is_none()
         && held(item, queue, by_slug).is_none()
         && waits_for(item, queue, by_slug).into_iter().all(|b| queue[by_slug[b]].finished())
 }
@@ -143,20 +168,26 @@ fn waits_for<'q>(item: &'q Queued, queue: &'q [Queued], by_slug: &HashMap<String
     item.blockers.iter().chain(of_spec).map(String::as_str).collect()
 }
 
-/// Why a ticket can never start until the human acts, which holds it out of the drain: a Blocked by: entry drain
-/// could not read (Queued::unread_blockers), or a blocker that is TICKET_WONTFIX, which never finishes; None for one
-/// that can, and for a spec. queue and by_slug are as waits_for's.
+/// Why a spec or ticket can never start until the human acts, which holds it out of the drain: what drain could not
+/// read for it (Queued::unread), a blocker that is TICKET_WONTFIX, which never finishes, or, for a ticket, that its
+/// spec is held; None for one that can. queue and by_slug are as waits_for's.
 fn held(item: &Queued, queue: &[Queued], by_slug: &HashMap<String, usize>) -> Option<String> {
-    if !matches!(item.kind, Kind::Ticket(_)) {
-        return None;
-    }
-    if let Some(unread) = item.unread_blockers.first() {
+    if let Some(unread) = item.unread.first() {
         return Some(unread.clone());
     }
     let wontfix = waits_for(item, queue, by_slug)
         .into_iter()
-        .find(|b| queue[by_slug[*b]].status().as_deref() == Some(TICKET_WONTFIX))?;
-    Some(format!("it is blocked by {wontfix}, which is {TICKET_WONTFIX}"))
+        .find(|b| queue[by_slug[*b]].status().as_deref() == Some(TICKET_WONTFIX));
+    if let Some(wontfix) = wontfix {
+        return Some(format!("it is blocked by {wontfix}, which is {TICKET_WONTFIX}"));
+    }
+    let spec = spec_of(item, queue, by_slug)?;
+    held(spec, queue, by_slug).map(|_| format!("its spec {} needs the human", spec.slug))
+}
+
+/// The line that says the human must act on item, held for why (held).
+fn needs_human_line(item: &Queued, why: &str) -> String {
+    format!("{} needs the human: {why}", item.slug)
 }
 
 /// The index of the first of queue drain runs next (startable), each read again from disk first, so a status the
@@ -235,14 +266,40 @@ fn print_changes(queue: &[Queued], world: &Connected) {
     }
 }
 
-/// Print what is left once drain can start nothing, and return its exit status: 0 when nothing it drains was
-/// SPEC_READY as drain last read it; EXIT_ERROR when a ticket is held for the human (held), each printed with why;
-/// else EXIT_WAITING, for those left blocked, or gone.
+/// Those of queue, by by_slug, that a drain which can start nothing more leaves to report: each it drains that was
+/// SPEC_READY as drain last read it, each Ticketed spec so that is held for the human (held), which may have no ticket
+/// to report it, and each Ticketed spec with a ticket drain cannot read (Queued::unread), whatever its status.
+fn left<'q>(queue: &'q [Queued], by_slug: &HashMap<String, usize>) -> Vec<&'q Queued> {
+    let ready = |s: &Queued| s.status_as_read().as_deref() == Some(SPEC_READY);
+    let held_ticketed = |s: &Queued| s.kind == Kind::Ticketed && held(s, queue, by_slug).is_some();
+    let unread_ticket = |s: &Queued| s.kind == Kind::Ticketed && !s.unread.is_empty();
+    queue.iter().filter(|s| (ready(s) && (drains(s, queue, by_slug) || held_ticketed(s))) || unread_ticket(s)).collect()
+}
+
+/// Print, for a dry run, the specs and tickets of queue a drain would run, in order, then each it would hold for the
+/// human (held) with why, and return its exit status: EXIT_ERROR when one is held, else 0. by_slug indexes queue.
+fn dry_run_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connected) -> i32 {
+    let order: Vec<&str> = queue.iter().filter(|s| startable(s, queue, by_slug)).map(|s| s.slug.as_str()).collect();
+    world.say(&if order.is_empty() {
+        "would run no spec".to_string()
+    } else {
+        format!("would run, in order: {}", order.join(", "))
+    });
+    let mut ended_with = 0;
+    for item in left(queue, by_slug) {
+        if let Some(why) = held(item, queue, by_slug) {
+            world.say(&needs_human_line(item, &why));
+            ended_with = EXIT_ERROR;
+        }
+    }
+    ended_with
+}
+
+/// Print what is left once drain can start nothing (left), and return its exit status: 0 when nothing is;
+/// EXIT_ERROR when one is held for the human (held), each printed with why; else EXIT_WAITING, for those left blocked,
+/// or gone.
 fn drain_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connected) -> i32 {
-    let left: Vec<&Queued> = queue
-        .iter()
-        .filter(|s| drains(s, queue, by_slug) && s.status_as_read().as_deref() == Some(SPEC_READY))
-        .collect();
+    let left = left(queue, by_slug);
     if left.is_empty() {
         world.say("all specs cleared");
         return 0;
@@ -260,12 +317,12 @@ fn drain_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connect
         }
     };
     for item in left {
-        if let Some(gone) = &item.gone {
+        if let Some(gone) = gone(item, queue, by_slug) {
             world.say(&format!("{}: gone ({gone})", item.slug));
             continue;
         }
         if let Some(why) = held(item, queue, by_slug) {
-            world.say(&format!("{} needs the human: {why}", item.slug));
+            world.say(&needs_human_line(item, &why));
             exit_status = EXIT_ERROR;
             continue;
         }
@@ -280,7 +337,8 @@ fn drain_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connect
 /// What has become of the pull requests and runs that earlier drains left behind (Refreshed): the header lines to set,
 /// each of queue followed to where it settles in this pass (settled_header), so that a pull request already merged or
 /// closed frees its dependants in this drain, and a Ticketed spec SPEC_DONE once its tickets are (Kind::Ticketed); and
-/// the runs whose cleared conflict this pass took up. It
+/// the runs whose cleared conflict this pass took up. A ticket's Run: line is read only while drain may run it: its
+/// spec.md is there, SPEC_READY and not held for the human (held), so a stale one under a held spec stops no drain. It
 /// refreshes a run's conflict and logs what refresh_conflict did; with dry_run, it does nothing of that, and gives the
 /// header lines as though it had. It changes no run's conflict_cleared: the caller does, with forget_cleared.
 ///
@@ -302,9 +360,15 @@ pub fn refreshed_headers(
     let runs = if queue.iter().any(looked_at) { world.with.host.run_states(cwd)? } else { vec![] };
     let mut prs = PullRequestStates { world, cwd, states: HashMap::new() };
     let mut refreshed = Refreshed { headers: vec![], taken: vec![] };
+    let by_slug = slug_indexes(queue);
     for (i, spec) in queue.iter().enumerate() {
         let mut taken = vec![];
-        let entries = settled_header(spec, &runs, &mut prs, &mut taken, target, dry_run)?;
+        let reads_run = match spec.kind {
+            Kind::Ticket(_) => spec_of(spec, queue, &by_slug)
+                .is_some_and(|s| s.status().as_deref() == Some(SPEC_READY) && held(s, queue, &by_slug).is_none()),
+            _ => true,
+        };
+        let entries = settled_header(spec, reads_run, &runs, &mut prs, &mut taken, target, dry_run)?;
         refreshed.taken.extend(taken.into_iter().map(|state| (i, state)));
         if !entries.is_empty() {
             refreshed.headers.push((i, entries));
@@ -315,9 +379,17 @@ pub fn refreshed_headers(
         let set = refreshed.headers.iter().find(|(at, _)| *at == i).and_then(|(_, e)| entry(e, STATUS_KEY));
         set.map(|s| status_word(s).to_string()).or_else(|| queue[i].status())
     };
+    // A held Ticketed spec, one with a ticket it could not read among them, is not done while the human has yet to
+    // act; nor is a wontfix one, which the human closed with nothing merged, or one without a Status: line, which has
+    // no line to set.
     let mut done = vec![];
     for (i, spec) in queue.iter().enumerate() {
-        if spec.kind != Kind::Ticketed || spec.status().as_deref() != Some(SPEC_READY) {
+        let status = spec.status();
+        if spec.kind != Kind::Ticketed
+            || held(spec, queue, &by_slug).is_some()
+            || status.is_none()
+            || [SPEC_DONE, TICKET_WONTFIX].contains(&status.as_deref().unwrap_or_default())
+        {
             continue;
         }
         let ticket = Kind::Ticket(spec.slug.clone());
@@ -394,9 +466,9 @@ impl PullRequestStates<'_, '_> {
 ///
 /// 1. a SPEC_IN_REVIEW or SPEC_FOR_HUMAN spec's run, its conflict refreshed, or found cleared by a refresh before
 ///    this drain (conflict_header), which can make a SPEC_FOR_HUMAN spec SPEC_IN_REVIEW with its pull request;
-/// 2. a SPEC_READY spec's finished run on its Run: line, which an interrupted drain leaves (finished_run_header):
-///    SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN; a conflict a refresh cleared is taken up so, its run
-///    added to taken;
+/// 2. with reads_run, a SPEC_READY spec's finished run on its Run: line, which an interrupted drain leaves
+///    (finished_run_header): SPEC_IN_REVIEW with its pull request, or SPEC_FOR_HUMAN; a conflict a refresh cleared is
+///    taken up so, its run added to taken;
 /// 3. a spec now SPEC_IN_REVIEW with a pull request, or SPEC_FOR_HUMAN with one whose state step 1 heard, which it
 ///    hears only of a run whose conflict is refreshed or was cleared: SPEC_DONE, or a ticket's TICKET_RESOLVED, once
 ///    it is merged, SPEC_FOR_HUMAN once it is closed (pull_request_header).
@@ -405,6 +477,7 @@ impl PullRequestStates<'_, '_> {
 /// rest is as refreshed_headers says. Errors: as those steps.
 fn settled_header(
     spec: &Queued,
+    reads_run: bool,
     runs: &[SavedRun],
     prs: &mut PullRequestStates,
     taken: &mut Vec<RunState>,
@@ -418,7 +491,7 @@ fn settled_header(
         (Some(SPEC_IN_REVIEW | SPEC_FOR_HUMAN), _) => {
             merge(&mut entries, conflict_header(spec, runs, prs, taken, dry_run)?)
         }
-        (Some(SPEC_READY), Some(run)) => {
+        (Some(SPEC_READY), Some(run)) if reads_run => {
             merge(&mut entries, finished_run_header(spec, &run, runs, prs, target)?);
             let state = saved_run(runs, &run).and_then(|r| r.state().ok());
             if let Some(state) = state.filter(|s| cleared_conflict(s).is_some()) {

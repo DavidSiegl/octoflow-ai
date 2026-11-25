@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::acp_adapter::Installs;
-use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
+use crate::agents::{AgentError, AgentLaunch, Agents, LaunchedModel, RunPlaces, Seen, Started, Waiting};
 use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
@@ -52,6 +52,11 @@ const REQUEST_SECONDS: u64 = 120;
 /// those left are cancelled, to answer them as cancelled, in milliseconds: about as long as an agent takes to end a
 /// turn. Tests, whose fake agent answers at once or never, wait less.
 const SETTLE_MS: u64 = if cfg!(test) { 2_000 } else { 10_000 };
+
+/// How long agents settled once the run's Ctrl-C is raised (AcpAgents::settle_all) have, once cancelled, to answer
+/// the cancel, in milliseconds: long enough for an agent that is still reading to answer with its usage, short enough
+/// that a Ctrl-C is not held up. A second Ctrl-C does not cut it short. Tests wait less.
+const KILL_SETTLE_MS: u64 = if cfg!(test) { 500 } else { 2_000 };
 
 /// How often, in milliseconds, a settle looks at the run's Ctrl-C while it waits.
 const SETTLE_SLICE_MS: u64 = 100;
@@ -93,8 +98,8 @@ pub enum CommandError {
     AlreadyAnswered { option: String, by: String },
     /// The request offers no such option.
     BadOption,
-    /// The run does not wait on the human's message to the agent (Agents::await_human), or a prompt of it is
-    /// pending.
+    /// The run does not wait on the human's message to the agent (Agents::await_human), a prompt of it is pending,
+    /// or the agent was stopped (Connection::stop), as the run's stop or its end does.
     NotWaiting,
     /// The answer or message was taken, but could not be written to the agent, which has exited.
     Unwritten(OrchestratorError),
@@ -211,13 +216,13 @@ impl<'h> AcpAgents<'h> {
             }
         };
         unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
-        let (said, unoffered_model) = match how.model {
+        let (said, model_said) = match how.model {
             Some(model) => set_model(h, &ask, &session, &opened, &model)?,
-            None => (None, None),
+            None => (None, LaunchedModel::Given),
         };
         unpassed.extend(said);
         let agent = Agent { connection: Arc::new(connection), session, harness: h.kind };
-        Ok((agent, Started { asking: false, unpassed, unoffered_model }))
+        Ok((agent, Started { asking: false, unpassed, model_said }))
     }
 }
 
@@ -383,19 +388,26 @@ impl AcpAgents<'_> {
     /// Give the agents of connections SETTLE_MS to answer every prompt they have pending, then cancel what each has
     /// left (Connection::stop: its prompts, and the permissions they wait on) and give them as long again, so that
     /// the usage each answer carries is recorded. An agent cancelled before (Connection::cancelled), which answered
-    /// the cancel then or never will, is not waited for again; nor is any, once the run's Ctrl-C is raised. What
-    /// answers neither is left as it is, for the caller to kill or keep.
+    /// the cancel then or never will, is not cancelled again, nor waited for. Once the run's Ctrl-C is raised, before
+    /// or during either wait, what is left is cancelled at once, and every agent, those cancelled before (as by the
+    /// app's stop) among them, is given KILL_SETTLE_MS instead of what is left of the wait. What answers neither is
+    /// left as it is, for the caller to kill or keep.
     fn settle_all(&self, connections: &[Arc<Connection>]) {
         let interrupt = &self.running.interrupt;
         let pending = connections.iter().filter(|c| !c.cancelled()).collect();
         let pending = still_pending(pending, interrupt);
-        if pending.is_empty() || interrupt.is_raised() {
-            return;
-        }
         for connection in &pending {
             connection.stop();
         }
-        still_pending(pending, interrupt);
+        if !pending.is_empty() {
+            still_pending(pending, interrupt);
+        }
+        if interrupt.is_raised() {
+            let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
+            for connection in connections {
+                connection.wait_answered(deadline);
+            }
+        }
     }
 }
 
@@ -464,6 +476,19 @@ impl Commands for Running {
 /// The name of the role's journal in its run directory (journal's module comment says what it holds).
 pub fn journal_name(role: &str) -> String {
     format!("{role}.events.jsonl")
+}
+
+/// How many of the seconds from `from` to `to` (seconds since the epoch) the role's agent in run waited for the
+/// human's answer to a permission it asked for, as its journal records them: from each `permission` line to the
+/// `answered` line of its `request`. One with no answer waits until its agent's `exited` line; without one, until the
+/// last line of its session before the next `session` line, since an orchestrator that died while the agent waited
+/// (the agent then ended by end_leftovers, which journals nothing) left no line to say when the wait ended; and in
+/// the journal's last session, until `to`. Waits that overlap count once. 0 for a role with no journal. A line not
+/// written whole, as by a crash, is passed over, bytes that are not UTF-8 among them. Errors: the journal cannot be
+/// read.
+pub fn waited_seconds(run: &RunState, role: &str, from: i64, to: i64) -> Result<i64, OrchestratorError> {
+    let text = journal::text(&format!("{}/{}", run.dir(), journal_name(role)))?;
+    Ok(journal::waited_seconds_in(&text, from, to))
 }
 
 /// The path of the record of the role's agent's process group in the run directory dir.
@@ -689,27 +714,28 @@ fn set_mode(
 }
 
 /// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask
-/// (choose). Returns the log's sentence when it could not, and, when the session lists its models and model is not
-/// among them, model with the one the session is on instead. A session already on model counts as offering it; one
-/// that lists no models, as the answer to a resume may not, is not known to run on another, so none is returned.
-/// Errors: the agent refuses the request, or does not answer it.
+/// (choose). Returns the log's sentence when it could not, and what the session said of model: Given when it was set
+/// or the session was already on it; Unoffered with the one the session is on when the session lists its models and
+/// model is not among them, or names the one it is on and lists none; Unknown when it names neither. Errors: the agent
+/// refuses the request, or does not answer it.
 fn set_model(
     h: &Harness,
     ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
     session: &str,
     opened: &Value,
     model: &str,
-) -> Result<(Option<String>, Option<UnofferedModel>), AgentError> {
+) -> Result<(Option<String>, LaunchedModel), AgentError> {
     let taken = current(opened, &MODEL);
     if taken.as_deref() == Some(model) || choose(ask, session, opened, &MODEL, model)? {
-        return Ok((None, None));
+        return Ok((None, LaunchedModel::Given));
     }
-    if config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
-        return Ok((Some(format!("{}'s session names no models, so it may not run on {model}", h.kind)), None));
+    if taken.is_none() && config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
+        let said = format!("{}'s session names no models, so it may not run on {model}", h.kind);
+        return Ok((Some(said), LaunchedModel::Unknown));
     }
     let on = taken.as_deref().unwrap_or("its own");
     let said = format!("{} offers no model {model}; starting it on {on}", h.kind);
-    Ok((Some(said), Some(UnofferedModel { asked: model.to_string(), taken })))
+    Ok((Some(said), LaunchedModel::Unoffered(UnofferedModel { asked: model.to_string(), taken })))
 }
 
 /// A choice a session offers, as ACP names it two ways: a session config option of a category

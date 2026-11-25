@@ -21,7 +21,7 @@ use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError};
 use crate::host::spawn_detached;
-use crate::host::{Host, RunFileText, RunScope};
+use crate::host::{Host, RunFile, RunFileText, RunScope};
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::SetUpFile;
@@ -97,7 +97,7 @@ pub struct ProjectRuns {
     pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
     /// Held through each forget sweep, so that this serve's sweeps of the project run one after the other: a run that
     /// two of its requests list at once (a double submit) is forgotten by the first, and the second finds it gone.
-    /// Another process's sweep (a second app, `octoflow forget`) is not held back (TODO.md).
+    /// Another process's sweep is refused instead (crate::cli::forget::forget_all's lock).
     forgetting: Mutex<()>,
     /// Held through each resume, from its check that the run is resumable until the run is taken up or the wait for
     /// it ends, so that a second resume of the run (two windows, a click again) finds it taken up and is refused.
@@ -167,8 +167,8 @@ impl ProjectRuns {
 
     /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, of those records
     /// shows (RunScope::Inside), and give each run's outcome; the lines forget prints are dropped, as the outcomes hold
-    /// what they say. A sweep waits for one of the project's already under way to end. A raised stopping starts no
-    /// further run. Errors: as forget_all's.
+    /// what they say. A sweep waits for one of the project's already under way here to end, and is refused while
+    /// another process's runs (forget_all's lock). A raised stopping starts no further run. Errors: as forget_all's.
     pub fn forget_all(
         &self,
         sweep: forget::Sweep,
@@ -176,8 +176,16 @@ impl ProjectRuns {
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
         // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
         let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
-        let forgetter =
-            Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside, acp: true };
+        let here = local_host();
+        let forgetter = Forgetter {
+            host: &*self.host,
+            interrupt: stopping,
+            stdout: &|_| {},
+            scope: RunScope::Inside,
+            acp: true,
+            pid_alive: &*self.pid_alive,
+            local_host: &here,
+        };
         forget_all(&forgetter, &self.cwd, sweep)
     }
 
@@ -204,21 +212,28 @@ impl ProjectRuns {
         run_record(run, here, &*self.pid_alive, &self.target)
     }
 
-    /// The run's files, oldest first, as a JSON list of {"name", "mtime"}, mtime in seconds since the epoch; [] for a
-    /// run without a directory. Only the files read would give are listed: none that leads out of the run directory
-    /// through a symbolic link, and none of a run whose directory leads out of the runs directory
-    /// (Host::run_files_inside). Errors: Refused for a run id that is not a plain name, Failed when the directory
-    /// cannot be listed.
+    /// The run's files, oldest first, as a JSON list of {"name", "mtime", "size"}, mtime in seconds since the epoch and
+    /// size in bytes: a file written again within the second it was listed in can keep its mtime but not, as a rule,
+    /// its size, so the two together tell the app when to read it again. [] for a run without a directory. Only the
+    /// files read would give are listed: none that leads out of the run directory through a symbolic link, and none of
+    /// a run whose directory leads out of the runs directory (Host::run_files_inside). Errors: Refused for a run id that
+    /// is not a plain name, Failed when the directory cannot be listed.
     pub fn files(&self, run_id: &str) -> Result<Value, RunReadError> {
         let files = self.host.run_files_inside(&self.dir(run_id)?)?;
-        let entry = |path: &str, mtime: i64| {
-            let name = file_name(path);
-            Value::Object(object([("name", Value::from(name)), ("mtime", Value::from(mtime))]))
+        let entry = |f: &RunFile| {
+            let fields = [
+                ("name", Value::from(file_name(&f.path))),
+                ("mtime", Value::from(f.mtime)),
+                ("size", Value::from(f.size)),
+            ];
+            Value::Object(object(fields))
         };
-        Ok(Value::Array(files.iter().map(|f| entry(&f.path, f.mtime)).collect()))
+        Ok(Value::Array(files.iter().map(entry).collect()))
     }
 
-    /// The text of the run's file name; None when there is no such file. A symbolic link is followed only as far as
+    /// The text of the run's file name, each byte that is not UTF-8 replaced, as the app only shows it, a journal a crash
+    /// cut inside a character among them (crate::acp::replay passes over the cut line); None when there is no such
+    /// file. A symbolic link is followed only as far as
     /// it stays inside the run directory, and the run directory only as far as it stays inside the runs directory
     /// (Host::read_inside). Errors: Refused, having read nothing, for state.json, a run id or name that is not a
     /// plain name (the run id checked first), or a file that leads out; Failed when the file cannot be read.
@@ -227,7 +242,7 @@ impl ProjectRuns {
             return Err(RunReadError::Refused("state.json is not a handoff file".to_string()));
         }
         match self.host.read_inside(&self.dir(run_id)?, plain_name(name)?)? {
-            RunFileText::Text(text) => Ok(Some(text)),
+            RunFileText::Text(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
             RunFileText::Missing => Ok(None),
             RunFileText::Outside => Err(RunReadError::Refused(format!(
                 "{name:?} leads out of run {run_id}'s directory, or the directory out of the runs directory"
@@ -294,10 +309,10 @@ impl ProjectRuns {
     fn agent(&self, run_id: &str, role: &str) -> Result<AgentAddress, RunReadError> {
         let dir = self.dir(run_id)?;
         let path = format!("{dir}/state.json");
-        let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
+        let RunFileText::Text(bytes) = self.host.read_inside(&dir, "state.json")? else {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
-        let run = SavedRun::read(0, &dir, text.as_bytes());
+        let run = SavedRun::read(0, &dir, &bytes);
         // A problem with the file's text names the file already; one with its fields names only the run.
         let state = run.state().map_err(|e| match e.0.starts_with(&path) {
             true => e,
@@ -501,9 +516,10 @@ impl<'p> RunWatch<'p> {
     /// polls in a row with the same record list the same files; then again only when its record changes or its
     /// orchestrator saves its state.json again (heartbeat_at), as nothing else drives it. The wait is for the files the
     /// engine writes after the save that finishes the run, which FINISHED_RUN_WRITES names; one written later still is
-    /// told of only at the next such save. A failed run's release makes one after its summary.md (Workflow::release);
-    /// a resumed done run's ending does not (TODO.md). A poll that
-    /// fails sends only its problem, and changes nothing else of what the watch holds.
+    /// told of only at the next such save, so the engine saves again after writing a run's files late: a failed run's
+    /// release after its summary.md, and a resume that finishes a done run's files after them
+    /// (Workflow::save_after_files). A poll that fails sends only its problem, and changes nothing else of what the
+    /// watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),

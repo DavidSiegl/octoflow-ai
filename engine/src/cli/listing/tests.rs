@@ -13,8 +13,8 @@ use crate::constants::{APPROVE, CHANGES_REQUESTED, EXIT_ERROR, STALE_SECONDS};
 use crate::host::fake::{FakeHost, FakePr, HOST_EPOCH};
 use crate::host::{Completed, ProcessHost};
 use crate::interrupt::Interrupt;
-use crate::summary::iso_utc;
 use crate::test_support::{accepting, impl_, read_saved, solo, TempDir};
+use crate::timestamp::iso_utc;
 use crate::workflow_file::workflow_definition;
 
 const RUN_ID: &str = "20260930-070000-c0ffee";
@@ -26,7 +26,7 @@ const SHOW_DIR: &str = "/proj/.octoflow-ai/runs/20260929-120000-a1b2c3";
 const JOB: &str = "Octoflow-AI/octoflow-ai-quality";
 
 /// The keys of a run record, in the order run_record gives them.
-const RUN_RECORD_KEYS: [&str; 27] = [
+const RUN_RECORD_KEYS: [&str; 28] = [
     "id",
     "key",
     "task",
@@ -51,6 +51,7 @@ const RUN_RECORD_KEYS: [&str; 27] = [
     "branch",
     "worktree",
     "pr",
+    "nothing_to_publish",
     "turns",
     "resume_command",
     "resumable",
@@ -242,6 +243,13 @@ fn pull_request_says_whether_the_run_opens_one() {
         let state = with(run("build"), &[("pull_request", Value::from(opens))]);
         assert_eq!(key(&record(&state, 40, true, &[]), "pull_request"), Value::from(opens));
     }
+}
+
+#[test]
+fn nothing_to_publish_says_whether_the_run_found_nothing_to_publish() {
+    assert_eq!(key(&record(&run("done"), 40, true, &[]), "nothing_to_publish"), Value::from(false));
+    let state = with(run("done"), &[("nothing_to_publish", Value::from(true))]);
+    assert_eq!(key(&record(&state, 40, true, &[]), "nothing_to_publish"), Value::from(true));
 }
 
 #[test]
@@ -770,6 +778,12 @@ fn branch_pull_request_and_conflicts() {
     for label in ["branch", "base", "pr", "conflicts"] {
         assert!(!has_line(&out, label), "{label}: {out}");
     }
+}
+
+#[test]
+fn a_run_with_nothing_to_publish_says_so_where_its_pull_request_would_be() {
+    let out = shown(&[show_state(&[("pr_url", Value::Null), ("nothing_to_publish", Value::from(true))])]);
+    assert!(out.contains(&format!("\npr         {NOTHING_TO_PUBLISH}\n")), "{out}");
 }
 
 #[test]

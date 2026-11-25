@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Api, Project, RunRecord } from "../api";
+import { useNow } from "../hooks";
 import type { RunEntry } from "../runs";
 import { formatRound, heartbeatAge, outcome } from "../runs";
 import { AgentPanes } from "./AgentPanes";
@@ -11,14 +12,12 @@ interface Props {
   api: Api;
   project: Project;
   entry: RunEntry;
-  /** The time, in milliseconds since the epoch, that the heartbeat is aged to. */
-  now: number;
   onClose: () => void;
 }
 
 /** One run: its map, its files, and the selected one rendered, the newest file until one is chosen; and its
  * agents. */
-export function RunDetail({ api, project, entry, now, onClose }: Props) {
+export function RunDetail({ api, project, entry, onClose }: Props) {
   const { record, files } = entry;
   const [chosen, setChosen] = useState<string | null>(null);
   const file = files?.find((f) => f.name === chosen) ?? files?.at(-1);
@@ -30,17 +29,18 @@ export function RunDetail({ api, project, entry, now, onClose }: Props) {
         </button>
         <h2 title={record.id}>{record.key}</h2>
         <p className="task">{record.task}</p>
-        <p className="status">
-          {formatRound(record)}
-          {record.role && ` · ${record.role}`} · {outcome(record, heartbeatAge(entry, now))}
-        </p>
+        <Status entry={entry} />
         {record.waiting?.reason === "blocked" && <p className="blocked">blocked: {record.waiting.detail}</p>}
         {record.resumable && record.backend === "acp" && <ResumeButton api={api} project={project} record={record} />}
         {record.pr && (
           <OutsideLink target={{ page: record.pr.url }}>{record.pr.url}</OutsideLink>
         )}
+        {/* Worded as the engine's summary.md and show word it (NOTHING_TO_PUBLISH in engine/src/state.rs). */}
+        {!record.pr && record.nothing_to_publish && (
+          <p className="no-pr">No pull request: nothing tracked changed since the base, so there was nothing to publish.</p>
+        )}
       </header>
-      <RunMap record={record} now={now} />
+      <RunMap record={record} />
       <div className="files-and-file">
         <ul className="files" aria-label="files">
           {(files ?? []).map((f) => (
@@ -66,6 +66,19 @@ export function RunDetail({ api, project, entry, now, onClose }: Props) {
       </div>
       <AgentPanes api={api} project={project} record={record} />
     </section>
+  );
+}
+
+/** The run's round, role and outcome, its heartbeat aged to the clock. The rest of the run detail changes only with
+ * the run, so the clock's tick re-renders this line alone, not the octopus, the handoff file or the agents. */
+function Status({ entry }: { entry: RunEntry }) {
+  const now = useNow();
+  const { record } = entry;
+  return (
+    <p className="status">
+      {formatRound(record)}
+      {record.role && ` · ${record.role}`} · {outcome(record, heartbeatAge(entry, now))}
+    </p>
   );
 }
 

@@ -106,20 +106,26 @@ impl Host for ServeHost {
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        Ok(self.read(&format!("{run_dir}/{name}"))?.map_or(RunFileText::Missing, RunFileText::Text))
+        Ok(self
+            .read(&format!("{run_dir}/{name}"))?
+            .map_or(RunFileText::Missing, |text| RunFileText::Text(text.into_bytes())))
     }
 
     fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
         let mut s = self.state();
         s.run_files_inside_calls += 1;
-        let mut files: Vec<(i64, String)> = s
+        let mut files: Vec<RunFile> = s
             .files
-            .keys()
-            .filter(|p| p.starts_with(&format!("{run_dir}/")) && **p != format!("{run_dir}/state.json"))
-            .map(|p| (s.mtimes.get(p).copied().unwrap_or(0), p.clone()))
+            .iter()
+            .filter(|(p, _)| p.starts_with(&format!("{run_dir}/")) && **p != format!("{run_dir}/state.json"))
+            .map(|(p, text)| RunFile {
+                path: p.clone(),
+                mtime: s.mtimes.get(p).copied().unwrap_or(0),
+                size: text.len() as u64,
+            })
             .collect();
-        files.sort();
-        Ok(files.into_iter().map(|(mtime, path)| RunFile { path, mtime }).collect())
+        files.sort_by(|a, b| (a.mtime, &a.path).cmp(&(b.mtime, &b.path)));
+        Ok(files)
     }
 }
 

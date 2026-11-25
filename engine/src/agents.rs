@@ -123,9 +123,19 @@ pub struct Started {
     /// What of the launch it started without, each as a sentence about its harness for the log: a permission mode the
     /// harness has no equivalent of, a model it cannot be given.
     pub unpassed: Vec<String>,
-    /// The launch's model when the harness's session did not offer it, with the one the agent runs on instead; None
-    /// when it was given the launch's model, or the launch named none.
-    pub unoffered_model: Option<UnofferedModel>,
+    /// What the harness's session said of the launch's model.
+    pub model_said: LaunchedModel,
+}
+
+/// What a harness's session said of the model an agent was launched on (Started::model_said).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LaunchedModel {
+    /// It runs on the launch's model, or the launch named none.
+    Given,
+    /// It did not offer the launch's model, and the agent runs on another.
+    Unoffered(UnofferedModel),
+    /// It names no models, as the answer to a reopened session may not, so which one the agent runs on is not known.
+    Unknown,
 }
 
 /// A run's agents as the orchestrator that drives the run reaches them: their place, starting them, prompting them,
@@ -191,10 +201,11 @@ pub trait Agents: RunPlaces {
     /// Where the human finds the role's agent, as a message names it (herdr: `pane w1:p2`).
     fn whereabouts(&self, run: &RunState, role: &str) -> String;
 
-    /// Let what the agents are still doing end and be recorded, once the run's turns are over and before their tokens
-    /// are counted; the agents run on. ACP: an agent's usage is recorded only when it answers a prompt, which can come
-    /// after the turn's file, so each prompt still pending is given a bounded time to be answered, then cancelled and
-    /// given that time again. herdr: nothing to do, the harnesses' session logs hold the usage.
+    /// Let what the agents are still doing end and be recorded, once the run's turns are over, before their tokens
+    /// are counted, or once it is interrupted, before its release; the agents run on. ACP: an agent's usage is recorded
+    /// only when it answers a prompt, which can come after the turn's file, so each prompt still pending is given a
+    /// bounded time to be answered, then cancelled and given that time again; once the run's Ctrl-C is raised,
+    /// cancelled at once and given a shorter time. herdr: nothing to do, the harnesses' session logs hold the usage.
     fn settle(&self, run: &RunState);
 }
 

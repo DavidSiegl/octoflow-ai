@@ -2,7 +2,8 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
-use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Waiting};
+use crate::acp;
+use crate::agents::{Activity, AgentError, AgentLaunch, LaunchedModel, Seen, Waiting};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
@@ -12,8 +13,8 @@ use crate::harness::harness;
 use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
-use crate::summary::{epoch_seconds, iso_utc};
+use crate::state::{AgentRecord, AgentStart, Backend, RunState, StandingWait, TurnRecord};
+use crate::timestamp::{epoch_seconds, iso_utc};
 use serde_json::Value;
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -181,6 +182,7 @@ impl Workflow<'_> {
             && self.state.prompted.as_deref() == Some(file.as_str());
         if !goes_on {
             self.host.remove(&waiting_path(path))?;
+            self.record_wait(&file, None)?;
         }
         let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
         self.announce(role, how, message.is_some(), &t.announce)?;
@@ -478,9 +480,13 @@ impl Workflow<'_> {
     /// Whether the role's wait on something outside the run stands at this poll (waiting_on), polls counting the polls
     /// in a row before it that found it standing, which this one updates. The human is told of a wait once, at its
     /// second poll, not its first: a poll can read the file between the agent's emptying it and its writing what it
-    /// waits on. A rewritten reason is not told again; a withdrawal goes to the log. Errors: as waiting_on's.
-    fn poll_wait(&self, role: &str, path: &str, polls: &mut u32) -> Result<bool, OrchestratorError> {
+    /// waits on. A rewritten reason is not told again; a withdrawal goes to the log. The turn's record follows the
+    /// wait from that second poll too (record_wait). Errors: as waiting_on's and record_wait's.
+    fn poll_wait(&mut self, role: &str, path: &str, polls: &mut u32) -> Outcome<bool> {
         let waiting = self.waiting_on(path)?;
+        if waiting.is_none() || *polls > 0 {
+            self.record_wait(file_name(path), waiting.as_deref())?;
+        }
         match &waiting {
             Some(what) if *polls == 1 => self.ask_human(role, &format!("is waiting on {what}")),
             None if *polls > 0 => self.human.log(&format!("[{role}] is no longer waiting")),
@@ -488,6 +494,36 @@ impl Workflow<'_> {
         }
         *polls = if waiting.is_some() { *polls + 1 } else { 0 };
         Ok(waiting.is_some())
+    }
+
+    /// Bring the record of the turn under way that writes file (TurnRecord::waiting_on) up to what its role waits on
+    /// now, None for nothing, and save it if that changed it: a new wait starts at the host's now, a rewritten one
+    /// takes its new reason and keeps its start, and a withdrawn one ends now. A file with no turn under way records
+    /// nothing. Errors: the host's time cannot be read, a standing wait's start is not a time, or the state cannot
+    /// be saved.
+    fn record_wait(&mut self, file: &str, waiting: Option<&str>) -> Outcome<()> {
+        let Some(i) = self.open_turn(file) else {
+            return Ok(());
+        };
+        let standing = self.state.turns[i].waiting_on.as_ref();
+        if waiting == standing.map(|w| w.on.as_str()) {
+            return Ok(());
+        }
+        let since = standing.map(|w| w.since.clone());
+        match waiting {
+            Some(on) => {
+                let since = match since {
+                    Some(since) => since,
+                    None => iso_utc(self.host.now()?),
+                };
+                self.state.turns[i].waiting_on = Some(StandingWait { on: on.to_string(), since });
+            }
+            None => {
+                let now = self.host.now()?;
+                self.state.turns[i].end_wait(now)?;
+            }
+        }
+        self.save()
     }
 
     /// What the role reports its turn waits on, from the waiting file of its handoff file at path (waiting_path): the
@@ -564,10 +600,8 @@ impl Workflow<'_> {
             None => (None, None, None, None),
             Some(_) => {
                 let agent = s.agents.get(role);
-                let (model, unoffered) = match agent.and_then(|a| a.unoffered_model.clone()) {
-                    Some(u) => (u.taken, Some(u.asked)),
-                    None => (s.models.get(role).cloned(), None),
-                };
+                let ran = s.model_ran_on(role);
+                let (model, unoffered) = (ran.model.map(String::from), ran.unoffered.map(String::from));
                 (Some(s.harness(role).to_string()), model, unoffered, agent.and_then(|a| a.session.clone()))
             }
         };
@@ -587,6 +621,9 @@ impl Workflow<'_> {
             started_at: started.map(iso_utc),
             ended_at: None,
             seconds: None,
+            waited_seconds: None,
+            outside_wait_seconds: None,
+            waiting_on: None,
             unknown: Object::new(),
         }
     }
@@ -624,10 +661,28 @@ impl Workflow<'_> {
             .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
         let mtime = self.host.mtime(path)?;
         let ended = started.map_or(mtime, |started| mtime.max(started));
+        let waited = match started {
+            Some(started) if self.state.turns[i].harness.is_some() => self.waited_seconds(role, started, ended),
+            _ => None,
+        };
         let record = &mut self.state.turns[i];
+        record.end_wait(ended)?;
         record.ended_at = Some(iso_utc(ended));
         record.seconds = started.map(|started| ended - started);
+        record.waited_seconds = waited;
         self.save()
+    }
+
+    /// The role's agent's waits for a permission's answer from started to ended (since the epoch), as
+    /// TurnRecord::waited_seconds has them: None in a herdr run, and where the role's journal cannot be read, which
+    /// is logged.
+    fn waited_seconds(&self, role: &str, started: i64, ended: i64) -> Option<i64> {
+        if self.state.backend != Backend::Acp {
+            return None;
+        }
+        acp::waited_seconds(&self.state, role, started, ended)
+            .map_err(|e| self.human.log(&format!("[{role}] could not read its journal for the turn's waits: {e}")))
+            .ok()
     }
 
     /// Make sure the role's agent is running, and say how: as `alive` finds it, else started again.
@@ -725,14 +780,25 @@ impl Workflow<'_> {
     /// (AgentRecord::unprompted), before its backend starts it; so an orchestrator stopped while the backend or the
     /// human is past a startup dialog leaves an agent the resume finds, waits for and prompts, never one unknown to
     /// the run.
+    ///
+    /// An agent relaunched into its session and asked for the same model again keeps the model it took in place of that
+    /// one (AgentRecord::unoffered_model) when the reopened session does not say which it runs on; any other start
+    /// records only a substitute its session names, and none when the session says nothing.
     fn start(&mut self, role: &str, mut record: AgentRecord, start: AgentStart) -> Result<bool, StartFailure> {
-        let session = match start {
-            AgentStart::Resumed => self.state.agents.get(role).and_then(|a| a.session.clone()),
-            AgentStart::New | AgentStart::Restarted => None,
+        let earlier = self.state.agents.get(role);
+        let (session, unoffered_model) = match start {
+            AgentStart::Resumed => {
+                let asked = self.state.models.get(role);
+                let unoffered = earlier.and_then(|a| a.unoffered_model.clone()).filter(|u| Some(&u.asked) == asked);
+                (earlier.and_then(|a| a.session.clone()), unoffered)
+            }
+            AgentStart::New | AgentStart::Restarted => (None, None),
         };
         let h = harness(&self.next_harness(role)?)?;
         record.session.clone_from(&session);
         record.unprompted = Some(start);
+        record.unoffered_model = unoffered_model;
+        record.model = Some(self.state.models.get(role).cloned().unwrap_or_default());
         self.state.agents.insert(role.to_string(), record);
         self.save()?;
         let label = self.label(role);
@@ -743,13 +809,17 @@ impl Workflow<'_> {
             label: &label,
             harness: h.kind,
             permission_mode: s.permission_mode.as_deref(),
-            model: s.models.get(role).map(String::as_str),
+            model: s.agents.get(role).and_then(|a| a.model.as_deref()).filter(|m| !m.is_empty()),
             session: session.as_deref(),
             extra_dir: extra_dir.as_deref(),
         };
         let started = self.agents.start(s, role, &launch)?;
         if let Some(agent) = self.state.agents.get_mut(role) {
-            agent.unoffered_model = started.unoffered_model;
+            match started.model_said {
+                LaunchedModel::Given => agent.unoffered_model = None,
+                LaunchedModel::Unoffered(unoffered) => agent.unoffered_model = Some(unoffered),
+                LaunchedModel::Unknown => {}
+            }
         }
         for line in started.unpassed {
             if self.told_unpassed.insert((role.to_string(), line.clone())) {

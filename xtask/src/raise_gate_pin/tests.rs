@@ -27,4 +27,27 @@ fn a_pin_reads_as_the_engine_reads_it() {
         let (engine_version, engine_sha) = local_gate::parse_pin(pin).unwrap();
         assert_eq!((version.to_string(), sha), (engine_version, engine_sha.as_str()), "{pin}");
     }
+    // Malformed: both refuse each, and with the same words.
+    let short = &sha[..40];
+    let upper = sha.to_uppercase();
+    for pin in [
+        format!("v0.9.2 {sha}"),
+        format!("0.9.2 {short}"),
+        format!("0.9.2 {upper}"),
+        format!("0.9.2 {sha} trailing"),
+        "0.9.2".to_string(),
+        String::new(),
+        "# only a comment\n".to_string(),
+    ] {
+        let Error(ours) = pin_of(&pin).map(|_| ()).unwrap_err();
+        let engine = local_gate::parse_pin(&pin).unwrap_err();
+        assert_eq!(ours, format!("{PIN}: {}", engine.0), "{pin:?}");
+    }
+    // A version the engine takes that is not a release's major.minor.patch cannot be raised from.
+    for version in ["1.0.0-rc1", "1.2.3+build.5", "0.16", "0.09.2", "0.+16.0"] {
+        let pin = format!("{version} {sha}\n");
+        assert!(local_gate::parse_pin(&pin).is_ok(), "{version}");
+        let Error(ours) = pin_of(&pin).map(|_| ()).unwrap_err();
+        assert!(ours.contains(&format!("{version}, which is not a release's major.minor.patch")), "{ours}");
+    }
 }

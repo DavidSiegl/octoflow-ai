@@ -259,7 +259,9 @@ pipeline {
                 // checkout's git config is not read; and ci/version-raised.sh, which the pull request can change,
                 // runs after, without the token. Not guaranteed: a directory outside the workspace that the build
                 // user can write to passes the filter, so a tool a pull request's code left there runs with the
-                // token (TODO.md); and a pull request whose own Jenkinsfile Jenkins runs controls all of this.
+                // token, which the user accepted on the premise that only this repository's pull requests build on
+                // the agent (TODO.md, Open issues, "A GitHub token reaches tools in directories ..."); and a pull
+                // request whose own Jenkinsfile Jenkins runs controls all of this.
                 script {
                     def trusted = env.PATH.split(':').findAll { it.startsWith('/') && !it.startsWith(env.WORKSPACE) }
                     withEnv(["PATH=${trusted.join(':')}"]) {
@@ -316,11 +318,15 @@ pipeline {
                         for f in octoflow-third-party-licenses.html octoflow-desktop-npm-licenses.html; do
                             [ -f "dist/$f" ] || { echo "no dist/$f; run the whole build" >&2; exit 1; }
                         done
-                        # A release's own words, docs/releases/v<version>.md, when there is such a file: GitHub puts
-                        # them before the notes it generates from the pull requests.
-                        notes=docs/releases/$tag.md
+                        # A release's own words, docs/releases/v<version>.md, with those of the versions since the
+                        # highest release that main reached without a release of their own (ci/release-notes.sh, given
+                        # the tags of the releases there are, drafts left out): GitHub puts them before the notes it
+                        # generates from the pull requests.
+                        gh api --paginate "repos/{owner}/{repo}/releases" \
+                            --jq '.[] | select(.draft | not) | .tag_name' > release-tags.txt
+                        ci/release-notes.sh "$version" < release-tags.txt > release-notes.md
                         set --
-                        [ ! -f "$notes" ] || set -- --notes-file "$notes"
+                        [ ! -s release-notes.md ] || set -- --notes-file release-notes.md
                         # Publishing it starts .github/workflows/macos-binary.yml, which adds the macOS binary and app.
                         gh release create "$tag" "$@" \
                             dist/octoflow-linux-x86_64 dist/octoflow-linux-x86_64.sha256 \

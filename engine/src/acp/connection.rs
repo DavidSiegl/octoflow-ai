@@ -221,12 +221,13 @@ impl Connection {
     }
 
     /// Send text as the human's message in session, its next prompt, as prompt does, while the run waits on the
-    /// human (await_human). Errors: NotWaiting when it does not, or a prompt is pending, which ACP allows no second
-    /// beside; Unwritten when it cannot be written to the agent.
+    /// human (await_human). Errors: NotWaiting when it does not, a prompt is pending, which ACP allows no second
+    /// beside, or stop cancelled what the agent was doing, after which nothing would cancel the message's prompt;
+    /// Unwritten when it cannot be written to the agent.
     pub(super) fn message(&self, session: &str, text: &str) -> Result<(), CommandError> {
         let id = {
             let mut state = self.shared.lock();
-            if state.waiting.is_none() || state.exited || !state.prompts.is_empty() {
+            if state.waiting.is_none() || state.exited || state.cancelled || !state.prompts.is_empty() {
                 return Err(CommandError::NotWaiting);
             }
             self.shared.begin_prompt(&mut state, session, text, "human")

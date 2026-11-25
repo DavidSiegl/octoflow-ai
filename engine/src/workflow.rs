@@ -20,7 +20,7 @@ use crate::constants::{
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::harness::{harness, AgentSettings, Usage};
-use crate::host::{git_status, Host, PushError, Scanned};
+use crate::host::{git_status, holds_nothing, Host, PushError, Scanned};
 use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
@@ -30,13 +30,16 @@ use crate::paths::file_name;
 use crate::pipeline::{Pipeline, Step, DONE, PUBLISH, QUALITY};
 use crate::prompts::Prompts;
 use crate::proofs::PROOF_TIMEOUT;
-use crate::pull_request::{branch_name, commit_note, pr_body, provenance, spec_title, GateEvidence, QualityFile};
+use crate::pull_request::{
+    branch_name, commit_note, commit_title, pr_body, provenance, spec_title, GateEvidence, QualityFile,
+};
 use crate::quality::parse_gate;
 use crate::run_commands::RunCommands;
 use crate::runs::{local_host, RUNNING};
 use crate::spec_file::SpecFile;
 use crate::state::{AgentStart, Backend, RunState, SavedRun};
-use crate::summary::{iso_utc, run_metrics, run_summary, turn_tokens};
+use crate::summary::{run_metrics, run_summary, turn_tokens};
+use crate::timestamp::iso_utc;
 use crate::workflow_file::{run_pipeline, workflow_definition};
 use serde_json::Value;
 use step_prompt::RunView;
@@ -350,6 +353,9 @@ impl<'a> Workflow<'a> {
                 return Err(Stopped::Failed(e));
             }
             Err(_) => {
+                // Settled while the Ctrl-C is raised, which gives the agents a short wait, and before the release, so
+                // that the run reads as released only once its agents' answers are recorded.
+                self.agents.settle(&self.state);
                 // Caught, so that the commands that record the stop run.
                 self.interrupt.catch();
                 self.release("interrupted");
@@ -396,8 +402,9 @@ impl<'a> Workflow<'a> {
 
     /// What follows the last phase, for a run saved as done, as far as left says: its tokens counted once its agents
     /// settle (Agents::settle), its summary and metrics written, and then, for a run this orchestrator owns, the run
-    /// released, the human told, and the workspace of a published run closed. What only costs a file or a notice is
-    /// logged when it fails, but none goes on past the Ctrl-C.
+    /// released, the human told, and the workspace of a published run closed; for a run no process owns, state.json
+    /// saved again, as no release follows to have serve list the files written (save_after_files), even past the
+    /// Ctrl-C. What only costs a file or a notice is logged when it fails, but nothing else goes on past the Ctrl-C.
     ///
     /// The files are written before the release, so that a run released is one whose files were written: a resume
     /// (ending_left) tells an ending cut short by the owner alone. The notice and the closing
@@ -410,17 +417,24 @@ impl<'a> Workflow<'a> {
             self.count_tokens();
             self.check_interrupt()?;
         }
-        if left.write_summary {
-            self.write_summary();
-            self.check_interrupt()?;
-        }
-        if left.write_metrics {
-            self.write_metrics();
-            self.check_interrupt()?;
-        }
+        let written = (|| {
+            if left.write_summary {
+                self.write_summary();
+                self.check_interrupt()?;
+            }
+            if left.write_metrics {
+                self.write_metrics();
+                self.check_interrupt()?;
+            }
+            Ok(())
+        })();
         if !left.release {
-            return Ok(());
+            // Saved even past the Ctrl-C: a file written and not saved after would never be listed, as the next
+            // resume finds nothing left (ending_left) and so saves nothing.
+            self.interrupt.finally(|| self.save_after_files());
+            return written;
         }
+        written?;
         self.state.owner = None;
         self.save()?;
         let s = &self.state;
@@ -485,6 +499,11 @@ impl<'a> Workflow<'a> {
             self.check_worktree()?;
         }
         self.check_branch()?;
+        // gitleaks and the gate's tools may have gone since the run last started.
+        self.check_gitleaks()?;
+        if self.gate_ahead() {
+            local_gate::preflight(self.host)?;
+        }
         Ok(())
     }
 
@@ -494,13 +513,7 @@ impl<'a> Workflow<'a> {
         if self.state.worktree.is_some() {
             self.open_worktree()?;
         }
-        // A run that publishes scans what it pushes, and a gated one each snapshot; one that does both is told of
-        // its pushes, which it asked for with its pull request.
-        if self.state.pull_request {
-            self.host.check_gitleaks(Scanned::Unpublished)?;
-        } else if self.quality_gate_on {
-            self.host.check_gitleaks(Scanned::SinceBase)?;
-        }
+        self.check_gitleaks()?;
         if self.quality_gate_on {
             self.check_gate()?;
         }
@@ -681,30 +694,38 @@ impl<'a> Workflow<'a> {
             }
         }
         self.write_summary();
-        // round_results can take longer than serve waits for a finished run's files
-        // (crate::serve::FINISHED_RUN_WRITES); a save after the summary has serve list them again, so the summary
-        // reaches the app. Only after a save that worked: state.json holds an older text otherwise.
+        // Only after a save that worked: state.json holds an older text otherwise.
         if saved.is_ok() {
-            if let Err(e) = self.save_released() {
-                self.human.log(&format!("could not save state.json after {SUMMARY_FILE}: {e}"));
-            }
+            self.save_after_files();
         }
     }
 
-    /// Write state.json again, with a fresh heartbeat, for a run release has just saved. Errors: TakenOver when
-    /// state.json no longer reads as what that save wrote, as after a close or another orchestrator's resume (save's
-    /// owner check cannot tell, since the owner is null now); the host's, when it cannot be read or written. A change
-    /// between the read and the write is overwritten, as with save.
-    fn save_released(&mut self) -> Outcome<()> {
-        let saved = self.host.read(&self.state_path())?;
-        if !saved.is_some_and(|text| RunState::from_text(&text).is_ok_and(|now| now == self.state)) {
-            return Err(Stopped::TakenOver(OrchestratorError(format!(
-                "run {}'s state.json changed since its release, by a close or another orchestrator; stopping without \
-                 saving",
-                self.state.run_id
-            ))));
+    /// Write state.json again, as it is but for a fresh heartbeat_at, after writing files of a run no process owns, so
+    /// that serve lists them: it stops listing a finished or failed run's files once they settle, and lists them again
+    /// only at the run's next save (RunWatch::poll), which nothing else makes.
+    ///
+    /// It is state.json's text that is saved again, not self.state: a done run's record keeps what it ran with, which
+    /// Workflow::new's settings need not match, and what a close changed since is kept. A run some process owns again,
+    /// as after another orchestrator's resume, is that one's to save, and is left as it is. That, or a failed read,
+    /// parse or write, costs only the listing, and is logged. A change between the read and the write is overwritten,
+    /// as with save.
+    fn save_after_files(&self) {
+        let path = self.state_path();
+        let resaved = (|| {
+            let text = self.host.read(&path)?.ok_or_else(|| OrchestratorError(format!("{path} is gone")))?;
+            let mut saved = RunState::from_text(&text)?;
+            if saved.owner.is_some() {
+                return Err(OrchestratorError(format!(
+                    "run {} was taken over since it was released; leaving its state.json to that orchestrator",
+                    self.state.run_id
+                )));
+            }
+            saved.heartbeat_at = Some(self.timestamp());
+            self.host.write(&path, &saved.to_text(), false)
+        })();
+        if let Err(e) = resaved {
+            self.human.log(&format!("could not save state.json after writing the run's files: {e}"));
         }
-        Ok(self.write_state()?)
     }
 
     /// Write summary.md for a run that just ended; a failure costs only the summary, so it is only logged.
@@ -832,11 +853,13 @@ impl<'a> Workflow<'a> {
     /// deleted, so the run's pr_url does not tell). An in-place run that fails leaves the checkout on its branch for
     /// resume, and close leaves it there too (cli::close's WorktreeFate), while that branch reaches origin only when
     /// the run publishes; taken as a base, it could not be fetched, or would get a pull request against another run's
-    /// work. A closed run's branch that origin has was published, and is taken (TODO.md, "A run's base can be a
-    /// closed run's branch prune deletes"). The error says to check out that run's base, after the run ends when it
-    /// is running; for a run not closed, also to close it once done: by the command RunSettings::commands words, or
-    /// from the desktop app for one of its runs. Errors also when origin cannot be asked, naming the closed run whose
-    /// branch it was asked about.
+    /// work. A closed run's branch that origin has was published, and is taken; once this run records it, prune
+    /// leaves it, and that closed run, alone while this run is not closed (cli::prune::prune_branches), as deleting it
+    /// would close this run's pull request. This run's own sweep, before it records it, can still delete it (TODO.md,
+    /// "A new run's own sweep can delete the branch it is about to take as its base"). The error
+    /// says to check out that run's base, after the run ends when it is running; for a run not closed, also to close
+    /// it once done: by the command RunSettings::commands words, or from the desktop app for one of its runs. Errors
+    /// also when origin cannot be asked, naming the closed run whose branch it was asked about.
     fn take_base_branch(&mut self, branch: String) -> Result<(), OrchestratorError> {
         let s = &self.state;
         if s.base_branch.as_deref().is_some_and(|b| !b.is_empty()) {
@@ -885,15 +908,40 @@ impl<'a> Workflow<'a> {
         Ok(())
     }
 
+    /// Whether publish is still to push the run's branch: the run ends in a pull request, has not opened it, and has
+    /// not found it has nothing to publish.
+    fn will_push(&self) -> bool {
+        let s = &self.state;
+        s.pull_request && !s.nothing_to_publish && s.pr_url.as_deref().is_none_or(str::is_empty)
+    }
+
+    /// Whether the run has the quality gate and may yet judge a snapshot with it: it is not publishing, after its
+    /// last turn.
+    fn gate_ahead(&self) -> bool {
+        self.quality_gate_on && self.state.phase != PUBLISH
+    }
+
+    /// Fail if the rest of the run needs gitleaks and it cannot run here (Host::check_gitleaks): a run that will push
+    /// scans what it pushes, and one whose gate is ahead each snapshot; one that does both is told of its pushes,
+    /// which it asked for with its pull request.
+    fn check_gitleaks(&self) -> Result<(), OrchestratorError> {
+        if self.will_push() {
+            self.host.check_gitleaks(Scanned::Unpublished)
+        } else if self.gate_ahead() {
+            self.host.check_gitleaks(Scanned::SinceBase)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Fail if HEAD is not the run's branch, which holds the Builder's uncommitted change until publishing; a run
     /// with nothing to publish, whose branch publish is leaving, is not checked.
     ///
     /// Otherwise the commit lands on whatever the human checked out, and the run's branch is pushed without it.
     fn check_branch(&self) -> Result<(), OrchestratorError> {
         let s = &self.state;
-        let unpublished = s.pull_request && !s.nothing_to_publish && s.pr_url.as_deref().is_none_or(str::is_empty);
         let branch = match &s.branch {
-            Some(b) if unpublished && !b.is_empty() => b,
+            Some(b) if self.will_push() && !b.is_empty() => b,
             _ => return Ok(()),
         };
         let current = self.host.git(s.work_dir(), &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
@@ -1245,13 +1293,13 @@ impl<'a> Workflow<'a> {
         Ok(true)
     }
 
-    /// The title of the run's commit and pull request, at most 72 characters: spec's title, else the first line of
-    /// the task, else the run id.
+    /// The title of the run's commit and pull request, cut as commit_title cuts it: spec's title, else the first line
+    /// of the task, else the run id.
     fn change_title(&self, spec: &str) -> String {
         let s = &self.state;
-        let first_line = s.task.trim().split('\n').next().unwrap_or_default().to_string();
+        let first_line = s.task.trim().lines().next().unwrap_or_default().to_string();
         let title = spec_title(spec).filter(|t| !t.is_empty()).unwrap_or(first_line);
-        if title.is_empty() { s.run_id.clone() } else { title }.chars().take(72).collect()
+        commit_title(if title.is_empty() { &s.run_id } else { &title })
     }
 
     /// Commit every change in the work dir wd, if it has any, as the run's one commit: title, commit_note, and the
@@ -1274,13 +1322,16 @@ impl<'a> Workflow<'a> {
 
     /// For a run with nothing to publish (RunState::nothing_to_publish): take its work dir off its branch and delete
     /// the branch, which has no commits of its own, then say so. The project's checkout goes back to the base branch,
-    /// as leave_work_dir has it; a worktree is kept, detached, since removing it would delete what the run wrote in
-    /// ignored files. Each step is safe to take again, for a resume that finds an earlier orchestrator stopped in it.
+    /// as leave_work_dir has it. A worktree that holds nothing but the engine's files (host::holds_nothing) is
+    /// removed, without force; one that holds a file, if only an ignored one, is kept, detached, since removing it
+    /// would delete what the run wrote there, and so is one git refuses to remove (a locked one, one with a submodule),
+    /// its refusal logged. Each step is safe to take again, for a resume that finds an earlier orchestrator stopped in
+    /// it.
     fn drop_unpublished_branch(&mut self) -> Outcome<()> {
         let s = &self.state;
         let Some(branch) = s.branch.clone() else { return Ok(()) };
         let there = self.host.branch_commit(&s.cwd, &branch)?.is_some();
-        let mut kept = String::new();
+        let mut worktree_fate = String::new();
         match &s.worktree {
             None => {
                 let base_branch = self.base_branch()?;
@@ -1288,8 +1339,21 @@ impl<'a> Workflow<'a> {
             }
             Some(worktree) => {
                 if self.host.is_worktree(&s.cwd, worktree)? {
-                    self.host.git(worktree, &["switch", "--quiet", "--detach"])?;
-                    kept = format!("; what the run wrote is in worktree {worktree}");
+                    // None once removed; else why the worktree stays.
+                    let why_kept = if holds_nothing(self.host, worktree)? {
+                        self.host.try_remove_worktree(&s.cwd, worktree)?.map(|refusal| {
+                            format!("worktree {worktree} kept, detached, as git would not remove it: {refusal}")
+                        })
+                    } else {
+                        Some(format!("what the run wrote is in worktree {worktree}"))
+                    };
+                    worktree_fate = match why_kept {
+                        None => format!("; removed worktree {worktree}"),
+                        Some(why) => {
+                            self.host.git(worktree, &["switch", "--quiet", "--detach"])?;
+                            format!("; {why}")
+                        }
+                    };
                 } else {
                     // Its directory gone, git still counts the branch as checked out there, and refuses to delete it.
                     self.host.prune_worktrees(&s.cwd)?;
@@ -1303,7 +1367,7 @@ impl<'a> Workflow<'a> {
         self.save()?;
         self.human.log(&format!(
             "nothing tracked changed since the base, so there was nothing to publish: no pull request, and branch \
-             {branch} deleted{kept}"
+             {branch} deleted{worktree_fate}"
         ));
         Ok(())
     }

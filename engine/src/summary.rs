@@ -1,10 +1,11 @@
 //! What a run's records say once it ends: its turns as summary.md, the pull request and show print them, summary.md
-//! itself, metrics.json for the metrics command, and the times and durations they are written in.
+//! itself, metrics.json for the metrics command, and the durations they are written in.
 
 use crate::harness::{Tokens, Usage};
 use crate::json::{Object, ValueExt};
 use crate::pipeline::Pipeline;
-use crate::state::{RunState, TurnRecord};
+use crate::state::{RunState, TurnRecord, NOTHING_TO_PUBLISH};
+use crate::timestamp::{epoch_seconds, iso_utc};
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde_json::json;
@@ -12,28 +13,6 @@ use serde_json::Value;
 
 /// The version of run_metrics' shape, raised when a key changes its meaning or goes.
 pub const METRICS_VERSION: i64 = 1;
-
-/// seconds since the epoch as an RFC 3339 time in UTC to the second, with its offset written out:
-/// 2026-10-28T08:34:31+00:00. The engine writes every time it records so.
-pub fn iso_utc(seconds: i64) -> String {
-    // Seconds beyond jiff's years -9999 to 9999 are clamped to its bounds; no clock gives them.
-    let seconds = seconds.clamp(Timestamp::MIN.as_second(), Timestamp::MAX.as_second());
-    let at = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
-    at.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string()
-}
-
-/// The seconds since the epoch, with their fraction to the microsecond, of an ISO 8601 time with an offset (Z, +hh:mm
-/// or +hh), as jiff's Timestamp reads it: RFC 3339 and ISO 8601's basic format among its forms. Errors: iso is not
-/// such a time, a time without an offset among them, as jiff words it.
-pub fn epoch_time(iso: &str) -> Result<f64, String> {
-    let at: Timestamp = iso.parse().map_err(|e: jiff::Error| e.to_string())?;
-    Ok(at.as_microsecond() as f64 / 1e6)
-}
-
-/// epoch_time's whole seconds, the fraction cut off; errors as its.
-pub fn epoch_seconds(iso: &str) -> Result<i64, String> {
-    epoch_time(iso).map(|seconds| seconds.floor() as i64)
-}
 
 /// A duration as summary.md and the tables write it: 42s, 3m 07s, 2h 05m.
 pub fn format_duration(seconds: i64) -> String {
@@ -71,8 +50,10 @@ struct TurnCells {
 
 impl TurnCells {
     /// A turn record's values as the tables show them, its start in zone. A start or duration that is not known
-    /// shows as ?: a file written before turns were recorded, or a turn still open. A quality analysis runs in no
-    /// harness.
+    /// shows as ?: a file written before turns were recorded, or a turn still open. A duration that holds waits says
+    /// how much of it they took, those for the human's answer to a permission apart from those the role reported on
+    /// something outside the run: "12m 03s (3m 19s waiting for you, 6m 00s waiting outside the run)"; the two can
+    /// overlap (TurnRecord::outside_wait_seconds). A quality analysis runs in no harness.
     fn of(t: &TurnRecord, zone: &TimeZone) -> TurnCells {
         let set = |text: &Option<String>| text.clone().filter(|t| !t.is_empty());
         let harness = t.harness.clone();
@@ -80,10 +61,9 @@ impl TurnCells {
             0 => t.round.to_string(),
             q => format!("{} q{q}", t.round),
         };
-        let model = match (set(&t.model), &harness) {
-            (Some(model), _) => model,
-            (None, Some(_)) => "default".into(),
-            (None, None) => "-".into(),
+        let model = match &harness {
+            Some(_) => t.model_ran_on().to_string(),
+            None => "-".into(),
         };
         let start = match set(&t.started_at) {
             Some(at) => match at.parse::<Timestamp>() {
@@ -103,13 +83,30 @@ impl TurnCells {
             harness: harness.unwrap_or_else(|| "-".into()),
             model,
             start,
-            duration: t.seconds.map_or("?".into(), format_duration),
+            duration: match t.seconds {
+                None => "?".into(),
+                Some(seconds) => {
+                    let waits: Vec<String> =
+                        [(t.waited_seconds, "for you"), (t.outside_wait_seconds, "outside the run")]
+                            .into_iter()
+                            .filter_map(|(n, on)| {
+                                n.filter(|&n| n > 0).map(|n| format!("{} waiting {on}", format_duration(n)))
+                            })
+                            .collect();
+                    if waits.is_empty() {
+                        format_duration(seconds)
+                    } else {
+                        format!("{} ({})", format_duration(seconds), waits.join(", "))
+                    }
+                }
+            },
             file: t.file.clone(),
         }
     }
 }
 
-/// The turns as a Markdown table, the human-paced ones marked: their time is the human's as much as the agent's.
+/// The turns as a Markdown table, the human-paced ones marked: their time is the human's as much as the agent's; a
+/// turn's waits show in its duration (TurnCells::of).
 pub fn turns_table(turns: &[TurnRecord]) -> String {
     let head = ["step", "role", "round", "harness", "model", "start (UTC)", "duration", "file"].map(String::from);
     let mut rows = vec![head.to_vec(), vec!["---".to_string(); head.len()]];
@@ -162,12 +159,11 @@ pub fn run_summary(state: &RunState, pipeline: &Pipeline, rounds: &[String], now
     let wall = turn_starts(s).into_iter().min().map_or("?".to_string(), |start| format_duration(now - start));
     let roles = pipeline.roles().iter().map(|(role, label)| {
         let harness = s.harness(role);
-        let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
-        format!("| {label} ({role}) | {harness} | {model} |")
+        format!("| {label} ({role}) | {harness} | {} |", s.model_ran_on(role))
     });
     let pr = match s.pr_url.as_deref().filter(|u| !u.is_empty()) {
         Some(url) => url,
-        None if s.nothing_to_publish => "none: nothing tracked changed since the base, so there was nothing to publish",
+        None if s.nothing_to_publish => NOTHING_TO_PUBLISH,
         None => "none",
     };
     let branch = s.branch.as_deref().filter(|b| !b.is_empty()).map_or("none".to_string(), |b| format!("`{b}`"));
@@ -233,11 +229,11 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
                 Some(_) if t.tokens.is_set() => t.tokens.clone(),
                 Some(_) => Value::from("unknown"),
             };
-            json!({
+            let mut turn = json!({
                 "step": t.step,
                 "role": t.role,
                 "harness": t.harness,
-                "model": t.model,
+                "model": t.model_ran_on().model,
                 "round": t.round,
                 "quality_round": t.quality_round,
                 "human_paced": t.human_paced,
@@ -245,13 +241,30 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
                 "ended_at": t.ended_at,
                 "seconds": t.seconds,
                 "tokens": tokens,
-            })
+            });
+            if let Some(waited) = t.waited_seconds {
+                turn["waited_seconds"] = waited.into();
+            }
+            if let Some(waited) = t.outside_wait_seconds {
+                turn["outside_wait_seconds"] = waited.into();
+            }
+            if let Some(asked) = t.unoffered_model.as_deref() {
+                turn["unoffered_model"] = asked.into();
+            }
+            turn
         })
         .collect();
     let roles: Object = s
         .agents
         .iter()
-        .map(|(role, agent)| (role.to_string(), json!({"harness": agent.harness, "model": s.models.get(role)})))
+        .map(|(role, agent)| {
+            let ran = s.model_ran_on(role);
+            let mut metrics = json!({"harness": agent.harness, "model": ran.model});
+            if let Some(asked) = ran.unoffered {
+                metrics["unoffered_model"] = asked.into();
+            }
+            (role.to_string(), metrics)
+        })
         .collect();
     let restored: usize = s
         .restored

@@ -12,8 +12,10 @@ interface Props {
 
 type Loaded = { text: string } | { error: string } | null;
 
-/** The file rendered as Markdown, raw HTML in it dropped; fetched again whenever its mtime changes. A newer version
- * keeps the older text on show until it arrives; another file shows as loading until it arrives. */
+/** The file rendered as Markdown, raw HTML in it dropped; fetched again whenever its mtime or its size changes: the
+ * mtime is in whole seconds, so a write within the second of the one read, which can have caught the first partway,
+ * changes only the size. A newer version keeps the older text on show until it arrives; another file shows as loading
+ * until it arrives. */
 export function HandoffFile({ api, project, run, file }: Props) {
   // What was last fetched, keyed by the file it is of but not the version: a newer version of the file on show
   // replaces the text only once it arrives, so the panel neither flashes nor changes height, while another file
@@ -30,7 +32,7 @@ export function HandoffFile({ api, project, run, file }: Props) {
     return () => {
       current = false;
     };
-  }, [api, project, run, file.name, file.mtime, wanted]);
+  }, [api, project, run, file.name, file.mtime, file.size, wanted]);
   const content = loaded.key === wanted ? loaded.content : null;
   if (content === null) {
     return <p className="loading">Loading {file.name}…</p>;

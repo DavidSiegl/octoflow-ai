@@ -186,6 +186,7 @@ pub fn resumable_state(
     if let Some(mode) = s.permission_mode.as_ref().filter(|m| !m.is_empty()) {
         state.permission_mode = Some(mode.clone());
     }
+    // Taken up by each role's next agent; one still running keeps the model it was started on (AgentRecord::model).
     state.models = merged(&state.models, role_models(s, pipeline.roles())?);
     // Taken up by each role's next agent; one still running keeps its harness. Refused before any turn runs when a
     // role's is one this orchestrator no longer takes, as a run saved by an earlier release can name.
@@ -214,7 +215,7 @@ pub fn resumable_state(
 /// is already past the limit.
 fn resume_quality_limit(state: &mut RunState, pipeline: &Pipeline, args: &ResumeArgs) -> Result<(), OrchestratorError> {
     if let Some(n) = args.settings.max_quality_rounds {
-        if state.quality_job.as_deref().is_none_or(str::is_empty) && !args.quality_gate {
+        if !state.has_quality_gate() && !args.quality_gate {
             return Err(OrchestratorError(format!(
                 "run {} has no quality gate, so --max-quality-rounds does not apply",
                 state.run_id

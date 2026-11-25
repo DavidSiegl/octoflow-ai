@@ -206,7 +206,10 @@ fn a_start_initializes_the_agent_and_opens_a_session_whose_id_find_tells_before_
 
     let no_default = "agy's session offers no mode default, its equivalent of --permission-mode default; starting it \
                       without one";
-    assert_eq!(started, Started { asking: false, unpassed: vec![no_default.to_string()], unoffered_model: None });
+    assert_eq!(
+        started,
+        Started { asking: false, unpassed: vec![no_default.to_string()], model_said: LaunchedModel::Given }
+    );
     assert_eq!(f.methods(), ["initialize", "session/new"]);
     let cwd = format!(r#""params":{{"cwd":"{}","#, f.run.work_dir());
     assert!(f.log().contains(&cwd), "{}", f.log());
@@ -500,8 +503,8 @@ fn a_run_opens_whatever_the_harness_of_a_role_it_has_finished_with() {
 }
 
 /// The model z, which no fixture's session offers, as taken instead of the one the session names, if any.
-fn z_unoffered(taken: Option<&str>) -> Option<UnofferedModel> {
-    Some(UnofferedModel { asked: "z".to_string(), taken: taken.map(String::from) })
+fn z_unoffered(taken: Option<&str>) -> LaunchedModel {
+    LaunchedModel::Unoffered(UnofferedModel { asked: "z".to_string(), taken: taken.map(String::from) })
 }
 
 #[test]
@@ -524,16 +527,23 @@ fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reporte
     let on_it = agents.start(&f.run, "builder", &model("z")).expect("start");
     f.put("opened.json", r#","modes":{"currentModeId":"default","availableModes":[{"id":"default"}]}"#);
     let unlisted = agents.start(&f.run, "builder", &model("z")).expect("start");
+    f.put(
+        "opened.json",
+        r#","modes":{"currentModeId":"default","availableModes":[{"id":"default"}]},"models":{"currentModelId":"a"}"#,
+    );
+    let current_unlisted = agents.start(&f.run, "builder", &model("z")).expect("start");
 
-    assert_eq!((offered.unpassed, offered.unoffered_model), (vec![], None));
+    assert_eq!((offered.unpassed, offered.model_said), (vec![], LaunchedModel::Given));
     assert!(f.log().contains(r#""params":{"sessionId":"s-1","modelId":"b"}"#), "{}", f.log());
     assert_eq!(not_offered.unpassed, ["agy offers no model z; starting it on a"]);
-    assert_eq!(not_offered.unoffered_model, z_unoffered(Some("a")));
+    assert_eq!(not_offered.model_said, z_unoffered(Some("a")));
     assert_eq!(unnamed.unpassed, ["agy offers no model z; starting it on its own"]);
-    assert_eq!(unnamed.unoffered_model, z_unoffered(None));
-    assert_eq!((on_it.unpassed, on_it.unoffered_model), (vec![], None));
+    assert_eq!(unnamed.model_said, z_unoffered(None));
+    assert_eq!((on_it.unpassed, on_it.model_said), (vec![], LaunchedModel::Given));
     assert_eq!(unlisted.unpassed, ["agy's session names no models, so it may not run on z"]);
-    assert_eq!(unlisted.unoffered_model, None);
+    assert_eq!(unlisted.model_said, LaunchedModel::Unknown);
+    assert_eq!(current_unlisted.unpassed, ["agy offers no model z; starting it on a"]);
+    assert_eq!(current_unlisted.model_said, z_unoffered(Some("a")));
     assert_eq!(f.asked("session/set_model"), 1, "{:?}", f.methods());
 }
 
@@ -554,9 +564,9 @@ fn a_model_is_set_by_the_session_s_model_config_option_where_it_has_one() {
     let not_offered = agents.start(&f.run, "builder", &model("z")).expect("start");
 
     assert_eq!((current.unpassed, offered.unpassed), (vec![], vec![]));
-    assert_eq!((current.unoffered_model, offered.unoffered_model), (None, None));
+    assert_eq!((current.model_said, offered.model_said), (LaunchedModel::Given, LaunchedModel::Given));
     assert_eq!(not_offered.unpassed, ["opencode offers no model z; starting it on a"]);
-    assert_eq!(not_offered.unoffered_model, z_unoffered(Some("a")));
+    assert_eq!(not_offered.model_said, z_unoffered(Some("a")));
     assert!(f.log().contains(r#""params":{"sessionId":"s-1","configId":"m","value":"b"}"#), "{}", f.log());
     assert_eq!(f.asked("session/set_config_option"), 1, "{:?}", f.methods());
     assert_eq!(f.asked("session/set_model"), 0, "{:?}", f.methods());
@@ -669,9 +679,10 @@ fn the_usage_of_a_prompt_pending_at_an_end_a_restart_or_a_settle_is_recorded() {
 }
 
 /// An agent that answers neither its prompt nor the cancel is waited for once: the run's end that follows its settle
-/// kills it at once. A settle once the run's Ctrl-C is raised waits for none and cancels none.
+/// kills it at once. A settle once the run's Ctrl-C is raised cancels it at once, without SETTLE_MS's wait for its
+/// prompt, and waits KILL_SETTLE_MS for the cancel's answer.
 #[test]
-fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
+fn an_agent_settled_once_is_not_waited_for_again_until_the_ctrl_c() {
     let f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
@@ -690,11 +701,61 @@ fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     f.interrupt.raise();
     let settling = Instant::now();
     agents.settle(&f.run);
-    assert!(settling.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", settling.elapsed());
-    // The fake agent logs a cancel within milliseconds of getting it: one logged only after this sleep lets a wrong
-    // settle pass, and never fails a right one.
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(cancels(), cancelled_before, "{}", f.log());
+    let waited = settling.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(cancels(), cancelled_before + 1, "{}", f.log());
+}
+
+/// A Ctrl-C raised while a settle waits for the answers to its cancels gives the agents KILL_SETTLE_MS from then, not
+/// nothing: what they answer in it is recorded before the run's end kills them (cross-review 311, round 2).
+#[test]
+fn a_ctrl_c_during_the_wait_for_the_cancels_still_gives_the_agents_kill_settle_ms() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    let raised_after = Duration::from_millis(SETTLE_MS + SETTLE_MS / 4);
+    let interrupt = f.interrupt.clone();
+    let raising = std::thread::spawn(move || {
+        std::thread::sleep(raised_after);
+        interrupt.raise();
+    });
+
+    let settling = Instant::now();
+    agents.settle(&f.run);
+
+    let waited = settling.elapsed();
+    raising.join().unwrap();
+    assert!(raised_after + Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+}
+
+/// Agents settled at a Ctrl-C with prompts pending, as an interrupted run settles them before its release, are
+/// cancelled and given KILL_SETTLE_MS to answer, so the usage an answer carries is recorded; the wait for one that
+/// never answers ends once that is up, not SETTLE_MS later (cross-review 275 F5). A message from the human to a
+/// stopped agent is refused: nothing would cancel its prompt (cross-review 311 F2).
+#[test]
+fn agents_settled_at_a_ctrl_c_are_cancelled_and_the_usage_of_their_answers_recorded() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    for (role, text) in [("builder", "HANG"), ("reviewer", "DEAF")] {
+        agents.start(&f.run, role, &launch("agy")).expect("start");
+        agents.prompt(&f.run, role, text).expect("prompt");
+    }
+    f.interrupt.raise();
+
+    let settling = Instant::now();
+    agents.settle(&f.run);
+
+    let waited = settling.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(f.log().matches("session/cancel ").count(), 2, "{}", f.log());
+    assert_eq!(session_usage(&read(&usage_file(&f.run)), "s-1").len(), 1, "the HANG agent's answer to its cancel");
+    agents.await_human(&f.run, "builder", Waiting::Idle);
+    assert_eq!(agents.message("builder", "go on"), Err(CommandError::NotWaiting));
 }
 
 #[test]
@@ -959,7 +1020,7 @@ fn journal(f: &Fixture) -> Vec<Value> {
     lines
         .map(|mut line| {
             if let Some(at) = line.as_object_mut().and_then(|o| o.remove("at")) {
-                assert!(crate::summary::epoch_time(at.as_str().expect("a text")).is_ok(), "{at}");
+                assert!(crate::timestamp::epoch_time(at.as_str().expect("a text")).is_ok(), "{at}");
             }
             line
         })
@@ -1152,4 +1213,39 @@ fn a_message_is_refused_until_the_run_waits_on_the_human_and_then_sent_once_as_t
     let last_prompt = lines.iter().rev().find(|l| l["kind"] == "prompt").expect("a prompt");
     assert_eq!((&last_prompt["text"], &last_prompt["from"]), (&json!("use 10"), &json!("human")));
     assert_eq!(f.log().matches("use 10").count(), 1, "{}", f.log());
+}
+
+#[test]
+fn a_journal_line_cut_mid_character_costs_only_that_line_of_the_waits() {
+    let tmp = TempDir::new();
+    let run = RunState::new("20261124-120000-a1b2c3", "t", &tmp.path());
+    std::fs::create_dir_all(run.dir()).unwrap();
+    let line = |at: &str, kind: &str| format!(r#"{{"seq":1,"at":"{at}","kind":"{kind}","request":1}}"#).into_bytes();
+    let mut text = br#"{"journal":1}"#.to_vec();
+    for part in [
+        b"\n".to_vec(),
+        line("2026-11-24T12:00:10+00:00", "permission"),
+        b"\n{\"seq\":2,\"kind\":\"update\",\"text\":\"\xe2\x80\n".to_vec(),
+        line("2026-11-24T12:00:25+00:00", "answered"),
+        b"\n".to_vec(),
+    ] {
+        text.extend(part);
+    }
+    std::fs::write(format!("{}/{}", run.dir(), journal_name("build")), text).unwrap();
+    let from = crate::timestamp::epoch_seconds("2026-11-24T12:00:00+00:00").unwrap();
+
+    assert_eq!(waited_seconds(&run, "build", from, from + 60), Ok(15));
+    assert_eq!(waited_seconds(&run, "review", from, from + 60), Ok(0));
+}
+
+#[test]
+fn a_journal_that_is_there_but_cannot_be_read_is_an_error_not_a_turn_without_waits() {
+    let tmp = TempDir::new();
+    let run = RunState::new("20261124-120000-a1b2c3", "t", &tmp.path());
+    let path = format!("{}/{}", run.dir(), journal_name("build"));
+    std::fs::create_dir_all(&path).unwrap();
+
+    let err = waited_seconds(&run, "build", 0, 60).unwrap_err();
+
+    assert!(err.0.starts_with(&format!("cannot read {path}: ")), "{}", err.0);
 }

@@ -31,11 +31,11 @@ function pendingReads() {
 describe("the handoff file on show", () => {
   it("keeps the text it shows while a newer version of the file is read, then shows the newer", async () => {
     const { api, reads, settle } = pendingReads();
-    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 1 }} />);
+    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 1, size: 10 }} />);
     await settle(0, "# First draft");
     expect(screen.getByRole("heading", { name: "First draft" })).toBeInTheDocument();
 
-    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 2 }} />);
+    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 2, size: 10 }} />);
     expect(reads).toHaveLength(2);
     expect(screen.queryByText(/Loading/)).toBeNull();
     expect(screen.getByRole("heading", { name: "First draft" })).toBeInTheDocument();
@@ -44,12 +44,25 @@ describe("the handoff file on show", () => {
     expect(screen.getByRole("heading", { name: "Second draft" })).toBeInTheDocument();
   });
 
+  it("reads the file again when its size changes within the second of its mtime", async () => {
+    const { api, reads, settle } = pendingReads();
+    const file = { name: "spec.md", mtime: 1, size: 7 };
+    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={file} />);
+    // The first read caught the agent's write partway.
+    await settle(0, "# First");
+
+    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ ...file, size: 14 }} />);
+    expect(reads).toHaveLength(2);
+    await settle(1, "# First draft");
+    expect(screen.getByRole("heading", { name: "First draft" })).toBeInTheDocument();
+  });
+
   it("shows another file chosen as loading until it arrives, never the last file's text", async () => {
     const { api, names, settle } = pendingReads();
-    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 1 }} />);
+    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 1, size: 10 }} />);
     await settle(0, "# The spec");
 
-    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "plan.md", mtime: 1 }} />);
+    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "plan.md", mtime: 1, size: 10 }} />);
     expect(names).toEqual(["spec.md", "plan.md"]);
     expect(screen.getByText("Loading plan.md…")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "The spec" })).toBeNull();
@@ -60,10 +73,10 @@ describe("the handoff file on show", () => {
 
   it("shows the error of a failed read of a newer version", async () => {
     const { api, settle } = pendingReads();
-    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 1 }} />);
+    const { rerender } = render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 1, size: 10 }} />);
     await settle(0, "# First draft");
 
-    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 2 }} />);
+    rerender(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "spec.md", mtime: 2, size: 10 }} />);
     await settle(1, new Error("spec.md: no such file"));
     expect(screen.getByText("spec.md: no such file")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "First draft" })).toBeNull();

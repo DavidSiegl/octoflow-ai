@@ -9,7 +9,8 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use super::{
-    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, Scanned, GIT_STATUS_ARGS, ORIGIN_READ,
+    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, RunFileText, Scanned, GIT_STATUS_ARGS,
+    ORIGIN_READ,
 };
 use crate::constants::{METRICS_FILE, SUMMARY_FILE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
@@ -164,6 +165,8 @@ pub(crate) struct FakeState {
     pub branch: String,
     /// The paths of the uncommitted changes.
     pub changed: BTreeSet<String>,
+    /// The paths of files git ignores, which only `git status --ignored` (GIT_STATUS_ARGS and `--ignored`) lists.
+    pub ignored: BTreeSet<String>,
     /// The arguments of each git command, in order.
     pub git_calls: Vec<Vec<String>>,
     /// The directory and arguments of each git command, in order.
@@ -272,6 +275,9 @@ pub(crate) struct FakeState {
     /// Run before each rename, given its path and new path, when set, before the fake renames: a test's own step,
     /// such as changing the world meanwhile.
     pub before_rename: Option<BeforeRename>,
+    /// Run before each read, given its path, when set, before the fake reads: a test's own step, such as another
+    /// process finishing a file between two reads of it.
+    pub before_read: Option<BeforeRead>,
     /// Run before each git command, given its directory and arguments, when set, before the fake plays it: a test's
     /// own step, such as failing remove_worktree's command.
     pub before_git: Option<BeforeGit>,
@@ -296,6 +302,8 @@ pub(crate) type BeforeWrite = Box<dyn FnMut(&str, &str) -> Result<(), Orchestrat
 pub(crate) type AfterWrite = Box<dyn FnMut(&str)>;
 /// A test's hook on renames (FakeState::before_rename).
 pub(crate) type BeforeRename = Box<dyn FnMut(&str, &str)>;
+/// A test's hook on reads (FakeState::before_read).
+pub(crate) type BeforeRead = Box<dyn FnMut(&str)>;
 /// A test's hook on git commands (FakeState::before_git).
 pub(crate) type BeforeGit = Box<dyn FnMut(&str, &[&str])>;
 /// A test's stand-in for the programs the host runs (FakeState::run_command).
@@ -313,6 +321,7 @@ impl FakeHost {
                 writes: vec![],
                 branch: branch.to_string(),
                 changed: BTreeSet::new(),
+                ignored: BTreeSet::new(),
                 git_calls: vec![],
                 git_log: vec![],
                 prs: vec![],
@@ -361,6 +370,7 @@ impl FakeHost {
                 before_write: None,
                 after_write: None,
                 before_rename: None,
+                before_read: None,
                 before_git: None,
                 run_states_with: None,
                 processes: None,
@@ -441,6 +451,13 @@ impl FakeState {
                 Some(ok(""))
             }
             args if args == GIT_STATUS_ARGS => Some(ok(&porcelain(&self.changed_in(cwd)))),
+            [status @ .., "--ignored"] if status == GIT_STATUS_ARGS => {
+                // Relative to cwd, as git lists them.
+                let inside = format!("{cwd}/");
+                let ignored = self.ignored.iter().filter_map(|p| p.strip_prefix(&inside));
+                let listed: String = ignored.map(|p| format!("!! {p}\n")).collect();
+                Some(ok(&(porcelain(&self.changed_in(cwd)) + &listed)))
+            }
             ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
                 let changed = self.changed_in(cwd);
                 self.changed.retain(|p| !changed.contains(p));
@@ -625,7 +642,9 @@ impl FakeState {
                     return Completed::new(128, "", error);
                 }
                 self.worktrees.shift_remove(*path);
-                self.changed.retain(|p| !p.starts_with(&format!("{path}/")));
+                let inside = |p: &String| p.starts_with(&format!("{path}/"));
+                self.changed.retain(|p| !inside(p));
+                self.ignored.retain(|p| !inside(p));
             }
             ["worktree", "prune"] => {
                 let vanished = std::mem::take(&mut self.vanished_worktrees);
@@ -735,13 +754,44 @@ impl Host for FakeHost {
     }
 
     fn read(&self, path: &str) -> Result<Option<String>, OrchestratorError> {
+        // Run with the host's state released, as before_write is.
+        let hook = self.state().before_read.take();
+        if let Some(mut hook) = hook {
+            hook(path);
+            self.state().before_read = Some(hook);
+        }
         Ok(self.state().files.get(path).cloned())
+    }
+
+    /// read of the file in `files`: FakeHost has no links, so nothing leads out.
+    fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
+        Ok(self
+            .read(&format!("{run_dir}/{name}"))?
+            .map_or(RunFileText::Missing, |text| RunFileText::Text(text.into_bytes())))
     }
 
     /// write of the file's text in `files` with text at its end, as one write.
     fn append(&self, path: &str, text: &str) -> Result<(), OrchestratorError> {
         let old = self.read(path)?.unwrap_or_default();
         self.write(path, &format!("{old}{text}"), false)
+    }
+
+    /// write of text, unless exists finds something at path.
+    fn create_new(&self, path: &str, text: &str) -> Result<bool, OrchestratorError> {
+        if self.exists(path)? {
+            return Ok(false);
+        }
+        self.write(path, text, false).map(|()| true)
+    }
+
+    /// The file's mtime set to the clock's now, if there is one at path.
+    fn touch(&self, path: &str) -> Result<(), OrchestratorError> {
+        let mut s = self.state();
+        if s.files.contains_key(path) {
+            let now = s.now();
+            s.mtimes.insert(path.to_string(), now);
+        }
+        Ok(())
     }
 
     /// Whether a file is at path, or under it as its directory: a fake holds files only.
@@ -1147,12 +1197,15 @@ impl Host for FakeHost {
         }
         let mut files: Vec<super::RunFile> = s
             .files
-            .keys()
-            .filter_map(|path| {
+            .iter()
+            .filter_map(|(path, text)| {
                 let name = path.strip_prefix(run_dir)?.strip_prefix('/')?;
                 let listed = !name.contains('/') && name != "state.json" && !name.contains(".tmp.");
-                listed
-                    .then(|| super::RunFile { path: path.to_string(), mtime: s.mtimes.get(path).copied().unwrap_or(0) })
+                listed.then(|| super::RunFile {
+                    path: path.to_string(),
+                    mtime: s.mtimes.get(path).copied().unwrap_or(0),
+                    size: text.len() as u64,
+                })
             })
             .collect();
         files.sort_by_key(|f| f.mtime);

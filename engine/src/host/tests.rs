@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::constants::SUMMARY_FILE;
+use crate::constants::{PROOF_COPIES_DIR, SUMMARY_FILE};
 use crate::interrupt::Interrupt;
 use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
@@ -320,6 +320,37 @@ fn exists_finds_a_file_a_directory_or_a_dangling_link() {
     assert!(host.exists(&d.join("runs/a")).unwrap() && host.exists(&d.join("runs/a/state.json")).unwrap());
     std::os::unix::fs::symlink(d.join("nowhere"), d.join("link")).unwrap();
     assert!(host.exists(&d.join("link")).unwrap());
+}
+
+#[test]
+fn create_new_makes_a_file_only_where_nothing_is() {
+    let (d, host) = (TempDir::new(), ProcessHost::local(&Interrupt::new()));
+    let path = d.join("forget.lock");
+    assert!(host.create_new(&path, "first\n").unwrap());
+    assert!(!host.create_new(&path, "second\n").unwrap());
+    assert_eq!(host.read(&path).unwrap().as_deref(), Some("first\n"));
+    // A dangling link is something there too.
+    std::os::unix::fs::symlink(d.join("nowhere"), d.join("link")).unwrap();
+    assert!(!host.create_new(&d.join("link"), "x").unwrap());
+    assert!(!std::path::Path::new(&d.join("nowhere")).exists());
+    // A missing directory is not made.
+    let e = host.create_new(&d.join("missing/forget.lock"), "x").unwrap_err();
+    assert!(e.0.starts_with(&format!("making {}: ", d.join("missing/forget.lock"))), "{e}");
+    assert!(!host.exists(&d.join("missing")).unwrap());
+}
+
+#[test]
+fn touch_sets_a_files_mtime_to_now_and_makes_none() {
+    let (d, host) = (TempDir::new(), ProcessHost::local(&Interrupt::new()));
+    let path = d.join("forget.lock");
+    put(&path, "held");
+    let old = std::fs::File::options().write(true).open(&path).unwrap();
+    old.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+    assert_eq!(host.mtime(&path).unwrap(), 1_000_000);
+    host.touch(&path).unwrap();
+    assert!(host.now().unwrap() - host.mtime(&path).unwrap() < 60);
+    host.touch(&d.join("gone")).unwrap();
+    assert!(!host.exists(&d.join("gone")).unwrap());
 }
 
 #[test]
@@ -874,7 +905,7 @@ fn run_files_of_a_real_directory_oldest_first() {
     std::fs::create_dir_all(format!("{run_dir}/sub")).unwrap();
     let files = host.run_files(&run_dir).unwrap();
     let expected: Vec<RunFile> = [("c.md", 100), ("a.md", 200), ("b.md", 300), ("d.md", 300)]
-        .map(|(n, mtime)| RunFile { path: format!("{run_dir}/{n}"), mtime })
+        .map(|(n, mtime)| RunFile { path: format!("{run_dir}/{n}"), mtime, size: n.len() as u64 })
         .into();
     assert_eq!(files, expected);
     assert_eq!(host.run_files(&d.join("nosuch")).unwrap(), vec![]);
@@ -889,22 +920,26 @@ fn run_files_in_one_call_over_ssh() {
     }
     let ssh = FakeSsh::new(&[]);
     let files = ssh.host.run_files(&d.path()).unwrap();
-    let names: Vec<(String, i64)> = files.into_iter().map(|f| (f.path, f.mtime)).collect();
+    let listed: Vec<(String, i64, u64)> = files.into_iter().map(|f| (f.path, f.mtime, f.size)).collect();
     let dir = d.path();
-    assert_eq!(names, [(format!("{dir}/c.md"), 3), (format!("{dir}/a b.md"), 5), (format!("{dir}/b.md"), 5)]);
+    let expected = [(format!("{dir}/c.md"), 3, 4), (format!("{dir}/a b.md"), 5, 6), (format!("{dir}/b.md"), 5, 4)];
+    assert_eq!(listed, expected);
     assert_eq!(ssh.calls().len(), 1);
     let remote = ssh.last().pop().unwrap();
-    assert!(remote.contains("stat -c %Y") && remote.contains("stat -f %m"), "{remote}");
+    assert!(remote.contains("stat -c \"%Y %s\"") && remote.contains("stat -f \"%m %z\""), "{remote}");
 }
 
 #[test]
-fn run_files_failure_and_a_time_that_is_not_one() {
+fn run_files_failure_and_a_time_or_size_that_is_not_one() {
     let bin = TempDir::new();
     tool(&bin.path(), "stat", "#!/bin/sh\necho soon\n");
     let d = TempDir::new();
     put(&d.join("a.md"), "a");
     let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
     assert_eq!(e.0, format!("listing {}: stat printed \"soon\", not a time", d.path()));
+    tool(&bin.path(), "stat", "#!/bin/sh\necho 5 big\n");
+    let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
+    assert_eq!(e.0, format!("listing {}: stat printed \"big\", not a size", d.path()));
     tool(&bin.path(), "stat", "#!/bin/sh\necho Permission denied >&2; exit 1\n");
     let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
     assert!(e.0.contains("Permission denied"), "{e}");
@@ -947,8 +982,8 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     assert_eq!(names("away"), Vec::<String>::new());
     assert_eq!(names("nosuch"), Vec::<String>::new());
     let read = |run: &str, name: &str| ssh.host.read_inside(&format!("{runs}/{run}"), name).unwrap();
-    assert_eq!(read("r", "chain.md"), RunFileText::Text("a".to_string()));
-    assert_eq!(read("alias", "a.md"), RunFileText::Text("a".to_string()));
+    assert_eq!(read("r", "chain.md"), RunFileText::Text(b"a".to_vec()));
+    assert_eq!(read("alias", "a.md"), RunFileText::Text(b"a".to_vec()));
     for name in ["up.md", "out.md", "beside.md"] {
         assert_eq!(read("r", name), RunFileText::Outside, "{name}");
     }
@@ -1008,6 +1043,19 @@ fn a_link_removed_while_it_is_resolved_is_missing_not_outside() {
     let bin = TempDir::new();
     tool_that_loses(&bin.path(), "readlink", &format!("{run_dir}/in.md"));
     assert_eq!(host_with_tools(&bin.path()).read_inside(&run_dir, "in.md").unwrap(), RunFileText::Missing);
+}
+
+#[test]
+fn a_run_file_that_is_not_utf8_is_read_as_its_bytes() {
+    let d = TempDir::new();
+    let run_dir = d.join(&format!("{RUNS_DIR}/r"));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    // A journal a crash cut inside a character, as run-findings 05 found one; its line ends kept as they are.
+    let cut = b"{\"journal\":1}\r\n{\"seq\":1,\"text\":\"\xe2\x80".to_vec();
+    std::fs::write(format!("{run_dir}/build.events.jsonl"), &cut).unwrap();
+    let bin = TempDir::new();
+    let read = host_with_tools(&bin.path()).read_inside(&run_dir, "build.events.jsonl").unwrap();
+    assert_eq!(read, RunFileText::Text(cut));
 }
 
 #[test]
@@ -1134,8 +1182,8 @@ fn a_forgotten_run_s_directory_goes_and_its_metrics_stay_in_place() {
     put(&format!("{runs}/b/metrics.json"), "{\n  \"run_id\": \"b\"\n}\n");
     put(&format!("{runs}/c/metrics.json"), "{\"run_id\": \"c\"}\n");
     let before = host.run_metrics(&d.path()).unwrap();
-    host.forget_run(&d.path(), "b").unwrap();
-    host.forget_run(&d.path(), "a").unwrap();
+    host.forget_run(&d.path(), "b", RunScope::Every).unwrap();
+    host.forget_run(&d.path(), "a", RunScope::Every).unwrap();
     assert!(!std::path::Path::new(&format!("{runs}/b")).exists());
     assert!(!std::path::Path::new(&format!("{runs}/a")).exists());
     assert!(std::path::Path::new(&format!("{runs}/c/state.json")).exists());
@@ -1145,13 +1193,30 @@ fn a_forgotten_run_s_directory_goes_and_its_metrics_stay_in_place() {
 }
 
 #[test]
+fn a_metrics_file_that_leads_out_of_its_run_directory_is_archived_only_outside_serve_s_scope() {
+    for (scope, archive) in [(RunScope::Inside, None), (RunScope::Every, Some("{\"run_id\":\"x\"}\n"))] {
+        let d = TempDir::new();
+        let host = ProcessHost::local(&Interrupt::new());
+        let runs = d.join(RUNS_DIR);
+        put(&format!("{runs}/a/state.json"), "{}");
+        put(&d.join("elsewhere.json"), "{\"run_id\": \"x\"}");
+        std::os::unix::fs::symlink(d.join("elsewhere.json"), format!("{runs}/a/metrics.json")).unwrap();
+        host.forget_run(&d.path(), "a", scope).unwrap();
+        let archived = std::fs::read_to_string(d.join(".octoflow-ai/metrics-archive.jsonl")).ok();
+        assert_eq!(archived.as_deref(), archive, "{scope:?}");
+        assert!(!std::path::Path::new(&format!("{runs}/a")).exists(), "{scope:?}");
+        assert!(std::path::Path::new(&d.join("elsewhere.json")).exists(), "{scope:?}");
+    }
+}
+
+#[test]
 fn a_forget_after_its_archive_line_was_written_does_not_write_it_twice() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
     let runs = d.join(RUNS_DIR);
     put(&format!("{runs}/a/metrics.json"), "{\"run_id\": \"a\"}");
     put(&d.join(".octoflow-ai/metrics-archive.jsonl"), "{\"run_id\":\"a\"}\n");
-    host.forget_run(&d.path(), "a").unwrap();
+    host.forget_run(&d.path(), "a", RunScope::Every).unwrap();
     assert_eq!(host.run_metrics(&d.path()).unwrap(), [serde_json::json!({"run_id": "a"})]);
 }
 
@@ -1160,7 +1225,7 @@ fn a_run_without_metrics_is_forgotten_without_an_archive_line() {
     let d = TempDir::new();
     let host = ProcessHost::local(&Interrupt::new());
     put(&format!("{}/a/state.json", d.join(RUNS_DIR)), "{}");
-    host.forget_run(&d.path(), "a").unwrap();
+    host.forget_run(&d.path(), "a", RunScope::Every).unwrap();
     assert!(!std::path::Path::new(&d.join(".octoflow-ai/metrics-archive.jsonl")).exists());
     assert!(!std::path::Path::new(&format!("{}/a", d.join(RUNS_DIR))).exists());
 }
@@ -1173,7 +1238,7 @@ fn forget_refuses_a_run_id_that_leads_out_of_the_runs_directory() {
     // A metrics.json that ".." would lead to: refused before it is read, so that nothing is archived either.
     put(&d.join(".octoflow-ai/metrics.json"), "{\"run_id\": \"x\"}");
     for id in ["..", ".", "", "../x", "a/b"] {
-        let e = host.forget_run(&d.path(), id).unwrap_err();
+        let e = host.forget_run(&d.path(), id, RunScope::Every).unwrap_err();
         assert!(e.0.contains("is not a name in the run directory"), "{id:?}: {e}");
     }
     assert!(std::path::Path::new(&d.join(".octoflow-ai/keep")).exists());
@@ -1206,7 +1271,7 @@ fn a_corrupt_metrics_file_stops_the_forget_before_anything_goes() {
     let host = ProcessHost::local(&Interrupt::new());
     let runs = d.join(RUNS_DIR);
     put(&format!("{runs}/a/metrics.json"), "{");
-    let e = host.forget_run(&d.path(), "a").unwrap_err();
+    let e = host.forget_run(&d.path(), "a", RunScope::Every).unwrap_err();
     assert!(e.0.starts_with(&format!("corrupt {runs}/a/metrics.json: ")), "{e}");
     assert!(std::path::Path::new(&format!("{runs}/a/metrics.json")).exists());
 }
@@ -1807,6 +1872,38 @@ fn worktree_steps() {
     put(&format!("{wt}/new.py"), "x\n");
     c.host.remove_worktree(&c.a, &wt, true).unwrap();
     assert!(!std::path::Path::new(&wt).exists());
+}
+
+#[test]
+fn a_worktree_holds_nothing_until_a_file_outside_the_engine_s_directory_is_in_it() {
+    let c = Clones::new();
+    let wt = format!("{}/.octoflow-ai/worktrees/a1b2c3", c.a);
+    c.host.add_worktree(&c.a, &wt, "HEAD").unwrap();
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    // The engine's own: its .gitignore there (Orchestrator::ignore_project_dir) and a proof's copy.
+    put(&format!("{wt}/.octoflow-ai/.gitignore"), "*\n");
+    put(&format!("{wt}/{PROOF_COPIES_DIR}/1/proof.txt"), "x\n");
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    // Anything else there is not, such as the runs of an engine run inside the worktree.
+    put(&format!("{wt}/.octoflow-ai/runs/r1/state.json"), "{}\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_dir_all(format!("{wt}/.octoflow-ai/runs")).unwrap();
+    // An ignored file elsewhere, and an untracked one.
+    put(&format!("{wt}/.gitignore"), "*.log\n");
+    c.sh(&["git", "-C", &wt, "add", ".gitignore"]);
+    c.sh(&["git", "-C", &wt, "commit", "--quiet", "-m", "ignore logs"]);
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    put(&format!("{wt}/build.log"), "x\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_file(format!("{wt}/build.log")).unwrap();
+    put(&format!("{wt}/new.py"), "x\n");
+    assert!(!holds_nothing(&c.host, &wt).unwrap());
+    std::fs::remove_file(format!("{wt}/new.py")).unwrap();
+    // A locked one holds nothing, yet git will not remove it.
+    c.sh(&["git", "-C", &c.a, "worktree", "lock", &wt]);
+    assert!(holds_nothing(&c.host, &wt).unwrap());
+    let refusal = c.host.try_remove_worktree(&c.a, &wt).unwrap();
+    assert!(refusal.as_deref().is_some_and(|r| r.contains("locked")), "{refusal:?}");
 }
 
 #[test]

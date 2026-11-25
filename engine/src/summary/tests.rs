@@ -1,7 +1,7 @@
 use super::*;
 use crate::json::object;
 use crate::pipeline::DEFAULT_WORKFLOW;
-use crate::state::AgentRecord;
+use crate::state::{AgentRecord, UnofferedModel};
 use crate::test_support::{helper_cases, oracle, unhex, GOLDEN_SUMMARY};
 
 #[test]
@@ -38,27 +38,6 @@ fn durations_and_ages() {
     }
 }
 
-#[test]
-fn times_are_written_and_read_as_rfc_3339() {
-    assert_eq!(iso_utc(0), "1970-01-01T00:00:00+00:00");
-    assert_eq!(iso_utc(1_791_000_000), "2026-10-03T04:00:00+00:00");
-    assert_eq!(iso_utc(951_782_400), "2000-02-29T00:00:00+00:00");
-    assert_eq!(iso_utc(-1), "1969-12-31T23:59:59+00:00");
-    for seconds in [0, 1_791_000_000, 951_782_400, 4_102_444_799, -86_400] {
-        assert_eq!(epoch_seconds(&iso_utc(seconds)), Ok(seconds));
-    }
-    assert_eq!(epoch_seconds("2026-10-03T06:00:00+02:00"), Ok(1_791_000_000));
-    assert_eq!(epoch_seconds("2026-10-03T04:00:00.999Z"), Ok(1_791_000_000));
-    assert_eq!(epoch_time("2026-10-03T04:00:00.25Z"), Ok(1_791_000_000.25));
-    // Whole seconds are those before the time, before the epoch too.
-    assert_eq!(epoch_seconds("1969-12-31T23:59:59.5Z"), Ok(-1));
-    for bad in
-        ["<time>", "garbled", "2026-13-01T00:00:00Z", "2026-02-30T00:00:00Z", "2026-10-03T04:00:00", "2026-10-03"]
-    {
-        assert!(epoch_seconds(bad).is_err(), "{bad}");
-    }
-}
-
 /// A turn record that started and ended this many seconds after 2026-10-03T04:00:00.
 fn turn(step: &str, file: &str, start: Option<i64>, end: Option<i64>, change: impl FnOnce(&mut Object)) -> TurnRecord {
     let at = |s: Option<i64>| Value::from(s.map(|s| iso_utc(1_791_000_000 + s)));
@@ -89,6 +68,43 @@ fn turn_lines_shows_starts_in_the_zone_given() {
     let zone = jiff::tz::TimeZone::fixed(jiff::tz::offset(1));
     assert!(turn_lines(std::slice::from_ref(&t), &zone)[0].contains("2026-11-05 21:30:37"));
     assert!(turns_table(&[t]).contains("| 2026-11-05 20:30:37 |"));
+}
+
+#[test]
+fn a_turn_that_waited_says_how_long_for_each_kind_of_wait_and_its_metrics_too() {
+    let waited = |permission: Option<i64>, outside: Option<i64>| {
+        move |t: &mut Object| {
+            t.insert("waited_seconds".into(), Value::from(permission));
+            t.insert("outside_wait_seconds".into(), Value::from(outside));
+        }
+    };
+    let turns = [
+        turn("review", "review-1.md", Some(0), Some(224), waited(Some(199), None)),
+        turn("build", "build-1.md", Some(0), Some(5), waited(Some(0), Some(0))),
+        turn("spec", "spec.md", Some(0), Some(5), waited(None, None)),
+        turn("build", "build-2.md", Some(0), Some(723), waited(None, Some(360))),
+        turn("build", "build-3.md", Some(0), Some(723), waited(Some(199), Some(360))),
+    ];
+
+    let table = turns_table(&turns);
+    let lines = turn_lines(&turns, &jiff::tz::TimeZone::UTC);
+    let mut s = approved_run();
+    s.turns = turns.to_vec();
+    let metrics = run_metrics(&s, 1_791_000_300);
+
+    assert!(table.contains("| 3m 44s (3m 19s waiting for you) | review-1.md |"), "{table}");
+    assert!(table.contains("| 5s | build-1.md |"), "{table}");
+    assert!(table.contains("| 12m 03s (6m 00s waiting outside the run) | build-2.md |"), "{table}");
+    assert!(
+        table.contains("| 12m 03s (3m 19s waiting for you, 6m 00s waiting outside the run) | build-3.md |"),
+        "{table}"
+    );
+    assert!(lines[0].contains("3m 44s (3m 19s waiting for you)"), "{lines:?}");
+    let turns = metrics.get("turns").and_then(Value::as_array).unwrap();
+    let key = |k: &str| turns.iter().map(|t| t.get(k).cloned()).collect::<Vec<_>>();
+    let n = |n: i64| Some(Value::from(n));
+    assert_eq!(key("waited_seconds"), [n(199), n(0), None, None, n(199)]);
+    assert_eq!(key("outside_wait_seconds"), [None, n(0), None, n(360), n(360)]);
 }
 
 #[test]
@@ -228,4 +244,63 @@ fn turn_tokens_sums_the_answers_within_the_turn() {
     }
     // The session of 7 and the start of 5; any more means TurnRecord stopped holding cases the engine writes.
     assert_eq!((refused, cases.len()), (2, 16));
+}
+
+/// approved_run, but the review's harness was not offered opus and ran on sonnet, and the build's was not offered o3
+/// and named none it took instead.
+fn run_with_unoffered_models() -> RunState {
+    let mut s = approved_run();
+    s.models.insert("build".to_string(), "o3".to_string());
+    let unoffered =
+        |asked: &str, taken: Option<&str>| Some(UnofferedModel { asked: asked.into(), taken: taken.map(String::from) });
+    s.agents["review"].unoffered_model = unoffered("opus", Some("sonnet"));
+    s.agents["build"].unoffered_model = unoffered("o3", None);
+    for t in &mut s.turns {
+        (t.model, t.unoffered_model) = match t.role.as_str() {
+            "review" => (Some("sonnet".into()), Some("opus".into())),
+            "build" => (None, Some("o3".into())),
+            _ => (t.model.take(), None),
+        };
+    }
+    s
+}
+
+#[test]
+fn the_summary_names_the_model_a_role_ran_on_and_the_one_not_offered() {
+    let summary = run_summary(&run_with_unoffered_models(), &DEFAULT_WORKFLOW, &[], 1_791_000_000 + 2100);
+
+    assert!(summary.contains("| Builder (build) | codex | default (o3 not offered) |"), "{summary}");
+    assert!(summary.contains("| Reviewer (review) | claude | sonnet (opus not offered) |"), "{summary}");
+    assert!(summary.contains("| Spec Collector (spec) | claude | default |"), "{summary}");
+    assert!(summary.contains("| build | build | 1 | codex | default (o3 not offered) |"), "{summary}");
+    assert!(summary.contains("| review | review | 1 | claude | sonnet (opus not offered) |"), "{summary}");
+    assert!(summary.contains("| spec | 0 | claude | default |"), "{summary}");
+}
+
+#[test]
+fn the_metrics_name_the_model_a_role_ran_on_and_the_one_not_offered() {
+    let mut s = run_with_unoffered_models();
+    // An empty model, as an earlier engine saved for a role given one, is none, as in the roles.
+    s.models.insert("spec".to_string(), String::new());
+    s.turns[0].model = Some(String::new());
+    let metrics = run_metrics(&s, 1_791_000_000 + 2100);
+
+    assert_eq!(
+        metrics["roles"],
+        json!({
+            "spec": {"harness": "claude", "model": null},
+            "build": {"harness": "codex", "model": null, "unoffered_model": "o3"},
+            "review": {"harness": "claude", "model": "sonnet", "unoffered_model": "opus"},
+        })
+    );
+    let turns: Vec<(&Value, Option<&Value>)> =
+        metrics["turns"].as_array().unwrap().iter().map(|t| (&t["model"], t.get("unoffered_model"))).collect();
+    assert_eq!(
+        turns,
+        [
+            (&Value::Null, None),
+            (&Value::Null, Some(&Value::from("o3"))),
+            (&Value::from("sonnet"), Some(&Value::from("opus")))
+        ]
+    );
 }

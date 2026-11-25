@@ -8,7 +8,9 @@
 
 use indexmap::IndexMap;
 
-use crate::constants::{CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, REMOTE, RUNS_DIR, SUMMARY_FILE};
+use crate::constants::{
+    CONSOLE_TAIL_LINES, METRICS_FILE, NETWORK_TIMEOUT, PROJECT_DIR, PROOF_COPIES_DIR, REMOTE, RUNS_DIR, SUMMARY_FILE,
+};
 use crate::error::OrchestratorError;
 use crate::harness::{harness, SessionLog};
 use crate::json::ValueExt;
@@ -84,6 +86,9 @@ fn cat_unless_gone(path: &str) -> String {
 /// sh: sets m to the modification time of file $f, in seconds since the epoch; fails when stat does. stat -c is GNU,
 /// stat -f is BSD.
 const MTIME_OF_F: &str = "m=$(stat -c %Y -- \"$f\" 2>/dev/null || stat -f %m -- \"$f\")";
+
+/// sh: as MTIME_OF_F, but sets m to the modification time and, after a space, the size in bytes of file $f.
+const MTIME_AND_SIZE_OF_F: &str = "m=$(stat -c \"%Y %s\" -- \"$f\" 2>/dev/null || stat -f \"%m %z\" -- \"$f\")";
 
 /// The status the scripts of run_files_inside and read_inside exit with when the file, or the run directory, leads
 /// out of where it must stay (run_dir_resolved).
@@ -213,13 +218,16 @@ pub struct RunFile {
     pub path: String,
     /// When it was last modified, in seconds since the epoch by its host's clock.
     pub mtime: i64,
+    /// Its length in bytes when it was listed.
+    pub size: u64,
 }
 
 /// A run directory's file as [`Host::read_inside`] reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunFileText {
-    /// The file's text.
-    Text(String),
+    /// The file's bytes, as it holds them: line ends kept, and bytes that are not UTF-8 too, so that each reader decides
+    /// how to decode them.
+    Text(Vec<u8>),
     /// There is no such file, or no such run directory.
     Missing,
     /// The file, or the run directory, leads out of where it must stay; nothing was read.
@@ -406,6 +414,33 @@ pub trait Host {
     fn append(&self, path: &str, text: &str) -> Result<(), OrchestratorError> {
         let script = "mkdir -p -- \"$(dirname -- \"$1\")\" && cat >> \"$1\"";
         self.check(&["sh", "-c", script, "_", path], Some(text), DEFAULT_TIMEOUT).map(drop)
+    }
+
+    /// Make a file at path holding text, but only if nothing is at path yet: true when it was made, false when
+    /// something was there, which is left as it is. Of several processes making one path at once, on this host or
+    /// another reaching it, exactly one gets true (O_EXCL, which NFS keeps from version 3 on). A reader may find the
+    /// file empty or partly written while it is being written. Errors: path's directory is missing, the file cannot
+    /// be written (it is then not left there), or the host cannot be reached.
+    fn create_new(&self, path: &str, text: &str) -> Result<bool, OrchestratorError> {
+        // noclobber makes the redirection O_EXCL. `command` keeps a failed exec's redirection from ending the shell
+        // before the path is looked at, as it would for a special built-in.
+        const TAKEN: i32 = 4;
+        let script = format!(
+            "set -C; command exec 3>\"$1\" || {{ if [ -e \"$1\" ] || [ -L \"$1\" ]; then exit {TAKEN}; fi; exit 1; }}; \
+             cat >&3 || {{ rm -f -- \"$1\"; exit 1; }}"
+        );
+        let proc = self.run(&["sh", "-c", &script, "_", path], Some(text), DEFAULT_TIMEOUT)?;
+        match proc.status {
+            0 => Ok(true),
+            TAKEN => Ok(false),
+            _ => Err(OrchestratorError(format!("making {path}: {}", proc.stderr.trim()))),
+        }
+    }
+
+    /// Set the mtime of the file at path to the host's now; a path with nothing there is left so. Errors: the file
+    /// cannot be touched, or the host cannot be reached.
+    fn touch(&self, path: &str) -> Result<(), OrchestratorError> {
+        self.check(&["touch", "-c", "--", path], None, DEFAULT_TIMEOUT).map(drop)
     }
 
     /// Move the file at path to new_path, replacing what is there.
@@ -1107,15 +1142,26 @@ pub trait Host {
     /// Delete the directory of the run of the project at cwd whose id is run_id, keeping its metrics: run_metrics
     /// gives the same records before and after. The run's metrics.json, when it has one, is added to an archive in
     /// the project first, unless a forget_run interrupted after that step already added it, so that forgetting a run
-    /// again finishes the job. Forgets of other runs of the project at the same time keep their lines too. Whether
-    /// the run may be deleted is the caller's to decide. Errors: run_id is not a plain name, before anything is read;
-    /// the metrics.json or the archive cannot be read, the metrics.json is not JSON, or the archive cannot be written
-    /// (the directory then stays); or remove_run_dir's.
-    fn forget_run(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
+    /// again finishes the job. With scope Inside, the scope serve acts in, the metrics.json is read as read_inside
+    /// reads it, and one that leads out of the run directory, or in a run directory that leads out of the runs
+    /// directory, counts as none: nothing is archived, so its record leaves run_metrics, and the run is still
+    /// forgotten. With Every, links are followed. Forgets of other runs of the project at the same time keep their
+    /// lines too. Whether the run may be deleted is the caller's to decide. Errors: run_id is not a
+    /// plain name, before anything is read; the metrics.json or the archive cannot be read, the metrics.json is not
+    /// JSON, or the archive cannot be written (the directory then stays); or remove_run_dir's.
+    fn forget_run(&self, cwd: &str, run_id: &str, scope: RunScope) -> Result<(), OrchestratorError> {
         crate::paths::plain_name(run_id)?;
-        let metrics_path = format!("{}/{METRICS_FILE}", run_dir(cwd, run_id));
-        if let Some(text) = self.read(&metrics_path)? {
-            let metrics = serde_json::from_str::<Value>(&text)
+        let dir = run_dir(cwd, run_id);
+        let metrics_path = format!("{dir}/{METRICS_FILE}");
+        let text = match scope {
+            RunScope::Every => self.read(&metrics_path)?.map(String::into_bytes),
+            RunScope::Inside => match self.read_inside(&dir, METRICS_FILE)? {
+                RunFileText::Text(bytes) => Some(bytes),
+                RunFileText::Missing | RunFileText::Outside => None,
+            },
+        };
+        if let Some(text) = text {
+            let metrics = serde_json::from_slice::<Value>(&text)
                 .map_err(|e| OrchestratorError(format!("corrupt {metrics_path}: {e}")))?;
             let archive_path = format!("{cwd}/{METRICS_ARCHIVE}");
             let archived = archived_metrics(&self.read(&archive_path)?.unwrap_or_default(), &archive_path)?;
@@ -1130,7 +1176,7 @@ pub trait Host {
     /// The files in a run directory, oldest first, those of one time by name, except state.json and write's temporary
     /// files; none for a directory that is not there. A file removed while the directory is listed, as a running
     /// run removes some, is in the list or not, never an error. Errors: stat fails on a file that is still there, or
-    /// prints what is not a time.
+    /// prints what is not a time and a size.
     fn run_files(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
         let out = self.check(&["sh", "-c", &run_files_loop("true"), "_", run_dir], None, DEFAULT_TIMEOUT)?;
         parsed_run_files(run_dir, &out)
@@ -1150,9 +1196,9 @@ pub trait Host {
         parsed_run_files(run_dir, &checked(self, &argv, proc)?)
     }
 
-    /// The text of the file name, a plain name, in run_dir, if it stays inside the run directory as run_files_inside
+    /// The bytes of the file name, a plain name, in run_dir, if it stays inside the run directory as run_files_inside
     /// lists only those that do: Outside, having read nothing, for a file that leads out or a run_dir that does;
-    /// Missing for a file not there, or removed before it is read. Errors: the file cannot be read, or is not UTF-8.
+    /// Missing for a file not there, or removed before it is read. Errors: the file cannot be read.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
         // What is read is the path below resolved, so the links it walked are not followed again; one put in its
         // place after that is: a race left open, here as in run_states_inside and run_files_inside, which check a
@@ -1164,7 +1210,7 @@ pub trait Host {
             run_dir_resolved(),
             cat_unless_gone("$r")
         );
-        let proc = self.run(&["sh", "-c", &script, "_", run_dir, name], None, DEFAULT_TIMEOUT)?;
+        let proc = self.run_verbatim(&["sh", "-c", &script, "_", run_dir, name], None, DEFAULT_TIMEOUT)?;
         match proc.status {
             0 => Ok(RunFileText::Text(proc.stdout)),
             MISSING_FILE_STATUS => Ok(RunFileText::Missing),
@@ -1305,12 +1351,12 @@ fn split_at_byte(bytes: &[u8], at: u8) -> Option<(&[u8], &[u8])> {
 }
 
 /// sh printing, for each file $f in the directory $1 that run_files lists and for which the sh condition keep
-/// succeeds, "<mtime> <path>" ended by a NUL, which no path holds: what parsed_run_files reads.
+/// succeeds, "<mtime> <size> <path>" ended by a NUL, which no path holds: what parsed_run_files reads.
 fn run_files_loop(keep: &str) -> String {
     format!(
         "for f in \"$1\"/*; do [ -f \"$f\" ] || continue; \
          case \"${{f##*/}}\" in state.json|*.tmp.*) continue;; esac; \
-         {keep} || continue; {MTIME_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
+         {keep} || continue; {MTIME_AND_SIZE_OF_F} || {SKIP_F_IF_GONE}; printf \"%s %s\\0\" \"$m\" \"$f\"; done; true"
     )
 }
 
@@ -1344,17 +1390,21 @@ fn archived_metrics(text: &str, path: &str) -> Result<Vec<Value>, OrchestratorEr
 }
 
 /// The files run_files_loop printed as out, listing run_dir, oldest first, those of one time by name. Errors: an
-/// entry whose time is not one.
+/// entry whose time or size is not one.
 fn parsed_run_files(run_dir: &str, out: &str) -> Result<Vec<RunFile>, OrchestratorError> {
     let mut files = vec![];
     for entry in out.split('\0').filter(|e| !e.is_empty()) {
-        let (mtime, path) = entry.split_once(' ').unwrap_or((entry, ""));
+        let (mtime, rest) = entry.split_once(' ').unwrap_or((entry, ""));
         let mtime = decimal_int(mtime)
             .ok_or_else(|| OrchestratorError(format!("listing {run_dir}: stat printed {mtime:?}, not a time")))?;
-        files.push((mtime, path.to_string()));
+        let (size, path) = rest.split_once(' ').unwrap_or((rest, ""));
+        let size = size
+            .parse::<u64>()
+            .map_err(|_| OrchestratorError(format!("listing {run_dir}: stat printed {size:?}, not a size")))?;
+        files.push((mtime, path.to_string(), size));
     }
     files.sort();
-    Ok(files.into_iter().map(|(mtime, path)| RunFile { path, mtime }).collect())
+    Ok(files.into_iter().map(|(mtime, path, size)| RunFile { path, mtime, size }).collect())
 }
 
 /// proc's output, proc being argv run on host; Errors, naming argv, the SSH target if any, and proc's standard error,
@@ -1626,9 +1676,24 @@ pub(crate) const GIT_STATUS_ARGS: &[&str] =
 
 /// What `git status --porcelain` lists in cwd, one change or untracked file to a line, under the user's settings that
 /// GIT_STATUS_ARGS names overridden. Empty means a clean working tree. Every `git status` of the engine's runs through
-/// it. Errors: as Host::git's.
+/// it or holds_nothing. Errors: as Host::git's.
 pub(crate) fn git_status<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<String, OrchestratorError> {
     host.git(cwd, GIT_STATUS_ARGS)
+}
+
+/// Whether the working tree at cwd holds nothing but what the engine writes there: no change, no untracked file and
+/// no ignored one, as `git status --ignored` lists them under GIT_STATUS_ARGS's settings, but PROJECT_DIR's .gitignore
+/// (Orchestrator::ignore_project_dir) and the proofs' copies under PROOF_COPIES_DIR, whose originals are in the run's
+/// directory. Removing such a worktree loses no file a run or a human wrote, though git may still refuse to
+/// (Host::try_remove_worktree). Errors: as Host::git's.
+pub(crate) fn holds_nothing<H: Host + ?Sized>(host: &H, cwd: &str) -> Result<bool, OrchestratorError> {
+    let args = [GIT_STATUS_ARGS, &["--ignored"]].concat();
+    let listed = host.git(cwd, &args)?;
+    // Each line is "XY path", a path in quotes when it has a quote, a backslash or a control character in it; with
+    // --untracked-files=all, each file in an ignored directory has a line of its own.
+    let (ignore, copies) = (format!("{PROJECT_DIR}/.gitignore"), format!("{PROOF_COPIES_DIR}/"));
+    let engines = |path: &str| path == ignore || path.starts_with(&copies);
+    Ok(listed.lines().all(|line| line.get(3..).is_some_and(engines)))
 }
 
 /// The paths whose files differ between commits a and b, their mode included, a rename as its two paths, each ended

@@ -123,6 +123,13 @@ export interface Turn {
   ended_at: string | null;
   /** From started_at to ended_at; null while either is. */
   seconds: number | null;
+  /** Of seconds, how many the agent waited for the human's answer to a permission (an ACP run), and how many it
+   * reported waiting on something outside the run; absent when not recorded (the engine's TurnRecord says when). */
+  waited_seconds?: number;
+  outside_wait_seconds?: number;
+  /** What the turn's role reports it waits on outside the run, and since when (an ISO time), while that wait stands;
+   * absent while none does. */
+  waiting_on?: { on: string; since: string };
 }
 
 /** One verdict a verdict step gave: the round it judged, the step's id, and APPROVE or CHANGES_REQUESTED. */
@@ -167,6 +174,9 @@ export interface RunRecord {
   branch: string | null;
   worktree: string | null;
   pr: { url: string; state: string | null; error: string | null } | null;
+  /** Whether the run succeeded with nothing tracked changed since its base, and so opened no pull request; absent
+   * from a server before 0.103.0. */
+  nothing_to_publish?: boolean;
   turns: Turn[];
   resume_command: string | null;
   /** Whether a resume would take the run up and find something left to do: a stale run, one stopped as interrupted or
@@ -175,10 +185,11 @@ export interface RunRecord {
   resumable?: boolean;
 }
 
-/** A file in a run directory; mtime is in seconds since the epoch. */
+/** A file in a run directory; mtime is in seconds since the epoch, size in bytes. */
 export interface RunFile {
   name: string;
   mtime: number;
+  size: number;
 }
 
 /** An event of the server's /events stream, its SSE event name as kind. */

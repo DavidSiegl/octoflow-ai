@@ -18,7 +18,7 @@
 //!   `option` and `by` of the answer that won), `bad_option`.
 //! - `{"message": {"role", "text"}}`: send the role's agent text, the human's message, as its next prompt, while the
 //!   run waits on the human's message to it (its journal's `waiting`). Errors: `no_agent`, `not_waiting` (it does not
-//!   wait, or a prompt of it is pending, which ACP allows no second beside).
+//!   wait, a prompt of it is pending, which ACP allows no second beside, or the agent was stopped).
 //! - `{"stop": {}}`: answered `ok` at once; then the run stops, as at a Ctrl-C, its agents' permissions cancelled and
 //!   their prompts too (Commands::stop).
 //!
@@ -295,7 +295,7 @@ fn command(request: &Value, commands: &dyn Commands) -> Value {
         Err(CommandError::NoAgent) => error("no_agent", &format!("the {role} role has no agent running")),
         Err(CommandError::NotWaiting) => error(
             "not_waiting",
-            &format!("the {role} agent is not waiting for a message: it is working, or the run does not wait on you"),
+            &format!("the {role} agent is not waiting for a message: it is working or stopped, or the run does not wait on you"),
         ),
         Err(CommandError::Unwritten(e)) => error("unwritten", &e.0),
         // Only an answer is refused so, and it is answered above.

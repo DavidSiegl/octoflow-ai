@@ -10,6 +10,7 @@ use crate::herdr::HerdrServer;
 use crate::json::Object;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{saved_prompts, Prompts};
+use crate::timestamp::epoch_seconds;
 use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,6 +20,10 @@ use serde_json::Value;
 pub fn run_dir(cwd: &str, run_id: &str) -> String {
     format!("{cwd}/{RUNS_DIR}/{run_id}")
 }
+
+/// How summary.md and `show` word the pull request of a run that had nothing to publish (RunState::nothing_to_publish);
+/// the desktop app's run view (ui/src/components/RunDetail.tsx) says the same in a sentence of its own.
+pub const NOTHING_TO_PUBLISH: &str = "none: nothing tracked changed since the base, so there was nothing to publish";
 
 /// What a run has done so far, saved as state.json in its run directory.
 ///
@@ -57,7 +62,8 @@ pub struct RunState {
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     /// True once publish found that the run changed nothing git tracks, its working tree and HEAD as they were at
-    /// base, and so opened no pull request though the run succeeded (Workflow::publish). Saved only when true.
+    /// base, and so opened no pull request though the run succeeded (Workflow::publish); summary.md and `show` word
+    /// it as NOTHING_TO_PUBLISH. Saved only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub nothing_to_publish: bool,
     /// The run's verdict: CHANGES_REQUESTED from a verdict step's request for changes on, APPROVE once the last
@@ -195,7 +201,8 @@ pub struct StepVerdict {
 
 /// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, "session" once known,
 /// "unprompted" until the agent takes its first prompt, "past_startup" while that holds and the agent is past its
-/// startup, then the fields this engine does not know.
+/// startup, "unoffered_model" while that is set, "model" once the agent was started, then the fields this engine does
+/// not know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     /// The agent's herdr name, `<role>-<key>`.
@@ -220,24 +227,53 @@ pub struct AgentRecord {
     /// so a record saved by an engine that did not keep it reads as false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub past_startup: bool,
-    /// The role's model (RunState::models) when its harness's session did not offer it, and the model the agent runs
-    /// on instead; None when it runs on the role's model, or the role names none. Saved only when set, so a record
-    /// saved by an engine that did not keep it reads as None.
+    /// The model the agent asked its harness for (model) when its session did not offer it, and the model the agent
+    /// runs on instead; None when it runs on the one it asked for, or it asked for none. A relaunch into the agent's
+    /// session that asks the same model and does not say which it runs on keeps it (Workflow::start). Saved only when
+    /// set, so a record saved by an engine that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unoffered_model: Option<UnofferedModel>,
+    /// The role's model (RunState::models) when this agent was started, empty for none: the one it asked its harness
+    /// for, which a resume that changes the role's model does not change for an agent still running. None for a record
+    /// saved by an engine that did not keep it, or one not yet started (Workflow::start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
 }
 
 /// A model an agent was started on that its harness's session did not offer, so that it runs on another
-/// (AgentRecord::unoffered_model, Started::unoffered_model).
+/// (AgentRecord::unoffered_model, LaunchedModel::Unoffered).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnofferedModel {
     /// The model asked for, never empty.
     pub asked: String,
     /// The model the session runs on instead, as it named it; None when it named none.
     pub taken: Option<String>,
+}
+
+/// The model an agent ran on, and the one it was asked to run on when its harness's session did not offer that
+/// (RunState::model_ran_on, and a TurnRecord's model and unoffered_model). Displays as summary.md, the pull request
+/// and the Octoflow-Role trailer name it: "sonnet", "default" for none, "sonnet (opus not offered)", "default (o3 not
+/// offered)".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelRanOn<'a> {
+    /// The model it ran on; None for its harness's default, which is also what a session runs on that did not offer
+    /// the model asked for and named no other.
+    pub model: Option<&'a str>,
+    /// The model asked for that its session did not offer; None when it ran on the one asked for, or none was asked.
+    pub unoffered: Option<&'a str>,
+}
+
+impl std::fmt::Display for ModelRanOn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.model.unwrap_or("default"))?;
+        match self.unoffered {
+            Some(asked) => write!(f, " ({asked} not offered)"),
+            None => Ok(()),
+        }
+    }
 }
 
 /// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt from the run is.
@@ -254,7 +290,8 @@ pub enum AgentStart {
 }
 
 /// The record of one handoff file's turn (RunState::turns), as Workflow::turn_record opens it and end_turn closes it.
-/// Saved with every field, None as null, in this order, then the fields this engine does not know.
+/// Saved with every field, None as null (but waited_seconds, outside_wait_seconds and waiting_on, saved only when
+/// known), in this order, then the fields this engine does not know.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TurnRecord {
     /// The phase the turn was in: its step's id, or QUALITY for a quality analysis.
@@ -270,13 +307,14 @@ pub struct TurnRecord {
     /// The harness the turn's agent ran in, never empty; None for a quality analysis, which runs no agent.
     #[serde(rename = "agent", deserialize_with = "optional_harness_name")]
     pub harness: Option<String>,
-    /// The model the turn's agent ran on: the role's (RunState::models), or when its session did not offer that one
-    /// (unoffered_model), the one the session named instead. None for the harness's default, for a session that named
-    /// none, and for a quality analysis.
+    /// The model the turn's agent ran on (RunState::model_ran_on): the one it was started on, which a resume that
+    /// changes the role's model does not change, or when its session did not offer that one (unoffered_model), the
+    /// one the session named instead. None for the harness's default, for a session that named none, and for a
+    /// quality analysis.
     #[serde(deserialize_with = "Option::deserialize")]
     pub model: Option<String>,
-    /// The role's model when the turn's agent was not offered it, and so ran on model instead; None when it ran on
-    /// the role's, and in a record saved by an engine that did not keep it.
+    /// The model the turn's agent asked its harness for when it was not offered it, and so ran on model instead;
+    /// None when it ran on the one it asked for, and in a record saved by an engine that did not keep it.
     #[serde(default)]
     pub unoffered_model: Option<String>,
     /// The agent's session for the whole turn; None when that is not known, as for a turn that ended in another
@@ -299,6 +337,27 @@ pub struct TurnRecord {
     /// ended_at less started_at, in seconds; None while either is not known.
     #[serde(deserialize_with = "Option::deserialize")]
     pub seconds: Option<i64>,
+    /// Of seconds, how many the turn's agent spent waiting for the human's answer to a permission it asked for, as an
+    /// ACP run's journal records them (crate::acp::waited_seconds says how a wait is measured). None, and so absent
+    /// from state.json and metrics.json, for a turn of a herdr run, which records no such waits; for a quality
+    /// analysis; while either end is not known; where the role's journal could not be read (the run's log says so);
+    /// and in a record saved by an engine that did not keep it. The one field saved only when known, so that a record
+    /// without it is written back as it was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waited_seconds: Option<i64>,
+    /// Of seconds, how many the turn's role reported waiting on something outside the run (its waiting file,
+    /// crate::workflow::turn's waiting_path), its waits closed so far summed. A wait counts from the second poll in a
+    /// row that finds it, as the human is told of it (Workflow::poll_wait says why), to the one that finds it gone,
+    /// the turn's end, or the pass that finds its session not going on, so a wait withdrawn while no orchestrator
+    /// watched counts until the next one looks. None, and so absent from state.json and metrics.json, for a turn
+    /// that reported none, and in a record saved by an engine that did not keep it. Measured apart from
+    /// waited_seconds, so a permission asked while such a wait stood counts in both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_wait_seconds: Option<i64>,
+    /// The wait on something outside the run that stands on the turn now, not yet in outside_wait_seconds; None, and
+    /// so absent, while none stands, and always once the turn has ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_on: Option<StandingWait>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
@@ -317,6 +376,7 @@ impl AgentRecord {
             unprompted: None,
             past_startup: false,
             unoffered_model: None,
+            model: None,
             unknown: Object::new(),
         }
     }
@@ -339,10 +399,43 @@ fn optional_harness_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Optio
     Ok(Option::<Name>::deserialize(d)?.map(|Name(n)| n))
 }
 
+/// A turn's wait on something outside the run while it stands (TurnRecord::waiting_on).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StandingWait {
+    /// What the role waits on, as the first line of its waiting file names it.
+    pub on: String,
+    /// When the wait was first found standing, as iso_utc writes it.
+    pub since: String,
+}
+
 impl TurnRecord {
+    /// End the turn's standing wait at `at`, in seconds since the epoch, adding the seconds since it started (none
+    /// for an `at` before then) to outside_wait_seconds; nothing while none stands. Errors: its start is not a time,
+    /// which leaves the wait standing.
+    pub fn end_wait(&mut self, at: i64) -> Result<(), OrchestratorError> {
+        let Some(wait) = &self.waiting_on else {
+            return Ok(());
+        };
+        let since = epoch_seconds(&wait.since).map_err(|e| {
+            OrchestratorError(format!("the wait of the turn that writes {} started at no time: {e}", self.file))
+        })?;
+        let total = self.outside_wait_seconds.unwrap_or(0) + (at - since).max(0);
+        (self.outside_wait_seconds, self.waiting_on) = (Some(total), None);
+        Ok(())
+    }
+
     /// Whether the turn is under way: its file has not been found written.
     pub fn under_way(&self) -> bool {
         self.ended_at.is_none()
+    }
+
+    /// The model the turn's agent ran on, as model and unoffered_model record it; an empty model, which an earlier
+    /// engine saved for a role given an empty one, counts as none. Meaningless for a quality analysis (no harness).
+    pub fn model_ran_on(&self) -> ModelRanOn<'_> {
+        ModelRanOn {
+            model: self.model.as_deref().filter(|m| !m.is_empty()),
+            unoffered: self.unoffered_model.as_deref(),
+        }
     }
 }
 
@@ -514,6 +607,18 @@ impl RunState {
         }
     }
 
+    /// The model the role's agent runs on: the one it was started on (AgentRecord::model), or the role's (models) for
+    /// a role with no started agent or one saved by an engine that did not keep it, an empty one counting as none;
+    /// unless its session did not offer that one (AgentRecord::unoffered_model).
+    pub fn model_ran_on(&self, role: &str) -> ModelRanOn<'_> {
+        let agent = self.agents.get(role);
+        if let Some(u) = agent.and_then(|a| a.unoffered_model.as_ref()) {
+            return ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) };
+        }
+        let model = agent.and_then(|a| a.model.as_ref()).or_else(|| self.models.get(role));
+        ModelRanOn { model: model.map(String::as_str).filter(|m| !m.is_empty()), unoffered: None }
+    }
+
     /// Whether the run is done: phase DONE, though its orchestrator may still be ending it (crate::runs, health).
     pub fn done(&self) -> bool {
         self.phase == DONE
@@ -675,8 +780,15 @@ impl RunState {
         }
     }
 
+    /// Whether the run has the quality gate now: quality_job names one. An empty name, which no release writes but a
+    /// hand-edited state.json can hold, is none. Every check of whether a run is gated asks this, so that they agree;
+    /// only resume's migration of a Jenkins job (cli/start.rs, resumed_state) reads the name itself, to replace it.
+    pub fn has_quality_gate(&self) -> bool {
+        self.quality_job.as_deref().is_some_and(|job| !job.is_empty())
+    }
+
     /// Whether the run has the quality gate, or had it until resume turned it off: whether it may have quality
-    /// files.
+    /// files. Unlike has_quality_gate, an empty quality_job counts: the files may be there whatever the name says.
     pub fn had_quality_gate(&self) -> bool {
         self.quality_job.is_some() || self.quality_gate_disabled
     }

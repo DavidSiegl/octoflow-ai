@@ -10,7 +10,7 @@ const RECORD: KeysOf<RunRecord> = {
   id: true, key: true, task: true, workflow: true, steps: true, pull_request: true, phase: true, round: true,
   quality_round: true, role: true, pane: true, agents: true, backend: true, health: true, health_reason: true, heartbeat_age: true,
   waiting: true, verdict: true, verdicts: true, error: true, closed: true, branch: true, worktree: true, pr: true,
-  turns: true, resume_command: true, resumable: true,
+  nothing_to_publish: true, turns: true, resume_command: true, resumable: true,
 };
 const STEP: KeysOf<Step> = { id: true, role: true, role_label: true, loop_to: true, quality_gated: true };
 const AGENT: KeysOf<AgentRef> = { role: true, name: true, kind: true };
@@ -19,8 +19,12 @@ const VERDICT: KeysOf<StepVerdict> = { round: true, step: true, verdict: true };
 const PR: KeysOf<NonNullable<RunRecord["pr"]>> = { url: true, state: true, error: true };
 const TURN: KeysOf<Turn> = {
   step: true, role: true, round: true, quality_round: true, file: true, agent: true, model: true, unoffered_model: true, session: true,
-  tokens: true, human_paced: true, started_at: true, ended_at: true, seconds: true,
+  tokens: true, human_paced: true, started_at: true, ended_at: true, seconds: true, waited_seconds: true,
+  outside_wait_seconds: true, waiting_on: true,
 };
+
+/** The keys serve sends only while they hold something, by place: a recorded object without one is not held to it. */
+const SENT_WHEN_SET: Record<string, string[]> = { turns: ["waited_seconds", "outside_wait_seconds", "waiting_on"] };
 
 /** The keys api.ts gives a record and each object in it, by where the object is in the record. */
 const TYPED: Record<string, Record<string, true>> = {
@@ -48,8 +52,9 @@ describe("the keys of a run record", () => {
     // Without an example the recording holds api.ts to nothing here.
     expect(sent.length).toBeGreaterThan(0);
     const typed = Object.keys(TYPED[place] ?? {}).sort();
+    const whenSet = SENT_WHEN_SET[place] ?? [];
     for (const object of sent) {
-      expect(Object.keys(object).sort()).toEqual(typed);
+      expect(Object.keys(object).sort()).toEqual(typed.filter((key) => key in object || !whenSet.includes(key)));
     }
   });
 });
