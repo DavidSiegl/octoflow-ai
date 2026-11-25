@@ -529,21 +529,26 @@ describe("the run form's Edit… and New…", { timeout: EDITOR_TIMEOUT_MS }, ()
   });
 
   it("cannot start until the workflows are read again after a save", async () => {
-    let answer = () => {};
     const start: FakeStart = {};
     const form = await openForm(start);
     fireEvent.change(within(form).getByLabelText("Task"), { target: { value: "a task" } });
     fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
-    // The read after the save waits for answer.
+    // The read after the save waits at the server until the test answers it. The form issues it from an effect, which
+    // React may run after editAndSave returns, so the test waits for the read to arrive rather than answering at once:
+    // an answer before it would answer nothing and leave the read waiting for good.
+    let arrive: (answer: () => void) => void = () => {};
+    const arrived = new Promise<() => void>((resolve) => (arrive = resolve));
     const fetch = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (new URL(url).pathname === "/workflows") {
-        await new Promise<void>((resolve) => (answer = resolve));
+        await new Promise<void>((answer) => arrive(answer));
       }
       return fetch(url, init);
     });
     await editAndSave(form);
     expect(within(form).getByText("Reading the workflows…")).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
+    const answer = await arrived;
     expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
     answer();
     await waitFor(() => expect(within(form).getByRole("button", { name: "Start" })).toBeEnabled());
