@@ -506,9 +506,10 @@ impl<'p> RunWatch<'p> {
     /// polls in a row with the same record list the same files; then again only when its record changes or its
     /// orchestrator saves its state.json again (heartbeat_at), as nothing else drives it. The wait is for the files the
     /// engine writes after the save that finishes the run, which FINISHED_RUN_WRITES names; one written later still is
-    /// told of only at the next such save. A failed run's release makes one after its summary.md (Workflow::release);
-    /// a resumed done run's ending does not (TODO.md). A poll that
-    /// fails sends only its problem, and changes nothing else of what the watch holds.
+    /// told of only at the next such save, so the engine saves again after writing a run's files late: a failed run's
+    /// release after its summary.md, and a resume that finishes a done run's files after them
+    /// (Workflow::save_after_files). A poll that fails sends only its problem, and changes nothing else of what the
+    /// watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
             Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
