@@ -97,7 +97,7 @@ pub struct ProjectRuns {
     pid_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
     /// Held through each forget sweep, so that this serve's sweeps of the project run one after the other: a run that
     /// two of its requests list at once (a double submit) is forgotten by the first, and the second finds it gone.
-    /// Another process's sweep (a second app, `octoflow forget`) is not held back (TODO.md).
+    /// Another process's sweep is refused instead (crate::cli::forget::forget_all's lock).
     forgetting: Mutex<()>,
     /// Held through each resume, from its check that the run is resumable until the run is taken up or the wait for
     /// it ends, so that a second resume of the run (two windows, a click again) finds it taken up and is refused.
@@ -167,8 +167,8 @@ impl ProjectRuns {
 
     /// Forget the project's closed runs that sweep names, as crate::cli::forget::forget_all does, of those records
     /// shows (RunScope::Inside), and give each run's outcome; the lines forget prints are dropped, as the outcomes hold
-    /// what they say. A sweep waits for one of the project's already under way to end. A raised stopping starts no
-    /// further run. Errors: as forget_all's.
+    /// what they say. A sweep waits for one of the project's already under way here to end, and is refused while
+    /// another process's runs (forget_all's lock). A raised stopping starts no further run. Errors: as forget_all's.
     pub fn forget_all(
         &self,
         sweep: forget::Sweep,
@@ -176,8 +176,16 @@ impl ProjectRuns {
     ) -> Result<Vec<RunForgotten>, OrchestratorError> {
         // A sweep that panicked left nothing half-done that the next could trip on: each run is read at its turn.
         let _one_at_a_time = self.forgetting.lock().unwrap_or_else(PoisonError::into_inner);
-        let forgetter =
-            Forgetter { host: &*self.host, interrupt: stopping, stdout: &|_| {}, scope: RunScope::Inside, acp: true };
+        let here = local_host();
+        let forgetter = Forgetter {
+            host: &*self.host,
+            interrupt: stopping,
+            stdout: &|_| {},
+            scope: RunScope::Inside,
+            acp: true,
+            pid_alive: &*self.pid_alive,
+            local_host: &here,
+        };
         forget_all(&forgetter, &self.cwd, sweep)
     }
 

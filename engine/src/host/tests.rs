@@ -323,6 +323,37 @@ fn exists_finds_a_file_a_directory_or_a_dangling_link() {
 }
 
 #[test]
+fn create_new_makes_a_file_only_where_nothing_is() {
+    let (d, host) = (TempDir::new(), ProcessHost::local(&Interrupt::new()));
+    let path = d.join("forget.lock");
+    assert!(host.create_new(&path, "first\n").unwrap());
+    assert!(!host.create_new(&path, "second\n").unwrap());
+    assert_eq!(host.read(&path).unwrap().as_deref(), Some("first\n"));
+    // A dangling link is something there too.
+    std::os::unix::fs::symlink(d.join("nowhere"), d.join("link")).unwrap();
+    assert!(!host.create_new(&d.join("link"), "x").unwrap());
+    assert!(!std::path::Path::new(&d.join("nowhere")).exists());
+    // A missing directory is not made.
+    let e = host.create_new(&d.join("missing/forget.lock"), "x").unwrap_err();
+    assert!(e.0.starts_with(&format!("making {}: ", d.join("missing/forget.lock"))), "{e}");
+    assert!(!host.exists(&d.join("missing")).unwrap());
+}
+
+#[test]
+fn touch_sets_a_files_mtime_to_now_and_makes_none() {
+    let (d, host) = (TempDir::new(), ProcessHost::local(&Interrupt::new()));
+    let path = d.join("forget.lock");
+    put(&path, "held");
+    let old = std::fs::File::options().write(true).open(&path).unwrap();
+    old.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+    assert_eq!(host.mtime(&path).unwrap(), 1_000_000);
+    host.touch(&path).unwrap();
+    assert!(host.now().unwrap() - host.mtime(&path).unwrap() < 60);
+    host.touch(&d.join("gone")).unwrap();
+    assert!(!host.exists(&d.join("gone")).unwrap());
+}
+
+#[test]
 fn read_failure_raises() {
     let d = TempDir::new();
     let path = d.join("spec.md");
