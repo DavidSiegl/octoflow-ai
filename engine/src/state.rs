@@ -201,7 +201,8 @@ pub struct StepVerdict {
 
 /// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, "session" once known,
 /// "unprompted" until the agent takes its first prompt, "past_startup" while that holds and the agent is past its
-/// startup, then the fields this engine does not know.
+/// startup, "unoffered_model" while that is set, "model" once the agent was started, then the fields this engine does
+/// not know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     /// The agent's herdr name, `<role>-<key>`.
@@ -226,19 +227,24 @@ pub struct AgentRecord {
     /// so a record saved by an engine that did not keep it reads as false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub past_startup: bool,
-    /// The role's model (RunState::models) when its harness's session did not offer it, and the model the agent runs
-    /// on instead; None when it runs on the role's model, or the role names none. A relaunch into the agent's session
-    /// that does not say which model it runs on keeps it (Workflow::start). Saved only when set, so a record saved by
-    /// an engine that did not keep it reads as None.
+    /// The model the agent asked its harness for (model) when its session did not offer it, and the model the agent
+    /// runs on instead; None when it runs on the one it asked for, or it asked for none. A relaunch into the agent's
+    /// session that asks the same model and does not say which it runs on keeps it (Workflow::start). Saved only when
+    /// set, so a record saved by an engine that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unoffered_model: Option<UnofferedModel>,
+    /// The role's model (RunState::models) when this agent was started, empty for none: the one it asked its harness
+    /// for, which a resume that changes the role's model does not change for an agent still running. None for a record
+    /// saved by an engine that did not keep it, or one not yet started (Workflow::start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
 }
 
 /// A model an agent was started on that its harness's session did not offer, so that it runs on another
-/// (AgentRecord::unoffered_model, Started::unoffered_model).
+/// (AgentRecord::unoffered_model, LaunchedModel::Unoffered).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnofferedModel {
     /// The model asked for, never empty.
@@ -301,13 +307,14 @@ pub struct TurnRecord {
     /// The harness the turn's agent ran in, never empty; None for a quality analysis, which runs no agent.
     #[serde(rename = "agent", deserialize_with = "optional_harness_name")]
     pub harness: Option<String>,
-    /// The model the turn's agent ran on: the role's (RunState::models), or when its session did not offer that one
-    /// (unoffered_model), the one the session named instead. None for the harness's default, for a session that named
-    /// none, and for a quality analysis.
+    /// The model the turn's agent ran on (RunState::model_ran_on): the one it was started on, which a resume that
+    /// changes the role's model does not change, or when its session did not offer that one (unoffered_model), the
+    /// one the session named instead. None for the harness's default, for a session that named none, and for a
+    /// quality analysis.
     #[serde(deserialize_with = "Option::deserialize")]
     pub model: Option<String>,
-    /// The role's model when the turn's agent was not offered it, and so ran on model instead; None when it ran on
-    /// the role's, and in a record saved by an engine that did not keep it.
+    /// The model the turn's agent asked its harness for when it was not offered it, and so ran on model instead;
+    /// None when it ran on the one it asked for, and in a record saved by an engine that did not keep it.
     #[serde(default)]
     pub unoffered_model: Option<String>,
     /// The agent's session for the whole turn; None when that is not known, as for a turn that ended in another
@@ -369,6 +376,7 @@ impl AgentRecord {
             unprompted: None,
             past_startup: false,
             unoffered_model: None,
+            model: None,
             unknown: Object::new(),
         }
     }
@@ -599,17 +607,16 @@ impl RunState {
         }
     }
 
-    /// The model the role's agent runs on: the role's (models; an empty one counts as none), unless its started
-    /// agent's session did not offer that one (AgentRecord::unoffered_model). models is what the run last set, so an
-    /// agent started before a resume changed the role's model is named with the new one (todo 115).
+    /// The model the role's agent runs on: the one it was started on (AgentRecord::model), or the role's (models) for
+    /// a role with no started agent or one saved by an engine that did not keep it, an empty one counting as none;
+    /// unless its session did not offer that one (AgentRecord::unoffered_model).
     pub fn model_ran_on(&self, role: &str) -> ModelRanOn<'_> {
-        match self.agents.get(role).and_then(|a| a.unoffered_model.as_ref()) {
-            Some(u) => ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) },
-            None => ModelRanOn {
-                model: self.models.get(role).map(String::as_str).filter(|m| !m.is_empty()),
-                unoffered: None,
-            },
+        let agent = self.agents.get(role);
+        if let Some(u) = agent.and_then(|a| a.unoffered_model.as_ref()) {
+            return ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) };
         }
+        let model = agent.and_then(|a| a.model.as_ref()).or_else(|| self.models.get(role));
+        ModelRanOn { model: model.map(String::as_str).filter(|m| !m.is_empty()), unoffered: None }
     }
 
     /// Whether the run is done: phase DONE, though its orchestrator may still be ending it (crate::runs, health).

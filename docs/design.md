@@ -19,8 +19,9 @@ the process that drives them. `resume` picks the run up where `state.json` says 
   harness's own syntax: `--resume <id>` for claude, `--conversation <id>` for agy, `--session <id>` for pi and
   opencode, and `codex resume <id>`. When its session is gone, or the role runs in another harness now, a fresh one starts
   with a prompt that points it at the earlier rounds, and a Spec Collector's interview starts over.
-- `resume --agent` and `--role-agent` change the harness of each role's next agent; a role whose agent still
-  runs keeps it until it exits. A state saved by 0.3.0 resumes with every role on claude and its saved
+- `resume --agent` and `--role-agent` change the harness of each role's next agent, and `--model` and
+  `--role-model` its model; a role whose agent still runs keeps both until it exits, and the run names the model
+  that agent was started on. A state saved by 0.3.0 resumes with every role on claude and its saved
   permission mode.
 - A closed pane is split again from a surviving one, and a closed workspace is replaced by a new one. The workspace
   is looked for in the herdr server the run saved; one still open there while the resume reaches another server is
