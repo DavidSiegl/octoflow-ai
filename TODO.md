@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **`<AppImage> serve` from a terminal still starts its runs from the AppImage's mount.** Raised by cross-review 339
+  (F6): only the app's window passes `--run-program` (`run_program` in `ui/src-tauri/src/lib.rs`), and `Cli::run`
+  clears `APPIMAGE` before serve starts, so a run outlives that serve's mount and can die by SIGBUS once it ends.
+  Choosing the program in `Cli::run`, where `stop_with_appimage_runtime` already reads `APPIMAGE`, would cover the
+  sidecar and the terminal alike.
 - **The run detail's two ages tick on separate clocks.** Raised by cross-review 287 (F1): `Status`
   (`ui/src/components/RunDetail.tsx`) and `NowLine` (`ui/src/components/RunMap.tsx`) each call `useNow`
   (`ui/src/hooks.ts`), each with its own `setInterval`, so each second the heartbeat age and the running turn's length

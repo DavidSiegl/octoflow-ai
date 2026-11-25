@@ -74,8 +74,8 @@ pub struct Reached {
 /// Errors: the project cannot be reached. [`project_host`] is the real one.
 pub type Connect = dyn Fn(&str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
 
-/// The program's `serve`: start a RunServer that also answers origins and starts its runs by run_program (None for
-/// its own), its setup marker and workflows in config, print {"url", "token"} as one JSON line on
+/// The program's `serve`: start a RunServer that also answers origins, its setup marker and workflows in config, its
+/// runs started by run_program (None for its own; RunServer::start), print {"url", "token"} as one JSON line on
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
@@ -1068,8 +1068,8 @@ fn run_closed(run: &RunClosed) -> Value {
     ])
 }
 
-/// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
-/// run id, and waited for.
+/// The answer to POST /run once its body is run and its project project: the run started, by run_program's program, as
+/// a new run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
     let program = match run_program(shared) {
         Ok(path) => path,
@@ -1125,13 +1125,17 @@ fn resume_answer(shared: &Shared, project: &ProjectRuns, run_id: &str) -> Answer
     }
 }
 
-/// The program a run, or its resume, is started by: the one shared was given (RunServer::start), else serve's own
-/// (serve_program). Errors: serve_program's.
+/// The program a run, or its resume, is started by: the one shared was given (RunServer::start) while it is there,
+/// else serve's own (serve_program). Errors: serve_program's.
 fn run_program(shared: &Shared) -> Result<String, String> {
-    shared.run_program.clone().map_or_else(serve_program, Ok)
+    // The app's AppImage file can be moved or deleted while the app runs, as an AppImage integrator moves it; the app's
+    // mount still holds serve's program then, which beats starting no run at all.
+    let given = shared.run_program.as_ref().filter(|path| std::path::Path::new(path).exists());
+    given.cloned().map_or_else(serve_program, Ok)
 }
 
-/// The path of serve's own program, which POST /run starts its runs by. Errors: it cannot be told, or is not UTF-8.
+/// The path of serve's own program, which POST /run and POST /resume start their runs by unless serve was given
+/// another (run_program). Errors: it cannot be told, or is not UTF-8.
 fn serve_program() -> Result<String, String> {
     let path = std::env::current_exe().map_err(|e| format!("cannot tell serve's program: {}", os_error(&e, None)))?;
     let path = path.into_os_string().into_string().map_err(|p| format!("serve's program {p:?} is not UTF-8"))?;

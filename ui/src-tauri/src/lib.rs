@@ -395,9 +395,10 @@ fn spawn(program: &Path, origin: &str, runs_by: Option<&Path>) -> Result<(Child,
 /// ends when the app quits, and a run still to page in some of its program would then die by SIGBUS; the AppImage
 /// file starts the same program in a mount of the run's own. None, for the sidecar's own program, otherwise: the
 /// .deb, macOS, and an AppImage extracted, by the user or by its runtime (`APPIMAGE_EXTRACT_AND_RUN`), whose files
-/// stay readable to the processes that run them.
+/// stay readable to the processes that run them; and an AppImage whose path is not UTF-8, which serve, whose paths
+/// are strings, would refuse along with the whole sidecar.
 fn run_program(appimage: Option<OsString>, exe: &Path, mounted: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    appimage.filter(|path| !path.is_empty() && mounted(exe)).map(PathBuf::from)
+    appimage.filter(|path| !path.is_empty() && path.to_str().is_some() && mounted(exe)).map(PathBuf::from)
 }
 
 /// Whether path is on a FUSE file system, as a mounted AppImage's files are. False when that cannot be told, as for a

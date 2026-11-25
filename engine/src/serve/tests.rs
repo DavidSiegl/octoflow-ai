@@ -1197,6 +1197,20 @@ fn a_run_starts_by_the_program_serve_was_given() {
 }
 
 #[test]
+fn a_run_starts_by_serve_s_own_program_once_the_one_it_was_given_is_gone() {
+    // The run's program is serve's own, this test binary, which refuses `run`'s flags and saves no state.json.
+    let d = Project::new();
+    let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(20) };
+    let options = Options { wait, run_program: Some("/nonexistent/Octoflow.AppImage".into()), ..Options::default() };
+    let served = Served::start(Box::new(project_host), &[], Arc::default(), options);
+
+    let reply = served.post(&d.query("/run"), r#"{"task": "t"}"#);
+
+    assert_eq!(reply.status, Some(422), "{}", reply.body);
+    assert!(reply.error().contains("exited before it saved its state"), "{}", reply.body);
+}
+
+#[test]
 fn a_bad_run_body_is_refused_before_the_project_is_reached() {
     let connects = Arc::new(Mutex::new(vec![]));
     let seen = Arc::clone(&connects);
@@ -2554,6 +2568,42 @@ fn a_resume_refuses_a_run_it_would_not_take_up_before_starting_anything() {
             RunReadError::Missing("no run 20261120-000000-dddddd".into()),
         ]
     );
+}
+
+#[test]
+fn a_resume_starts_by_the_program_serve_was_given() {
+    let tmp = TempDir::new();
+    let dir = tmp.path();
+    let id = "20261120-000000-abcdef";
+    let run_dir = save_app_run(&dir, id, |_| {});
+    // Takes the run up as a resume does: owned by a live process here, this test's.
+    let mut taken: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{run_dir}/state.json")).unwrap()).unwrap();
+    taken["owner"] = object([
+        ("host", Value::from(crate::runs::local_host())),
+        ("pid", Value::from(i64::from(std::process::id()))),
+        ("started_at", Value::from("x")),
+    ]);
+    taken["error"] = Value::Null;
+    let taken_file = format!("{dir}/taken.json");
+    std::fs::write(&taken_file, taken.to_string()).unwrap();
+    let script = format!(r#"echo "$0 $@" >> "{dir}/resumes"; cp "{taken_file}" "{run_dir}/state.json"; exec sleep 5"#);
+    let program = run_program(&dir, &script);
+    let project = dir.clone();
+    let connect = move |_: &str, stopping: &Interrupt| {
+        let host = Arc::new(ProcessHost::local(stopping));
+        let console = Arc::new(FakeConsole::default());
+        Ok(Reached { host, dir: project.clone(), console: console.clone(), places: console })
+    };
+    let wait = StartWait { every: Duration::from_millis(10), limit: Duration::from_secs(5) };
+    let options = Options { wait, run_program: Some(program.clone()), ..Options::default() };
+    let served = Served::start(Box::new(connect), &[], Arc::default(), options);
+
+    let reply = served.post(&format!("/resume?{}", urlencode(&[("cwd", &dir), ("run", id)])), "");
+
+    assert_eq!(reply.status, Some(200), "{}", reply.body);
+    let resumes = std::fs::read_to_string(format!("{dir}/resumes")).unwrap();
+    assert!(resumes.starts_with(&format!("{program} resume ")), "{resumes}");
 }
 
 #[test]

@@ -535,7 +535,13 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
             "Also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
         ))
         // The desktop app's: its AppImage file, while the app runs from the AppImage's mount.
-        .arg(Arg::new("run-program").long("run-program").value_name("PATH").hide(true));
+        .arg(
+            Arg::new("run-program")
+                .long("run-program")
+                .value_name("PATH")
+                .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                .hide(true),
+        );
     clap::Command::new(PROGRAM)
         .about(
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \

@@ -489,6 +489,7 @@ fn serve_takes_the_program_its_runs_start_by() {
     };
     assert_eq!(given.unwrap(), expected);
     assert_eq!(parse(&["serve", "--run-program"]).unwrap_err().exit_code(), 2);
+    assert_eq!(parse(&["serve", "--run-program="]).unwrap_err().exit_code(), 2);
     let help = parse(&["serve", "--help"]).unwrap_err().to_string();
     assert!(!help.contains("--run-program"), "the app's flag is hidden:\n{help}");
 }
