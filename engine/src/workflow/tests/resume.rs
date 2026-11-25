@@ -145,6 +145,36 @@ fn a_resume_that_changes_a_role_s_model_names_the_one_its_running_agent_was_star
     assert!(trailers.contains(&("Octoflow-Role".to_string(), "review=claude/opus".to_string())), "{trailers:?}");
 }
 
+/// The role's next agent takes the resume's model: an exited one relaunched into its session asks for it, and its
+/// record and turn name it (todo 115).
+#[test]
+fn a_resume_that_changes_a_role_s_model_relaunches_its_exited_agent_on_the_new_one() {
+    let seen = seen();
+    let mut state = prompted(saved_run("build", 2, FULL), "build-2.md");
+    state.models.insert("build".into(), "opus".into());
+    state.agents.get_mut("build").expect("a saved Builder").model = Some("opus".into());
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
+    let mut settings = f.as_saved();
+    settings.agents.models.insert("build".into(), "haiku".into());
+    let mut wf = f.workflow(settings);
+
+    assert_eq!(wf.run(), verdict(APPROVE));
+
+    assert_eq!(
+        starts(&f),
+        [("build-a1b2c3".into(), "w1:p2".into(), strings(&["--resume", "s-build", "--model", "haiku"]))]
+    );
+    assert_eq!(wf.state().agents["build"].model.as_deref(), Some("haiku"));
+    let build = wf.state().turns.iter().find(|t| t.role == "build").expect("a build turn");
+    assert_eq!(build.model.as_deref(), Some("haiku"));
+}
+
 #[test]
 fn herdr_failing_to_look_up_a_known_agent_stops_the_run_without_starting_one() {
     // A skip in place of the failure would start a second Reviewer next to the live one.

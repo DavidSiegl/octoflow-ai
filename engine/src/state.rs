@@ -201,7 +201,8 @@ pub struct StepVerdict {
 
 /// A role's agent as the run started it (RunState::agents). Saved as {"name", "pane", "kind"}, "session" once known,
 /// "unprompted" until the agent takes its first prompt, "past_startup" while that holds and the agent is past its
-/// startup, then the fields this engine does not know.
+/// startup, "unoffered_model" while that is set, "model" once the agent was started, then the fields this engine does
+/// not know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     /// The agent's herdr name, `<role>-<key>`.
@@ -305,13 +306,14 @@ pub struct TurnRecord {
     /// The harness the turn's agent ran in, never empty; None for a quality analysis, which runs no agent.
     #[serde(rename = "agent", deserialize_with = "optional_harness_name")]
     pub harness: Option<String>,
-    /// The model the turn's agent ran on: the role's (RunState::models), or when its session did not offer that one
-    /// (unoffered_model), the one the session named instead. None for the harness's default, for a session that named
-    /// none, and for a quality analysis.
+    /// The model the turn's agent ran on (RunState::model_ran_on): the one it was started on, which a resume that
+    /// changes the role's model does not change, or when its session did not offer that one (unoffered_model), the
+    /// one the session named instead. None for the harness's default, for a session that named none, and for a
+    /// quality analysis.
     #[serde(deserialize_with = "Option::deserialize")]
     pub model: Option<String>,
-    /// The role's model when the turn's agent was not offered it, and so ran on model instead; None when it ran on
-    /// the role's, and in a record saved by an engine that did not keep it.
+    /// The model the turn's agent asked its harness for when it was not offered it, and so ran on model instead;
+    /// None when it ran on the one it asked for, and in a record saved by an engine that did not keep it.
     #[serde(default)]
     pub unoffered_model: Option<String>,
     /// The agent's session for the whole turn; None when that is not known, as for a turn that ended in another
