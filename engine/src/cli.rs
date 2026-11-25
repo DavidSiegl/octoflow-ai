@@ -176,8 +176,8 @@ pub fn main(argv: impl IntoIterator<Item = OsString>) -> i32 {
             return e.exit_code();
         }
     };
-    if let Command::Serve(origins) = &command {
-        return crate::serve::serve_command(origins, &config);
+    if let Command::Serve { origins, run_program } = command {
+        return crate::serve::serve_command(&origins, run_program, &config);
     }
     let interrupt = &match crate::interrupt::by_signals() {
         Ok(interrupt) => interrupt,
@@ -369,7 +369,7 @@ fn run_command(command: &Command, world: &Connected) -> Result<Ended, Stop> {
             let status = forget::forget_command(world, &cwd, run_ref.as_deref(), *dry_run).map_err(stopped)?;
             return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(status)) };
         }
-        Command::Workflows(_) | Command::Doctor { .. } | Command::Serve(_) => {
+        Command::Workflows(_) | Command::Doctor { .. } | Command::Serve { .. } => {
             unreachable!("main runs {command:?} without herdr (herdrless_command, serve_command)")
         }
     };

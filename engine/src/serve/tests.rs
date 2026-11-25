@@ -61,11 +61,19 @@ struct Options {
     config: ConfigDir,
     /// How POST /run waits.
     wait: StartWait,
+    /// The program its runs start by; None for its own, this test binary.
+    run_program: Option<String>,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { poll: SERVE_POLL, setup: unchecked(), config: ConfigDir::at("/nowhere/config"), wait: START_WAIT }
+        Options {
+            poll: SERVE_POLL,
+            setup: unchecked(),
+            config: ConfigDir::at("/nowhere/config"),
+            wait: START_WAIT,
+            run_program: None,
+        }
     }
 }
 
@@ -108,8 +116,9 @@ impl Served {
 
     fn start(connect: Box<Connect>, origins: &[&str], connects: Arc<Mutex<Vec<String>>>, options: Options) -> Served {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        let Options { poll, setup, config, wait } = options;
-        let server = RunServer::start_polling(&origins, connect, setup, config, poll, wait).expect("the server starts");
+        let Options { poll, setup, config, wait, run_program } = options;
+        let server = RunServer::start_polling(&origins, run_program, connect, setup, config, poll, wait)
+            .expect("the server starts");
         let port = port_of(server.url());
         Served { server, port, connects, console: Arc::default() }
     }
@@ -1168,6 +1177,23 @@ fn a_run_that_exits_without_its_state_is_answered_with_its_log_s_last_lines() {
     let id = reply.json()["run"].as_str().expect("the run's id").to_string();
     let why = reply.error();
     assert!(why.starts_with(&format!("run {id} exited before it saved its state; its log ends:\n")), "{why}");
+}
+
+#[test]
+fn a_run_starts_by_the_program_serve_was_given() {
+    // The desktop app's AppImage file, which starts a run that outlives the app's mount (RunServer::start).
+    let d = Project::new();
+    let script = r#"id=${2#--run-id=}; echo "$0 $@"; mkdir -p "$4/.octoflow-ai/runs/$id" && echo '{}' > "$4/.octoflow-ai/runs/$id/state.json"; exec sleep 5"#;
+    let program = run_program(&d.root(), script);
+    let options = Options { wait: QUICK_WAIT, run_program: Some(program.clone()), ..Options::default() };
+    let served = Served::start(Box::new(project_host), &[], Arc::default(), options);
+
+    let reply = served.post(&d.query("/run"), r#"{"task": "t"}"#);
+
+    assert_eq!(reply.status, Some(201), "{}", reply.body);
+    let id = reply.json()["run"].as_str().expect("the run's id").to_string();
+    let log = std::fs::read_to_string(format!("{}/{RUNS_DIR}/{id}/run.log", d.root())).unwrap();
+    assert!(log.starts_with(&format!("{program} run --run-id={id} --cwd ")), "{log}");
 }
 
 #[test]
@@ -2259,7 +2285,7 @@ fn in_process() {
     let serving = std::thread::spawn(move || {
         let mut err = vec![];
         let status = serve(
-            RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")),
+            RunServer::start(&[], None, Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")),
             &mut Lines(lines),
             &mut err,
             || stopped.recv().map_err(io::Error::other),
@@ -2301,7 +2327,8 @@ impl Write for BrokenPipe {
 #[test]
 fn an_unprintable_line_ends_it() {
     let connect = |_: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
+    let started =
+        RunServer::start(&[], None, Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
     let port = port_of(started.url());
     let mut err = vec![];
     let status = serve(Ok(started), &mut BrokenPipe, &mut err, || -> io::Result<()> { panic!("serve waited") });
@@ -2322,7 +2349,8 @@ fn no_port() {
 #[test]
 fn a_wait_for_the_signals_that_fails_ends_it() {
     let connect = |_: &str, _: &Interrupt| Err(OrchestratorError::new("not asked"));
-    let started = RunServer::start(&[], Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
+    let started =
+        RunServer::start(&[], None, Box::new(connect), unchecked(), ConfigDir::at("/nowhere/config")).unwrap();
     let port = port_of(started.url());
     let (mut out, mut err) = (vec![], vec![]);
     let status = serve(Ok(started), &mut out, &mut err, || Err(io::Error::from_raw_os_error(22)));

@@ -466,14 +466,31 @@ fn a_flag_given_twice_takes_the_last() {
 
 #[test]
 fn serve_takes_each_origin_given() {
-    assert_eq!(parse(&["serve"]).unwrap(), Command::Serve(vec![]));
+    let serve = |origins: &[&str]| Command::Serve {
+        origins: origins.iter().map(|o| o.to_string()).collect(),
+        run_program: None,
+    };
+    assert_eq!(parse(&["serve"]).unwrap(), serve(&[]));
     let both = parse(&["serve", "--origin", "tauri://localhost", "--origin=http://localhost:1420"]).unwrap();
-    assert_eq!(both, Command::Serve(vec!["tauri://localhost".to_string(), "http://localhost:1420".to_string()]));
+    assert_eq!(both, serve(&["tauri://localhost", "http://localhost:1420"]));
     // An abbreviation of a long flag is that flag.
-    assert_eq!(parse(&["serve", "--or", "x"]).unwrap(), Command::Serve(vec!["x".to_string()]));
+    assert_eq!(parse(&["serve", "--or", "x"]).unwrap(), serve(&["x"]));
     assert_eq!(parse(&["serve", "--origin"]).unwrap_err().exit_code(), 2);
     assert_eq!(parse(&["serve", "x"]).unwrap_err().exit_code(), 2);
     assert_eq!(parse(&["serve", "--cwd", "/p"]).unwrap_err().exit_code(), 2);
+}
+
+#[test]
+fn serve_takes_the_program_its_runs_start_by() {
+    let given = parse(&["serve", "--origin", "tauri://localhost", "--run-program", "/home/u/Octoflow.AppImage"]);
+    let expected = Command::Serve {
+        origins: vec!["tauri://localhost".to_string()],
+        run_program: Some("/home/u/Octoflow.AppImage".to_string()),
+    };
+    assert_eq!(given.unwrap(), expected);
+    assert_eq!(parse(&["serve", "--run-program"]).unwrap_err().exit_code(), 2);
+    let help = parse(&["serve", "--help"]).unwrap_err().to_string();
+    assert!(!help.contains("--run-program"), "the app's flag is hidden:\n{help}");
 }
 
 // -- How the help reads ----------------------------------------------------------------------------------------------
