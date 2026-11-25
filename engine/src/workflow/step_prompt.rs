@@ -39,7 +39,7 @@ impl RunView<'_> {
     pub(crate) fn step_prompt(&self, step: &Step, n: u32) -> Result<(String, Option<String>), OrchestratorError> {
         let (text, fresh) = self.as_worded(step, n)?;
         let mut notes = vec![];
-        if step.quality_gated && self.state.quality_job.is_some() {
+        if step.quality_gated && self.state.has_quality_gate() {
             notes.push(match self.turn_timeout(step) {
                 Some(timeout) => self.prompts.fill(Prompt::QualityFollowsNote, &[("timeout", &timeout.to_string())])?,
                 None => self.prompts.fill(Prompt::QualityFollowsNoLimitNote, &[])?,

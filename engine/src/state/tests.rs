@@ -351,6 +351,13 @@ fn the_runs_paths() {
     assert!(!s.had_quality_gate());
     s.quality_gate_disabled = true;
     assert!(s.had_quality_gate());
+    s.quality_gate_disabled = false;
+    // An empty name is no gate, though its files may be there.
+    s.quality_job = Some(String::new());
+    assert!(!s.has_quality_gate() && s.had_quality_gate());
+    s.quality_job = Some("local".into());
+    assert!(s.has_quality_gate());
+    s.quality_job = None;
     s.worktree = Some("/proj/.octoflow-ai/worktrees/a1b2c3".into());
     assert_eq!(s.work_dir(), "/proj/.octoflow-ai/worktrees/a1b2c3");
     assert_eq!(s.prompts().unwrap(), Prompts::default());
