@@ -227,9 +227,9 @@ pub struct AgentRecord {
     /// so a record saved by an engine that did not keep it reads as false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub past_startup: bool,
-    /// The role's model (RunState::models) when its harness's session did not offer it, and the model the agent runs
-    /// on instead; None when it runs on the role's model, or the role names none. Saved only when set, so a record
-    /// saved by an engine that did not keep it reads as None.
+    /// The model the agent asked its harness for (model) when its session did not offer it, and the model the agent
+    /// runs on instead; None when it runs on the one it asked for, or it asked for none. Saved only when set, so a
+    /// record saved by an engine that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unoffered_model: Option<UnofferedModel>,
     /// The role's model (RunState::models) when this agent was started, empty for none: the one it asked its harness
