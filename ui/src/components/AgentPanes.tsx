@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { type AgentInput, type AgentRef, type Api, HttpError, type Project, type RunRecord } from "../api";
-import { useFollowEnd } from "../hooks";
+import { useHeldWhileScrolledUp } from "../hooks";
 import { Conversation } from "./Conversation";
 
 /** How often the shown agent's terminal is read again, in milliseconds. */
@@ -72,12 +72,15 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
   // Enter sends it once and success clears what was sent.
   const [sending, setSending] = useState(false);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
-  const screen = useFollowEnd<HTMLPreElement>(text);
+  // Each read replaces the window of lines whole, so while the reader is scrolled up it would slide what they read.
+  const { ref: screen, shown: screenText, held, toEnd } = useHeldWhileScrolledUp<HTMLPreElement, string | null>(text);
 
   const type = (input: AgentInput) =>
     api.typeInto(project, run, agent.role, input).then(
       () => {
         setSendProblem(null);
+        // As a terminal does on input: the reader is to see what it brings, also if they had scrolled up.
+        toEnd();
         refresh();
         return true;
       },
@@ -103,8 +106,12 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
     <div className="agent" role="tabpanel" aria-label={`${agent.role} agent`}>
       {problem && <p className="problem">{problem}</p>}
       <pre ref={screen} aria-label={`what the ${agent.role} agent shows`}>
-        {text ?? "Reading…"}
+        {screenText ?? "Reading…"}
       </pre>
+      {/* Mounted, empty, while nothing is held, so that a screen reader announces the text when it comes. */}
+      <p className="notice" role="status">
+        {held && "Held while you are scrolled up: scroll to the end for newer output."}
+      </p>
       <form onSubmit={submit}>
         <input
           aria-label={`Message to the ${agent.role} agent`}
