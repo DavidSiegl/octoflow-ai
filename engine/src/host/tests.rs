@@ -874,7 +874,7 @@ fn run_files_of_a_real_directory_oldest_first() {
     std::fs::create_dir_all(format!("{run_dir}/sub")).unwrap();
     let files = host.run_files(&run_dir).unwrap();
     let expected: Vec<RunFile> = [("c.md", 100), ("a.md", 200), ("b.md", 300), ("d.md", 300)]
-        .map(|(n, mtime)| RunFile { path: format!("{run_dir}/{n}"), mtime })
+        .map(|(n, mtime)| RunFile { path: format!("{run_dir}/{n}"), mtime, size: n.len() as u64 })
         .into();
     assert_eq!(files, expected);
     assert_eq!(host.run_files(&d.join("nosuch")).unwrap(), vec![]);
@@ -889,22 +889,26 @@ fn run_files_in_one_call_over_ssh() {
     }
     let ssh = FakeSsh::new(&[]);
     let files = ssh.host.run_files(&d.path()).unwrap();
-    let names: Vec<(String, i64)> = files.into_iter().map(|f| (f.path, f.mtime)).collect();
+    let listed: Vec<(String, i64, u64)> = files.into_iter().map(|f| (f.path, f.mtime, f.size)).collect();
     let dir = d.path();
-    assert_eq!(names, [(format!("{dir}/c.md"), 3), (format!("{dir}/a b.md"), 5), (format!("{dir}/b.md"), 5)]);
+    let expected = [(format!("{dir}/c.md"), 3, 4), (format!("{dir}/a b.md"), 5, 6), (format!("{dir}/b.md"), 5, 4)];
+    assert_eq!(listed, expected);
     assert_eq!(ssh.calls().len(), 1);
     let remote = ssh.last().pop().unwrap();
-    assert!(remote.contains("stat -c %Y") && remote.contains("stat -f %m"), "{remote}");
+    assert!(remote.contains("stat -c \"%Y %s\"") && remote.contains("stat -f \"%m %z\""), "{remote}");
 }
 
 #[test]
-fn run_files_failure_and_a_time_that_is_not_one() {
+fn run_files_failure_and_a_time_or_size_that_is_not_one() {
     let bin = TempDir::new();
     tool(&bin.path(), "stat", "#!/bin/sh\necho soon\n");
     let d = TempDir::new();
     put(&d.join("a.md"), "a");
     let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
     assert_eq!(e.0, format!("listing {}: stat printed \"soon\", not a time", d.path()));
+    tool(&bin.path(), "stat", "#!/bin/sh\necho 5 big\n");
+    let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
+    assert_eq!(e.0, format!("listing {}: stat printed \"big\", not a size", d.path()));
     tool(&bin.path(), "stat", "#!/bin/sh\necho Permission denied >&2; exit 1\n");
     let e = host_with_tools(&bin.path()).run_files(&d.path()).unwrap_err();
     assert!(e.0.contains("Permission denied"), "{e}");

@@ -138,31 +138,38 @@
     "files": [
      {
       "name": "build-1.md",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      },
      {
       "name": "gitleaksignore",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      },
      {
       "name": "leaks-publish.json",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      },
      {
       "name": "metrics.json",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      },
      {
       "name": "review-1.md",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      },
      {
       "name": "spec.md",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      },
      {
       "name": "summary.md",
-      "mtime": 1792850400
+      "mtime": 1792850400,
+      "size": 1024
      }
     ]
    }
@@ -367,7 +374,8 @@
     "files": [
      {
       "name": "spec.md",
-      "mtime": 1792850520
+      "mtime": 1792850520,
+      "size": 1024
      }
     ]
    }
@@ -500,11 +508,13 @@
     "files": [
      {
       "name": "spec.md",
-      "mtime": 1792850520
+      "mtime": 1792850520,
+      "size": 1024
      },
      {
       "name": "build-1.blocked-1.md",
-      "mtime": 1792850580
+      "mtime": 1792850580,
+      "size": 1024
      }
     ]
    }
@@ -655,15 +665,18 @@
     "files": [
      {
       "name": "spec.md",
-      "mtime": 1792850520
+      "mtime": 1792850520,
+      "size": 1024
      },
      {
       "name": "build-1.blocked-1.md",
-      "mtime": 1792850580
+      "mtime": 1792850580,
+      "size": 1024
      },
      {
       "name": "build-1.md",
-      "mtime": 1792850640
+      "mtime": 1792850640,
+      "size": 1024
      }
     ]
    }
@@ -678,15 +691,18 @@
     "files": [
      {
       "name": "build-1.blocked-1.md",
-      "mtime": 1792850580
+      "mtime": 1792850580,
+      "size": 1024
      },
      {
       "name": "build-1.md",
-      "mtime": 1792850640
+      "mtime": 1792850640,
+      "size": 1024
      },
      {
       "name": "spec.md",
-      "mtime": 1792850700
+      "mtime": 1792850700,
+      "size": 1024
      }
     ]
    }

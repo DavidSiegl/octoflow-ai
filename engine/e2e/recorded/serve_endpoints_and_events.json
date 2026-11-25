@@ -2667,31 +2667,38 @@
      "files": [
       {
        "name": "build-1.md",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       },
       {
        "name": "gitleaksignore",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       },
       {
        "name": "leaks-publish.json",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       },
       {
        "name": "metrics.json",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       },
       {
        "name": "review-1.md",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       },
       {
        "name": "spec.md",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       },
       {
        "name": "summary.md",
-       "mtime": "<seconds>"
+       "mtime": "<seconds>",
+       "size": "<bytes>"
       }
      ]
     }
@@ -2929,7 +2936,8 @@
       "<run:1>": [
        {
         "name": "spec.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        }
       ]
      }
@@ -3058,11 +3066,13 @@
       "<run:1>": [
        {
         "name": "build-1.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "spec.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        }
       ]
      }
@@ -3201,31 +3211,38 @@
       "<run:1>": [
        {
         "name": "build-1.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "gitleaksignore",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "leaks-publish.json",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "metrics.json",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "review-1.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "spec.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        },
        {
         "name": "summary.md",
-        "mtime": "<seconds>"
+        "mtime": "<seconds>",
+        "size": "<bytes>"
        }
       ]
      }

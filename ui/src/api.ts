@@ -175,10 +175,11 @@ export interface RunRecord {
   resumable?: boolean;
 }
 
-/** A file in a run directory; mtime is in seconds since the epoch. */
+/** A file in a run directory; mtime is in seconds since the epoch, size in bytes. */
 export interface RunFile {
   name: string;
   mtime: number;
+  size: number;
 }
 
 /** An event of the server's /events stream, its SSE event name as kind. */
