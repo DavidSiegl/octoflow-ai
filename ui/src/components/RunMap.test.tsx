@@ -141,6 +141,25 @@ describe("RunMap", () => {
     ]);
   });
 
+  it("says how much of an ended turn's length its waits took, as summary.md does", () => {
+    const turns = [
+      turn("build", 1, "both.md", 1000, 100, { waited_seconds: 199, outside_wait_seconds: 360 }),
+      turn("build", 1, "outside.md", 1000, 100, { waited_seconds: 0, outside_wait_seconds: 360 }),
+      turn("build", 1, "for-you.md", 1000, 100, { waited_seconds: 199 }),
+      turn("build", 1, "zero.md", 1000, 100, { waited_seconds: 0, outside_wait_seconds: 0 }),
+      turn("build", 1, "neither.md", 1000, 100),
+    ];
+    render(<RunMap record={record({ phase: "done", health: null, verdict: "APPROVE", verdicts: [], turns })} />);
+    const rows = within(screen.getByRole("list", { name: "turns" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.children[3]?.textContent)).toEqual([
+      "15m",
+      "15m",
+      "15m (3m waiting for you)",
+      "15m (6m waiting outside the run)",
+      "15m (3m waiting for you, 6m waiting outside the run)",
+    ]);
+  });
+
   it("says what the running turn's role waits on outside the run, and for how long, while it does", () => {
     const waiting = turn("build", 2, "build-2.md", 1140, null, { waiting_on: { on: "the merge of pull request #526", since: ago(240) } });
     const { rerender } = render(<RunMap record={record({ turns: [...record().turns.slice(0, -1), waiting] })} />);

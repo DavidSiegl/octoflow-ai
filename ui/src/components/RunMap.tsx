@@ -504,10 +504,22 @@ type FeedState = "ended" | "failed" | "running" | "unfinished";
 
 const FEED_GLYPHS: Record<FeedState, string> = { ended: "·", failed: "✕", running: "●", unfinished: "–" };
 
-/** One row of the turn feed: the step with its quality round, the file, who ran it, and its length, or "running" or
- * "unfinished" for a turn with no end; on hover, why its model is not the role's (unofferedReason). */
+/** An ended turn's length, seconds, and how much of it the turn's waits took, as summary.md's turn table words it
+ * (TurnCells::of in engine/src/summary.rs): "12m (3m waiting for you, 6m waiting outside the run)", naming only
+ * waits that are recorded and not zero. */
+function endedLength(turn: Turn, seconds: number): string {
+  const waits = [
+    [turn.waited_seconds, "for you"],
+    [turn.outside_wait_seconds, "outside the run"],
+  ] as const;
+  const parts = waits.flatMap(([n, on]) => (n ? [`${formatAge(n)} waiting ${on}`] : []));
+  return parts.length === 0 ? formatAge(seconds) : `${formatAge(seconds)} (${parts.join(", ")})`;
+}
+
+/** One row of the turn feed: the step with its quality round, the file, who ran it, and its length (endedLength), or
+ * "running" or "unfinished" for a turn with no end; on hover, why its model is not the role's (unofferedReason). */
 function FeedRow({ turn, state }: { turn: Turn; state: FeedState }) {
-  const length = state === "running" || state === "unfinished" ? state : turn.seconds === null ? "" : formatAge(turn.seconds);
+  const length = state === "running" || state === "unfinished" ? state : turn.seconds === null ? "" : endedLength(turn, turn.seconds);
   return (
     <li className={state === "ended" ? undefined : state} title={unofferedReason(turn) || undefined}>
       <span>{FEED_GLYPHS[state]}</span>
