@@ -462,7 +462,8 @@ fn the_death_signal_is_asked_for_only_under_the_appimage() {
 }
 
 /// Set, to the path of a file to create, for the process `a_cli_gets_sigterm_when_its_appimage_runtime_dies`
-/// starts: that process stands in for the app, and creates the file once it has asked for its signal.
+/// starts: that process stands in for the app, and the file is created once it has asked for its signal and become
+/// the shell that execs into the CLI.
 #[cfg(target_os = "linux")]
 const STAND_IN_READY: &str = "OCTOFLOW_UI_TEST_STAND_IN_READY";
 
@@ -480,13 +481,16 @@ fn a_cli_gets_sigterm_when_its_appimage_runtime_dies() {
     use std::io::Read;
     use std::os::unix::process::CommandExt;
     // The stand-in for the app: a run of this test with STAND_IN_READY set, whose parent is a shell named as the
-    // AppImage. It asks for its signal, says so, and execs into sleep, which stands in for the CLI.
+    // AppImage. It asks for its signal and execs into a shell that says so and execs into sleep, which stands in for
+    // the CLI. The ready file is written only once the exec from this test thread, not the main thread, is over: while
+    // one is under way the kernel shows the pid as a zombie, the old leader, and then running again, which the wait
+    // below would take for the CLI ending and then still running (appimage-sigterm-flake 01). The shell's own exec,
+    // from its only thread, has no such moment.
     if let Some(ready) = std::env::var_os(STAND_IN_READY) {
         let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
         stop_with_appimage_runtime(appimage.as_deref()).expect("the death signal set");
-        std::fs::write(&ready, "").expect("the ready file written");
-        let e = Command::new("sleep").arg("30").exec();
-        panic!("cannot exec sleep: {e}");
+        let e = Command::new("sh").args(["-c", ": >\"$0\" && exec sleep 30"]).arg(&ready).exec();
+        panic!("cannot exec sh: {e}");
     }
     let dir = scratch_dir();
     let ready = dir.path().join("ready");
