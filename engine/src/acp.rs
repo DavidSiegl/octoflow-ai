@@ -359,6 +359,14 @@ impl Agents for AcpAgents<'_> {
     fn settle(&self, _run: &RunState) {
         self.settle_all(&self.connections());
     }
+
+    fn cancel(&self, _run: &RunState) {
+        let connections = self.connections();
+        for connection in connections.iter().filter(|c| !c.cancelled()) {
+            connection.stop();
+        }
+        answer_cancels(&connections);
+    }
 }
 
 impl RunPlaces for AcpAgents<'_> {
@@ -403,11 +411,17 @@ impl AcpAgents<'_> {
             still_pending(pending, interrupt);
         }
         if interrupt.is_raised() {
-            let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
-            for connection in connections {
-                connection.wait_answered(deadline);
-            }
+            answer_cancels(connections);
         }
+    }
+}
+
+/// Give the agents of connections KILL_SETTLE_MS, all told, to answer what they were asked and have not answered, as
+/// a cancel. What answers by then has its usage recorded; what does not is left as it is.
+fn answer_cancels(connections: &[Arc<Connection>]) {
+    let deadline = Instant::now() + Duration::from_millis(KILL_SETTLE_MS);
+    for connection in connections {
+        connection.wait_answered(deadline);
     }
 }
 

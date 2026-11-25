@@ -126,6 +126,9 @@ impl Agents for Unoffering<'_> {
     fn settle(&self, run: &RunState) {
         self.herdr.settle(run)
     }
+    fn cancel(&self, run: &RunState) {
+        self.herdr.cancel(run)
+    }
 }
 
 #[test]

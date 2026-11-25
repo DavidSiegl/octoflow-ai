@@ -346,16 +346,20 @@ impl<'a> Workflow<'a> {
         self.check_phase()?;
         match self.walk_to_the_end() {
             Ok(()) => {}
+            // Its agents are not cancelled: the run is another orchestrator's now, and so are the files their answers
+            // would be recorded in (todo 117). They are left for the run's end to kill.
             Err(Stopped::TakenOver(e)) => return Err(Stopped::TakenOver(e)),
             // A failure that met the Ctrl-C is the command the interrupt stopped.
             Err(Stopped::Failed(e)) if !self.interrupt.is_raised() => {
+                // Cancelled before the release, as at a Ctrl-C.
+                self.agents.cancel(&self.state);
                 self.release(&e.0);
                 return Err(Stopped::Failed(e));
             }
             Err(_) => {
-                // Settled while the Ctrl-C is raised, which gives the agents a short wait, and before the release, so
-                // that the run reads as released only once its agents' answers are recorded.
-                self.agents.settle(&self.state);
+                // Cancelled before the release, so that the run reads as released only once its agents' answers are
+                // recorded.
+                self.agents.cancel(&self.state);
                 // Caught, so that the commands that record the stop run.
                 self.interrupt.catch();
                 self.release("interrupted");
