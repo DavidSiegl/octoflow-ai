@@ -81,10 +81,9 @@ impl TurnCells {
             0 => t.round.to_string(),
             q => format!("{} q{q}", t.round),
         };
-        let model = match (set(&t.model), &harness) {
-            (Some(model), _) => model,
-            (None, Some(_)) => "default".into(),
-            (None, None) => "-".into(),
+        let model = match &harness {
+            Some(_) => t.model_ran_on().to_string(),
+            None => "-".into(),
         };
         let start = match set(&t.started_at) {
             Some(at) => match at.parse::<Timestamp>() {
@@ -170,8 +169,7 @@ pub fn run_summary(state: &RunState, pipeline: &Pipeline, rounds: &[String], now
     let wall = turn_starts(s).into_iter().min().map_or("?".to_string(), |start| format_duration(now - start));
     let roles = pipeline.roles().iter().map(|(role, label)| {
         let harness = s.harness(role);
-        let model = s.models.get(role).filter(|m| !m.is_empty()).map_or("default", String::as_str);
-        format!("| {label} ({role}) | {harness} | {model} |")
+        format!("| {label} ({role}) | {harness} | {} |", s.model_ran_on(role))
     });
     let pr = match s.pr_url.as_deref().filter(|u| !u.is_empty()) {
         Some(url) => url,
@@ -245,7 +243,7 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
                 "step": t.step,
                 "role": t.role,
                 "harness": t.harness,
-                "model": t.model,
+                "model": t.model_ran_on().model,
                 "round": t.round,
                 "quality_round": t.quality_round,
                 "human_paced": t.human_paced,
@@ -257,13 +255,23 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
             if let Some(waited) = t.waited_seconds {
                 turn["waited_seconds"] = waited.into();
             }
+            if let Some(asked) = t.unoffered_model.as_deref() {
+                turn["unoffered_model"] = asked.into();
+            }
             turn
         })
         .collect();
     let roles: Object = s
         .agents
         .iter()
-        .map(|(role, agent)| (role.to_string(), json!({"harness": agent.harness, "model": s.models.get(role)})))
+        .map(|(role, agent)| {
+            let ran = s.model_ran_on(role);
+            let mut metrics = json!({"harness": agent.harness, "model": ran.model});
+            if let Some(asked) = ran.unoffered {
+                metrics["unoffered_model"] = asked.into();
+            }
+            (role.to_string(), metrics)
+        })
         .collect();
     let restored: usize = s
         .restored

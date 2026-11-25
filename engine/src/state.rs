@@ -240,6 +240,29 @@ pub struct UnofferedModel {
     pub taken: Option<String>,
 }
 
+/// The model an agent ran on, and the one it was asked to run on when its harness's session did not offer that
+/// (RunState::model_ran_on, and a TurnRecord's model and unoffered_model). Displays as summary.md, the pull request
+/// and the Octoflow-Role trailer name it: "sonnet", "default" for none, "sonnet (opus not offered)", "default (o3 not
+/// offered)".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelRanOn<'a> {
+    /// The model it ran on; None for its harness's default, which is also what a session runs on that did not offer
+    /// the model asked for and named no other.
+    pub model: Option<&'a str>,
+    /// The model asked for that its session did not offer; None when it ran on the one asked for, or none was asked.
+    pub unoffered: Option<&'a str>,
+}
+
+impl std::fmt::Display for ModelRanOn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.model.unwrap_or("default"))?;
+        match self.unoffered {
+            Some(asked) => write!(f, " ({asked} not offered)"),
+            None => Ok(()),
+        }
+    }
+}
+
 /// How a role's agent came to run (AgentRecord::unprompted), which decides what its first prompt from the run is.
 /// Saved in lowercase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,6 +375,15 @@ impl TurnRecord {
     /// Whether the turn is under way: its file has not been found written.
     pub fn under_way(&self) -> bool {
         self.ended_at.is_none()
+    }
+
+    /// The model the turn's agent ran on, as model and unoffered_model record it; an empty model, which an earlier
+    /// engine saved for a role given an empty one, counts as none. Meaningless for a quality analysis (no harness).
+    pub fn model_ran_on(&self) -> ModelRanOn<'_> {
+        ModelRanOn {
+            model: self.model.as_deref().filter(|m| !m.is_empty()),
+            unoffered: self.unoffered_model.as_deref(),
+        }
     }
 }
 
@@ -520,6 +552,19 @@ impl RunState {
         match self.agents.get(role) {
             Some(agent) => &agent.harness,
             None => self.next_harnesses.get(role).map_or(DEFAULT_HARNESS, String::as_str),
+        }
+    }
+
+    /// The model the role's agent runs on: the role's (models; an empty one counts as none), unless its started
+    /// agent's session did not offer that one (AgentRecord::unoffered_model). models is what the run last set, so an
+    /// agent started before a resume changed the role's model is named with the new one (todo 115).
+    pub fn model_ran_on(&self, role: &str) -> ModelRanOn<'_> {
+        match self.agents.get(role).and_then(|a| a.unoffered_model.as_ref()) {
+            Some(u) => ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) },
+            None => ModelRanOn {
+                model: self.models.get(role).map(String::as_str).filter(|m| !m.is_empty()),
+                unoffered: None,
+            },
         }
     }
 

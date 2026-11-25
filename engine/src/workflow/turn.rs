@@ -565,10 +565,8 @@ impl Workflow<'_> {
             None => (None, None, None, None),
             Some(_) => {
                 let agent = s.agents.get(role);
-                let (model, unoffered) = match agent.and_then(|a| a.unoffered_model.clone()) {
-                    Some(u) => (u.taken, Some(u.asked)),
-                    None => (s.models.get(role).cloned(), None),
-                };
+                let ran = s.model_ran_on(role);
+                let (model, unoffered) = (ran.model.map(String::from), ran.unoffered.map(String::from));
                 (Some(s.harness(role).to_string()), model, unoffered, agent.and_then(|a| a.session.clone()))
             }
         };
