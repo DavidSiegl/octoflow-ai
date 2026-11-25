@@ -67,7 +67,9 @@ impl PrunedRun {
 /// one an orchestrator drives now (RunState::health, a done run still ending included), are not. A run whose state
 /// cannot be read (SavedRun::problem) is skipped with that reason, and so is a run whose branch another run that is not
 /// closed records as its base_branch, naming that run: its pull request targets origin's branch, which GitHub closes if
-/// the branch is deleted, so the run waits for prune until that run is closed. Returns each candidate and each such
+/// the branch is deleted, so the run waits for prune until that run is closed. So is a run whose branch is
+/// starting_base, the branch a run starting in cwd is about to take as its base, which it records only later
+/// (Workflow::take_base_branch); None when no run is starting. Returns each candidate and each such
 /// run, in run_states' order, but those after gh was found unusable or origin unreachable, which ends the sweep. A
 /// failure on one run is logged and skips that run.
 ///
@@ -78,6 +80,7 @@ pub fn prune_branches(
     cwd: &str,
     dry_run: bool,
     revisit: bool,
+    starting_base: Option<&str>,
 ) -> Result<Vec<PrunedRun>, OrchestratorError> {
     let host = world.with.host;
     let runs = host.run_states(cwd)?;
@@ -89,7 +92,10 @@ pub fn prune_branches(
         host.prune_worktrees(cwd)?;
     }
     let mut checked_out = host.checked_out_branches(cwd)?;
-    let bases = bases_of_runs_not_closed(&runs);
+    let mut built_on = built_on_by_runs_not_closed(&runs);
+    if let Some(base) = starting_base {
+        built_on.entry(base.to_string()).or_insert_with(|| "the run starting now".to_string());
+    }
     let mut pruned = vec![];
     for candidate in candidates {
         let shown = candidate.shown();
@@ -103,8 +109,8 @@ pub fn prune_branches(
                 continue;
             }
         };
-        if let Some(builder) = bases.get(&run.branch) {
-            run.skipped = Some(format!("run {builder} builds on its branch"));
+        if let Some(builder) = built_on.get(&run.branch) {
+            run.skipped = Some(format!("{builder} builds on its branch"));
             pruned.push(run);
             continue;
         }
@@ -125,16 +131,16 @@ pub fn prune_branches(
     Ok(pruned)
 }
 
-/// Each branch that a run of runs not closed records as its base_branch, with that run's id: the first such run's,
-/// in runs' order. A run whose state cannot be read counts as far as it reads (SavedRun::shown).
-fn bases_of_runs_not_closed(runs: &[SavedRun]) -> IndexMap<String, String> {
-    let mut bases = IndexMap::new();
+/// Each branch that a run of runs not closed records as its base_branch, with that run named as "run <id>": the first
+/// such run, in runs' order. A run whose state cannot be read counts as far as it reads (SavedRun::shown).
+fn built_on_by_runs_not_closed(runs: &[SavedRun]) -> IndexMap<String, String> {
+    let mut built_on = IndexMap::new();
     for s in runs.iter().map(SavedRun::shown).filter(|s| !s.is_closed()) {
         if let Some(base) = s.base_branch.as_deref().filter(|b| !b.is_empty()) {
-            bases.entry(base.to_string()).or_insert_with(|| s.run_id.clone());
+            built_on.entry(base.to_string()).or_insert_with(|| format!("run {}", s.run_id));
         }
     }
-    bases
+    built_on
 }
 
 /// Whether prune has yet to look at the branch of the run state describes: one the orchestrator made and opened a
@@ -412,10 +418,16 @@ fn branches(n: usize) -> String {
 }
 
 /// Prune the branches of the project's earlier runs, as a new run in cwd starts, logging what was done to world's
-/// human; nothing that goes wrong stops the run, but a Ctrl-C. Errors: only one that failed while world's interrupt
-/// is raised.
+/// human; the branch checked out in cwd, which the new run takes as its base, is spared (prune_branches'
+/// starting_base). Nothing that goes wrong stops the run, but a Ctrl-C. Errors: only one that failed while world's
+/// interrupt is raised.
 pub fn sweep_branches(world: &Connected, cwd: &str) -> Result<(), OrchestratorError> {
-    match prune_branches(world, cwd, false, false) {
+    let swept = world
+        .with
+        .host
+        .checked_out_branch(cwd)
+        .and_then(|base| prune_branches(world, cwd, false, false, base.as_deref()));
+    match swept {
         Err(e) if world.with.interrupt.is_raised() => Err(e),
         Err(e) => {
             world.with.human.log(&format!("could not prune the branches of earlier runs: {e}"));

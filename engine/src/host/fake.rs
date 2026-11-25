@@ -484,6 +484,8 @@ impl FakeState {
         }
         match args {
             ["rev-parse", ..] => return self.git_rev_parse(args),
+            ["symbolic-ref", "--quiet", "HEAD"] if self.branch == "HEAD" => return status(1),
+            ["symbolic-ref", "--quiet", "HEAD"] => return ok(&format!("refs/heads/{}\n", self.branch)),
             args if args == GIT_STATUS_ARGS => return ok(&porcelain(&self.changed_in(cwd))),
             ["switch", "-c", name] | ["switch", "--quiet", name] => self.branch = name.to_string(),
             ["commit", "--quiet", "-m", _, "-m", _, trailers @ ..] if trailer_args(trailers) => {
