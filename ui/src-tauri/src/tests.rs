@@ -461,11 +461,10 @@ fn the_death_signal_is_asked_for_only_under_the_appimage() {
     assert_eq!(under.expect("the death signal read"), Some(Signal::SIGTERM));
 }
 
-/// Set, to the path of a file to create, for the process `a_cli_gets_sigterm_when_its_appimage_runtime_dies`
-/// starts: that process stands in for the app, and the file is created once it has asked for its signal and become
-/// the shell that execs into the CLI.
+/// Set, to any value, for the process `a_cli_gets_sigterm_when_its_appimage_runtime_dies` starts: that process
+/// stands in for the app.
 #[cfg(target_os = "linux")]
-const STAND_IN_READY: &str = "OCTOFLOW_UI_TEST_STAND_IN_READY";
+const STAND_IN: &str = "OCTOFLOW_UI_TEST_STAND_IN";
 
 /// Whether the process with this pid is running: it exists and is no zombie.
 #[cfg(target_os = "linux")]
@@ -480,27 +479,22 @@ fn running(pid: u32) -> bool {
 fn a_cli_gets_sigterm_when_its_appimage_runtime_dies() {
     use std::io::Read;
     use std::os::unix::process::CommandExt;
-    // The stand-in for the app: a run of this test with STAND_IN_READY set, whose parent is a shell named as the
-    // AppImage. It asks for its signal and execs into a shell that says so and execs into sleep, which stands in for
-    // the CLI. The ready file is written only once the exec from this test thread, not the main thread, is over: while
-    // one is under way the kernel shows the pid as a zombie, the old leader, and then running again, which the wait
-    // below would take for the CLI ending and then still running (appimage-sigterm-flake 01). The shell's own exec,
-    // from its only thread, has no such moment.
-    if let Some(ready) = std::env::var_os(STAND_IN_READY) {
+    // The stand-in for the app: a run of this test with STAND_IN set, whose parent is a shell named as the AppImage.
+    // It asks for its signal and execs into sleep, which stands in for the CLI.
+    if std::env::var_os(STAND_IN).is_some() {
         let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
         stop_with_appimage_runtime(appimage.as_deref()).expect("the death signal set");
-        let e = Command::new("sh").args(["-c", ": >\"$0\" && exec sleep 30"]).arg(&ready).exec();
-        panic!("cannot exec sh: {e}");
+        let e = Command::new("sleep").arg("30").exec();
+        panic!("cannot exec sleep: {e}");
     }
-    let dir = scratch_dir();
-    let ready = dir.path().join("ready");
     let test = std::env::current_exe().expect("the test binary");
-    // The runtime: a shell that starts the stand-in, prints its pid, and waits for its standard input to close.
+    // The runtime: a shell that starts the stand-in, prints its pid, and waits for its standard input to close. The
+    // stand-in's output, where its test harness reports a failure, goes to this test's standard error.
     let mut runtime = Command::new("sh")
-        .args(["-c", "\"$0\" \"$1\" --exact >/dev/null 2>&1 & echo $!; read _"])
+        .args(["-c", "\"$0\" \"$1\" --exact >&2 & echo $!; read _"])
         .arg(&test)
         .arg("tests::a_cli_gets_sigterm_when_its_appimage_runtime_dies")
-        .env(STAND_IN_READY, &ready)
+        .env(STAND_IN, "1")
         .env("APPIMAGE", "/bin/sh")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -513,9 +507,12 @@ fn a_cli_gets_sigterm_when_its_appimage_runtime_dies() {
         out.push(byte[0] as char);
     }
     let cli: u32 = out.trim().parse().unwrap_or_else(|e| panic!("the stand-in's pid, not {out:?}: {e}"));
+    // The kernel names the process sleep only once its exec is over, the CLI running. Until then the pid can read as
+    // a zombie and then running again, an exec from a thread other than the main one (GitHub issue #650), which the
+    // wait below would take for the CLI ending.
     let started = std::time::Instant::now();
-    while !ready.exists() {
-        assert!(started.elapsed().as_secs() < 30, "the stand-in never asked for its signal");
+    while std::fs::read_to_string(format!("/proc/{cli}/comm")).unwrap_or_default() != "sleep\n" {
+        assert!(started.elapsed().as_secs() < 30, "the stand-in never became the CLI");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     drop(runtime.stdin.take());
