@@ -72,31 +72,18 @@ pub(super) fn drain_command(args: &DrainArgs, world: &Connected, cwd: &str) -> R
         forget_cleared(world, cwd, &taken).map_err(stopped)?;
     }
     let by_slug = slug_indexes(&queue);
-    if args.dry_run {
+    let ended_with = if args.dry_run {
         print_changes(&queue, world);
-        let order: Vec<&str> =
-            queue.iter().filter(|s| startable(s, &queue, &by_slug)).map(|s| s.slug.as_str()).collect();
-        world.say(&if order.is_empty() {
-            "would run no spec".to_string()
-        } else {
-            format!("would run, in order: {}", order.join(", "))
-        });
-        let mut ended_with = 0;
-        for item in left(&queue, &by_slug) {
-            if let Some(why) = held(item, &queue, &by_slug) {
-                world.say(&needs_human_line(item, &why));
-                ended_with = EXIT_ERROR;
-            }
+        dry_run_end(&queue, &by_slug, world)
+    } else {
+        prune::sweep_branches(world, cwd).map_err(stopped)?;
+        let drained = drain_ready(args, world, cwd, &mut queue, &by_slug);
+        // The changes are printed whether the drain ended or failed.
+        print_changes(&queue, world);
+        match drained? {
+            Some(stopped_with) => stopped_with,
+            None => drain_end(&queue, &by_slug, world),
         }
-        return if interrupt.is_raised() { Err(Stop::Interrupted(None)) } else { Ok(Ended::Status(ended_with)) };
-    }
-    prune::sweep_branches(world, cwd).map_err(stopped)?;
-    let drained = drain_ready(args, world, cwd, &mut queue, &by_slug);
-    // The changes are printed whether the drain ended or failed.
-    print_changes(&queue, world);
-    let ended_with = match drained? {
-        Some(stopped_with) => stopped_with,
-        None => drain_end(&queue, &by_slug, world),
     };
     if interrupt.is_raised() {
         return Err(Stop::Interrupted(None));
@@ -287,6 +274,25 @@ fn left<'q>(queue: &'q [Queued], by_slug: &HashMap<String, usize>) -> Vec<&'q Qu
     let held_ticketed = |s: &Queued| s.kind == Kind::Ticketed && held(s, queue, by_slug).is_some();
     let unread_ticket = |s: &Queued| s.kind == Kind::Ticketed && !s.unread.is_empty();
     queue.iter().filter(|s| (ready(s) && (drains(s, queue, by_slug) || held_ticketed(s))) || unread_ticket(s)).collect()
+}
+
+/// Print, for a dry run, the specs and tickets of queue a drain would run, in order, then each it would hold for the
+/// human (held) with why, and return its exit status: EXIT_ERROR when one is held, else 0. by_slug indexes queue.
+fn dry_run_end(queue: &[Queued], by_slug: &HashMap<String, usize>, world: &Connected) -> i32 {
+    let order: Vec<&str> = queue.iter().filter(|s| startable(s, queue, by_slug)).map(|s| s.slug.as_str()).collect();
+    world.say(&if order.is_empty() {
+        "would run no spec".to_string()
+    } else {
+        format!("would run, in order: {}", order.join(", "))
+    });
+    let mut ended_with = 0;
+    for item in left(queue, by_slug) {
+        if let Some(why) = held(item, queue, by_slug) {
+            world.say(&needs_human_line(item, &why));
+            ended_with = EXIT_ERROR;
+        }
+    }
+    ended_with
 }
 
 /// Print what is left once drain can start nothing (left), and return its exit status: 0 when nothing is;
