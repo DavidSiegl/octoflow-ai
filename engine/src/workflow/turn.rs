@@ -788,6 +788,7 @@ impl Workflow<'_> {
         let h = harness(&self.next_harness(role)?)?;
         record.session.clone_from(&session);
         record.unprompted = Some(start);
+        record.model = Some(self.state.models.get(role).cloned().unwrap_or_default());
         self.state.agents.insert(role.to_string(), record);
         self.save()?;
         let label = self.label(role);
@@ -798,7 +799,7 @@ impl Workflow<'_> {
             label: &label,
             harness: h.kind,
             permission_mode: s.permission_mode.as_deref(),
-            model: s.models.get(role).map(String::as_str),
+            model: s.agents.get(role).and_then(|a| a.model.as_deref()).filter(|m| !m.is_empty()),
             session: session.as_deref(),
             extra_dir: extra_dir.as_deref(),
         };
