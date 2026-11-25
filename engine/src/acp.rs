@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::acp_adapter::Installs;
-use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
+use crate::agents::{AgentError, AgentLaunch, Agents, LaunchedModel, RunPlaces, Seen, Started, Waiting};
 use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
@@ -216,13 +216,13 @@ impl<'h> AcpAgents<'h> {
             }
         };
         unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
-        let (said, unoffered_model) = match how.model {
+        let (said, model_said) = match how.model {
             Some(model) => set_model(h, &ask, &session, &opened, &model)?,
-            None => (None, None),
+            None => (None, LaunchedModel::Given),
         };
         unpassed.extend(said);
         let agent = Agent { connection: Arc::new(connection), session, harness: h.kind };
-        Ok((agent, Started { asking: false, unpassed, unoffered_model }))
+        Ok((agent, Started { asking: false, unpassed, model_said }))
     }
 }
 
@@ -714,27 +714,28 @@ fn set_mode(
 }
 
 /// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask
-/// (choose). Returns the log's sentence when it could not, and, when the session lists its models and model is not
-/// among them, model with the one the session is on instead. A session already on model counts as offering it; one
-/// that lists no models, as the answer to a resume may not, is not known to run on another, so none is returned.
-/// Errors: the agent refuses the request, or does not answer it.
+/// (choose). Returns the log's sentence when it could not, and what the session said of model: Given when it was set
+/// or the session was already on it; Unoffered with the one the session is on when the session lists its models and
+/// model is not among them, or names the one it is on and lists none; Unknown when it names neither. Errors: the agent
+/// refuses the request, or does not answer it.
 fn set_model(
     h: &Harness,
     ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
     session: &str,
     opened: &Value,
     model: &str,
-) -> Result<(Option<String>, Option<UnofferedModel>), AgentError> {
+) -> Result<(Option<String>, LaunchedModel), AgentError> {
     let taken = current(opened, &MODEL);
     if taken.as_deref() == Some(model) || choose(ask, session, opened, &MODEL, model)? {
-        return Ok((None, None));
+        return Ok((None, LaunchedModel::Given));
     }
-    if config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
-        return Ok((Some(format!("{}'s session names no models, so it may not run on {model}", h.kind)), None));
+    if taken.is_none() && config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
+        let said = format!("{}'s session names no models, so it may not run on {model}", h.kind);
+        return Ok((Some(said), LaunchedModel::Unknown));
     }
     let on = taken.as_deref().unwrap_or("its own");
     let said = format!("{} offers no model {model}; starting it on {on}", h.kind);
-    Ok((Some(said), Some(UnofferedModel { asked: model.to_string(), taken })))
+    Ok((Some(said), LaunchedModel::Unoffered(UnofferedModel { asked: model.to_string(), taken })))
 }
 
 /// A choice a session offers, as ACP names it two ways: a session config option of a category

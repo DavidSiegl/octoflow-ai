@@ -228,8 +228,9 @@ pub struct AgentRecord {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub past_startup: bool,
     /// The model the agent asked its harness for (model) when its session did not offer it, and the model the agent
-    /// runs on instead; None when it runs on the one it asked for, or it asked for none. Saved only when set, so a
-    /// record saved by an engine that did not keep it reads as None.
+    /// runs on instead; None when it runs on the one it asked for, or it asked for none. A relaunch into the agent's
+    /// session that asks the same model and does not say which it runs on keeps it (Workflow::start). Saved only when
+    /// set, so a record saved by an engine that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unoffered_model: Option<UnofferedModel>,
     /// The role's model (RunState::models) when this agent was started, empty for none: the one it asked its harness
@@ -243,7 +244,7 @@ pub struct AgentRecord {
 }
 
 /// A model an agent was started on that its harness's session did not offer, so that it runs on another
-/// (AgentRecord::unoffered_model, Started::unoffered_model).
+/// (AgentRecord::unoffered_model, LaunchedModel::Unoffered).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnofferedModel {
     /// The model asked for, never empty.

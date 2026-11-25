@@ -5,13 +5,17 @@
 
 use std::cell::RefCell;
 
+use super::model_saying::ModelSaying;
 use super::pull_request::rounds;
 use super::*;
+use crate::agents::LaunchedModel;
 use crate::constants::{METRICS_FILE, SUMMARY_FILE};
 use crate::json::object;
 use crate::pipeline::DEFAULT_WORKFLOW;
 use crate::pull_request::{provenance, GateEvidence};
+use crate::state::UnofferedModel;
 use crate::test_support::herdr_server;
+use crate::workflow::{Collaborators, Workflow};
 use crate::workflow_file::workflow_definition;
 
 /// saved_run, its prompt for file counted as delivered.
@@ -552,6 +556,42 @@ fn exited_builder_without_session_gets_a_recovery_prompt() {
     assert!(first.contains("You are the Builder"), "{first}");
     assert!(first.contains("This is round 2, and you are a fresh session"), "{first}");
     assert!(first.contains(&f.state.review_path(1)), "{first}");
+}
+
+/// An exited Builder that was started on sonnet when its session did not offer opus keeps that substitute when its
+/// reopened session, asked for opus again, names no models (todo 116); a reopened session that takes opus, a fresh
+/// one, or a resume that asks the role for another model replaces it.
+#[test]
+fn a_reopened_session_that_names_no_models_keeps_the_model_its_agent_took_instead() {
+    let earlier = UnofferedModel { asked: "opus".into(), taken: Some("sonnet".into()) };
+    let cases = [
+        ("reopened, naming no models", "opus", Some("s-build"), LaunchedModel::Unknown, Some("sonnet")),
+        ("reopened, on opus", "opus", Some("s-build"), LaunchedModel::Given, Some("opus")),
+        ("fresh, naming no models", "opus", None, LaunchedModel::Unknown, Some("opus")),
+        ("reopened on haiku asked, naming no models", "haiku", Some("s-build"), LaunchedModel::Unknown, Some("haiku")),
+    ];
+    for (case, asked, session, said, ran_on) in cases {
+        let mut state = prompted(saved_run("build", 2, FULL), "build-2.md");
+        state.models.insert("build".into(), asked.into());
+        state.agents.get_mut("build").expect("a saved Builder").unoffered_model = Some(earlier.clone());
+        let sessions: Vec<(&str, &str)> = session.map(|s| ("build", s)).into_iter().collect();
+        let seen = seen();
+        let f =
+            Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen), &["review"], &sessions);
+        let says = |_: &str| said.clone();
+        let agents = ModelSaying { herdr: &f.herdr, role: "build", says: &says };
+        let collaborators = Collaborators { agents: &agents, ..f.collaborators() };
+        let mut settings = f.as_saved();
+        settings.agents.models = f.state.models.clone();
+        let mut wf = Workflow::new(collaborators, f.state.clone(), settings).expect("Workflow::new takes the settings");
+
+        assert_eq!(wf.run(), verdict(APPROVE), "{case}");
+
+        let kept = (ran_on == Some("sonnet")).then(|| earlier.clone());
+        assert_eq!(wf.state().agents["build"].unoffered_model, kept, "{case}");
+        let build = wf.state().turns.iter().find(|t| t.role == "build").expect("a build turn");
+        assert_eq!(build.model.as_deref(), ran_on, "{case}");
+    }
 }
 
 #[test]
