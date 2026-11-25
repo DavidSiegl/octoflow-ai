@@ -106,7 +106,9 @@ impl Host for ServeHost {
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        Ok(self.read(&format!("{run_dir}/{name}"))?.map_or(RunFileText::Missing, RunFileText::Text))
+        Ok(self
+            .read(&format!("{run_dir}/{name}"))?
+            .map_or(RunFileText::Missing, |text| RunFileText::Text(text.into_bytes())))
     }
 
     fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {

@@ -765,7 +765,9 @@ impl Host for FakeHost {
 
     /// read of the file in `files`: FakeHost has no links, so nothing leads out.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        Ok(self.read(&format!("{run_dir}/{name}"))?.map_or(RunFileText::Missing, RunFileText::Text))
+        Ok(self
+            .read(&format!("{run_dir}/{name}"))?
+            .map_or(RunFileText::Missing, |text| RunFileText::Text(text.into_bytes())))
     }
 
     /// write of the file's text in `files` with text at its end, as one write.

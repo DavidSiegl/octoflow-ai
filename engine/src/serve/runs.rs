@@ -231,7 +231,9 @@ impl ProjectRuns {
         Ok(Value::Array(files.iter().map(entry).collect()))
     }
 
-    /// The text of the run's file name; None when there is no such file. A symbolic link is followed only as far as
+    /// The text of the run's file name, each byte that is not UTF-8 replaced, as the app only shows it, a journal a crash
+    /// cut inside a character among them (crate::acp::replay passes over the cut line); None when there is no such
+    /// file. A symbolic link is followed only as far as
     /// it stays inside the run directory, and the run directory only as far as it stays inside the runs directory
     /// (Host::read_inside). Errors: Refused, having read nothing, for state.json, a run id or name that is not a
     /// plain name (the run id checked first), or a file that leads out; Failed when the file cannot be read.
@@ -240,7 +242,7 @@ impl ProjectRuns {
             return Err(RunReadError::Refused("state.json is not a handoff file".to_string()));
         }
         match self.host.read_inside(&self.dir(run_id)?, plain_name(name)?)? {
-            RunFileText::Text(text) => Ok(Some(text)),
+            RunFileText::Text(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
             RunFileText::Missing => Ok(None),
             RunFileText::Outside => Err(RunReadError::Refused(format!(
                 "{name:?} leads out of run {run_id}'s directory, or the directory out of the runs directory"
@@ -307,10 +309,10 @@ impl ProjectRuns {
     fn agent(&self, run_id: &str, role: &str) -> Result<AgentAddress, RunReadError> {
         let dir = self.dir(run_id)?;
         let path = format!("{dir}/state.json");
-        let RunFileText::Text(text) = self.host.read_inside(&dir, "state.json")? else {
+        let RunFileText::Text(bytes) = self.host.read_inside(&dir, "state.json")? else {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
-        let run = SavedRun::read(0, &dir, text.as_bytes());
+        let run = SavedRun::read(0, &dir, &bytes);
         // A problem with the file's text names the file already; one with its fields names only the run.
         let state = run.state().map_err(|e| match e.0.starts_with(&path) {
             true => e,
