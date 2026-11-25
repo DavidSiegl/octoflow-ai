@@ -42,36 +42,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
-- **The run detail's two ages tick on separate clocks.** Raised by cross-review 287 (F1): `Status`
-  (`ui/src/components/RunDetail.tsx`) and `NowLine` (`ui/src/components/RunMap.tsx`) each call `useNow`
-  (`ui/src/hooks.ts`), each with its own `setInterval`, so each second the heartbeat age and the running turn's length
-  update in two commits a few ms apart, and near a second boundary one can have advanced while the other has not.
-  Never off by more than a tick. Closing it means one shared clock that every `useNow` subscribes to
-  (`useSyncExternalStore` over a single interval), which moves the overview's table with them too.
-- **A release made after a higher one is marked Latest on GitHub, and two Release stages can overlap.** Review 291
-  (release-gaps 01): `gh release create` passes no `--latest`, and GitHub marks a new release Latest by default, so a
-  main build that releases a lower version after a higher one's (main's builds may run at once: the Jenkinsfile has no
-  `disableConcurrentBuilds()`) moves Latest back. Two such builds that both list the releases before either creates
-  its own also put the lower version's notes on both pages (`ci/release-notes.sh`). Closed when Release passes
-  `--latest` only for the highest version and the Release stage is serialized, or such overlap is shown not to happen.
-- **The desktop app shows a turn's time without its waits.** Raised by cross-review 301 (F6), widened by 318 (F3):
-  the run map (`ui/src/components/RunMap.tsx`, its turn durations) shows a turn's whole `seconds`, though the turn
-  record holds `waited_seconds` (over ACP, where the app is where permissions are answered) and
-  `outside_wait_seconds` too, and `summary.md` shows "12m 03s (3m 19s waiting for you, 6m 00s waiting outside the
-  run)". Closes when the run map shows an ended turn's waits the same way; `Turn` (`ui/src/api.ts`) declares both.
-- **A short first word before one long token leaves a near-empty title.** Raised by cross-review 300 (finding 1):
-  `commit_title` (`engine/src/pull_request.rs`) cuts a title over 72 chars at its last blank whenever anything
-  precedes it, so a task's first line `Fix https://example.com/<an 80-character path>` titles the commit and pull
-  request "Fix…", where 0.100.4 kept 72 characters of it. That follows the rule decided on run-findings ticket 04
-  (last word boundary within the limit), which does not address this case. Closing it is the user's call: a
-  fallback to a mid-word cut when the boundary keeps too little of the title (say, under half of it).
-- **A new run's own sweep can delete the branch it is about to take as its base.** Raised by cross-review 317 (F1):
-  "`new_run` calls `prune::sweep_branches` before `new_state`; `take_base_branch` … records `base_branch` only
-  afterwards", so with a closed run's pull request merged and no prune since, `octoflow run` on that branch deletes
-  origin's copy in its sweep, then refuses it as a branch "which origin does not have". The same holds for drain's
-  sweep (`engine/src/cli/drain.rs`). Prune leaves a branch alone only once a run records it as its base (todo 113).
-  Would close when the sweep of a run that is starting leaves alone the branch checked out in the project, which
-  that run is about to take.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
