@@ -206,7 +206,7 @@ fn a_start_initializes_the_agent_and_opens_a_session_whose_id_find_tells_before_
 
     let no_default = "agy's session offers no mode default, its equivalent of --permission-mode default; starting it \
                       without one";
-    assert_eq!(started, Started { asking: false, unpassed: vec![no_default.to_string()], unoffered_model: None });
+    assert_eq!(started, Started { asking: false, unpassed: vec![no_default.to_string()], model: LaunchedModel::Given });
     assert_eq!(f.methods(), ["initialize", "session/new"]);
     let cwd = format!(r#""params":{{"cwd":"{}","#, f.run.work_dir());
     assert!(f.log().contains(&cwd), "{}", f.log());
@@ -500,8 +500,8 @@ fn a_run_opens_whatever_the_harness_of_a_role_it_has_finished_with() {
 }
 
 /// The model z, which no fixture's session offers, as taken instead of the one the session names, if any.
-fn z_unoffered(taken: Option<&str>) -> Option<UnofferedModel> {
-    Some(UnofferedModel { asked: "z".to_string(), taken: taken.map(String::from) })
+fn z_unoffered(taken: Option<&str>) -> LaunchedModel {
+    LaunchedModel::Unoffered(UnofferedModel { asked: "z".to_string(), taken: taken.map(String::from) })
 }
 
 #[test]
@@ -525,15 +525,15 @@ fn a_model_the_launch_cannot_pass_is_set_where_the_session_offers_it_and_reporte
     f.put("opened.json", r#","modes":{"currentModeId":"default","availableModes":[{"id":"default"}]}"#);
     let unlisted = agents.start(&f.run, "builder", &model("z")).expect("start");
 
-    assert_eq!((offered.unpassed, offered.unoffered_model), (vec![], None));
+    assert_eq!((offered.unpassed, offered.model), (vec![], LaunchedModel::Given));
     assert!(f.log().contains(r#""params":{"sessionId":"s-1","modelId":"b"}"#), "{}", f.log());
     assert_eq!(not_offered.unpassed, ["agy offers no model z; starting it on a"]);
-    assert_eq!(not_offered.unoffered_model, z_unoffered(Some("a")));
+    assert_eq!(not_offered.model, z_unoffered(Some("a")));
     assert_eq!(unnamed.unpassed, ["agy offers no model z; starting it on its own"]);
-    assert_eq!(unnamed.unoffered_model, z_unoffered(None));
-    assert_eq!((on_it.unpassed, on_it.unoffered_model), (vec![], None));
+    assert_eq!(unnamed.model, z_unoffered(None));
+    assert_eq!((on_it.unpassed, on_it.model), (vec![], LaunchedModel::Given));
     assert_eq!(unlisted.unpassed, ["agy's session names no models, so it may not run on z"]);
-    assert_eq!(unlisted.unoffered_model, None);
+    assert_eq!(unlisted.model, LaunchedModel::Unknown);
     assert_eq!(f.asked("session/set_model"), 1, "{:?}", f.methods());
 }
 
@@ -554,9 +554,9 @@ fn a_model_is_set_by_the_session_s_model_config_option_where_it_has_one() {
     let not_offered = agents.start(&f.run, "builder", &model("z")).expect("start");
 
     assert_eq!((current.unpassed, offered.unpassed), (vec![], vec![]));
-    assert_eq!((current.unoffered_model, offered.unoffered_model), (None, None));
+    assert_eq!((current.model, offered.model), (LaunchedModel::Given, LaunchedModel::Given));
     assert_eq!(not_offered.unpassed, ["opencode offers no model z; starting it on a"]);
-    assert_eq!(not_offered.unoffered_model, z_unoffered(Some("a")));
+    assert_eq!(not_offered.model, z_unoffered(Some("a")));
     assert!(f.log().contains(r#""params":{"sessionId":"s-1","configId":"m","value":"b"}"#), "{}", f.log());
     assert_eq!(f.asked("session/set_config_option"), 1, "{:?}", f.methods());
     assert_eq!(f.asked("session/set_model"), 0, "{:?}", f.methods());

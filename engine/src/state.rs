@@ -227,8 +227,9 @@ pub struct AgentRecord {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub past_startup: bool,
     /// The role's model (RunState::models) when its harness's session did not offer it, and the model the agent runs
-    /// on instead; None when it runs on the role's model, or the role names none. Saved only when set, so a record
-    /// saved by an engine that did not keep it reads as None.
+    /// on instead; None when it runs on the role's model, or the role names none. A relaunch into the agent's session
+    /// that does not say which model it runs on keeps it (Workflow::start). Saved only when set, so a record saved by
+    /// an engine that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unoffered_model: Option<UnofferedModel>,
     /// The fields of the record this engine does not know, as read, written after its own.

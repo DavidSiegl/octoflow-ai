@@ -29,6 +29,7 @@ mod heartbeat;
 mod interrupted;
 mod local_gate;
 mod locked_files;
+mod model_saying;
 mod one_run;
 mod orchestrator_checks;
 mod other_runs_branch;

@@ -3,7 +3,7 @@
 
 use super::{How, Outcome, Stopped, Workflow};
 use crate::acp;
-use crate::agents::{Activity, AgentError, AgentLaunch, Seen, Waiting};
+use crate::agents::{Activity, AgentError, AgentLaunch, LaunchedModel, Seen, Waiting};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
 };
@@ -780,14 +780,24 @@ impl Workflow<'_> {
     /// (AgentRecord::unprompted), before its backend starts it; so an orchestrator stopped while the backend or the
     /// human is past a startup dialog leaves an agent the resume finds, waits for and prompts, never one unknown to
     /// the run.
+    ///
+    /// An agent relaunched into its session keeps the model it took in place of the one asked of it
+    /// (AgentRecord::unoffered_model) while the same one is asked again and the reopened session does not say which
+    /// it runs on; every other start records what the session said.
     fn start(&mut self, role: &str, mut record: AgentRecord, start: AgentStart) -> Result<bool, StartFailure> {
-        let session = match start {
-            AgentStart::Resumed => self.state.agents.get(role).and_then(|a| a.session.clone()),
-            AgentStart::New | AgentStart::Restarted => None,
+        let earlier = self.state.agents.get(role);
+        let (session, unoffered_model) = match start {
+            AgentStart::Resumed => {
+                let asked = self.state.models.get(role);
+                let unoffered = earlier.and_then(|a| a.unoffered_model.clone()).filter(|u| Some(&u.asked) == asked);
+                (earlier.and_then(|a| a.session.clone()), unoffered)
+            }
+            AgentStart::New | AgentStart::Restarted => (None, None),
         };
         let h = harness(&self.next_harness(role)?)?;
         record.session.clone_from(&session);
         record.unprompted = Some(start);
+        record.unoffered_model = unoffered_model;
         self.state.agents.insert(role.to_string(), record);
         self.save()?;
         let label = self.label(role);
@@ -804,7 +814,11 @@ impl Workflow<'_> {
         };
         let started = self.agents.start(s, role, &launch)?;
         if let Some(agent) = self.state.agents.get_mut(role) {
-            agent.unoffered_model = started.unoffered_model;
+            match started.model {
+                LaunchedModel::Given => agent.unoffered_model = None,
+                LaunchedModel::Unoffered(unoffered) => agent.unoffered_model = Some(unoffered),
+                LaunchedModel::Unknown => {}
+            }
         }
         for line in started.unpassed {
             if self.told_unpassed.insert((role.to_string(), line.clone())) {
