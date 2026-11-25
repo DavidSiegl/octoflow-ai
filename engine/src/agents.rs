@@ -208,10 +208,10 @@ pub trait Agents: RunPlaces {
     /// nothing to do, the harnesses' session logs hold the usage.
     fn settle(&self, run: &RunState);
 
-    /// Cancel what the agents are doing, once the run stops before its turns are over, at a Ctrl-C or a failure,
-    /// before its release; the agents run on, for the run's end to kill or keep. ACP: each prompt still pending is
-    /// cancelled at once, and the agents get the short time a settle at a Ctrl-C gives them to answer, so that the
-    /// usage the answer carries is recorded. herdr: nothing to do, as for settle.
+    /// Cancel what the agents are doing, once the run stops short of done, at a Ctrl-C or a failure (after its last
+    /// turn too, as in publishing), before its release; the agents run on, for the run's end to kill or keep. ACP: each
+    /// prompt still pending is cancelled at once, and the agents get the short time a settle at a Ctrl-C gives them to
+    /// answer, so that the usage the answer carries is recorded. herdr: nothing to do, as for settle.
     fn cancel(&self, run: &RunState);
 }
 

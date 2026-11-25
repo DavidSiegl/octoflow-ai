@@ -53,9 +53,10 @@ const REQUEST_SECONDS: u64 = 120;
 /// turn. Tests, whose fake agent answers at once or never, wait less.
 const SETTLE_MS: u64 = if cfg!(test) { 2_000 } else { 10_000 };
 
-/// How long agents settled once the run's Ctrl-C is raised (AcpAgents::settle_all) have, once cancelled, to answer
-/// the cancel, in milliseconds: long enough for an agent that is still reading to answer with its usage, short enough
-/// that a Ctrl-C is not held up. A second Ctrl-C does not cut it short. Tests wait less.
+/// How long agents cancelled at once have to answer the cancel, in milliseconds: those settled once the run's Ctrl-C is
+/// raised (AcpAgents::settle_all), and those of a run that stops short of done (Agents::cancel). Long enough for an
+/// agent that is still reading to answer with its usage, short enough that the stopping run is not held up. A second
+/// Ctrl-C does not cut it short. Tests wait less.
 const KILL_SETTLE_MS: u64 = if cfg!(test) { 500 } else { 2_000 };
 
 /// How often, in milliseconds, a settle looks at the run's Ctrl-C while it waits.

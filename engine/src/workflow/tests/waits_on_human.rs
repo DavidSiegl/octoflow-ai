@@ -219,8 +219,8 @@ fn an_interrupted_run_s_agents_are_cancelled_before_its_release() {
     assert_eq!(agents.settled.into_inner(), []);
 }
 
-/// A run that fails before its turns are over cancels its agents before its release, as an interrupted one does, so that
-/// an ACP agent's pending prompt is cancelled and its usage recorded before the agent is killed (todo 117).
+/// A run that fails cancels its agents before its release, as an interrupted one does, so that an ACP agent's pending
+/// prompt is cancelled and its usage recorded before the agent is killed (todo 117).
 #[test]
 fn a_failed_run_s_agents_are_cancelled_before_its_release() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
