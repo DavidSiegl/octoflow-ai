@@ -127,15 +127,21 @@ struct Lines {
 impl Journal {
     /// The journal at path, created with its first line where it does not exist or is empty, and otherwise continued:
     /// its next event takes the `seq` after the file's last, and its next permission the `request` after the file's
-    /// last. Errors: the file cannot be read, created or written.
+    /// last, as its lines that read have them. A last line a crash cut short, through a character as well, is ended
+    /// so that the next line starts on its own, and stays unread as before. Errors: the file cannot be read, created
+    /// or written.
     pub(super) fn open(path: &str) -> Result<Journal, OrchestratorError> {
         let cannot = |what: &str, e: std::io::Error| OrchestratorError(format!("cannot {what} {path}: {e}"));
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
             Err(e) => return Err(cannot("read", e)),
         };
+        let text = String::from_utf8_lossy(&bytes);
         let mut file = OpenOptions::new().create(true).append(true).open(path).map_err(|e| cannot("open", e))?;
+        if !text.is_empty() && !text.ends_with('\n') {
+            file.write_all(b"\n").map_err(|e| cannot("write", e))?;
+        }
         let (mut seq, mut request) = (0, 0);
         for line in text.lines() {
             let Ok(event) = serde_json::from_str::<Value>(line) else { continue };
@@ -283,6 +289,33 @@ mod tests {
 
         assert_eq!(waited_seconds_in(&text, 100, 200), 5);
         assert_eq!(waited_seconds_in("", 100, 200), 0);
+    }
+
+    #[test]
+    fn a_journal_whose_last_line_a_crash_cut_mid_character_is_continued_on_a_line_of_its_own() {
+        let tmp = TempDir::new();
+        let path = format!("{}/build.events.jsonl", tmp.path());
+        let mut cut =
+            b"{\"journal\":1}\n{\"seq\":1,\"at\":\"2026-11-25T12:00:00Z\",\"kind\":\"permission\",\"request\":4}\n"
+                .to_vec();
+        cut.extend(b"{\"seq\":2,\"kind\":\"update\",\"text\":\"\xe2\x80");
+        std::fs::write(&path, &cut).unwrap();
+
+        let journal = Journal::open(&path).expect("a cut journal is continued");
+        journal.write("turn_end", json!({"stopReason": "end_turn"}));
+        assert_eq!(journal.permission(&json!({})), 5);
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(&cut), "the lines already there stay as they were");
+        let added: Vec<Value> = String::from_utf8(bytes[cut.len()..].to_vec())
+            .expect("what open and write add is UTF-8")
+            .lines()
+            .skip(1)
+            .map(|line| serde_json::from_str(line).expect("each added line reads alone"))
+            .collect();
+        assert_eq!(bytes[cut.len()], b'\n', "the cut line is ended before anything is added");
+        let kinds: Vec<_> = added.iter().map(|e| (e["seq"].as_u64(), e["kind"].as_str())).collect();
+        assert_eq!(kinds, [(Some(2), Some("turn_end")), (Some(3), Some("permission"))]);
     }
 
     #[test]
