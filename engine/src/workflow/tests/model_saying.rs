@@ -6,7 +6,7 @@ use crate::human::Human;
 use crate::state::{AgentRecord, RunState, UnofferedModel};
 
 /// The fixture's FakeHerdr as the run's Agents, but for a role whose harness's session says of the model its agent is
-/// launched on what says gives for it, the launch's model ("" for none).
+/// launched on what says gives for the launch's model; a launch naming none is Given, as every backend has it.
 pub(super) struct ModelSaying<'f> {
     /// The fake that plays every agent, this role's included.
     pub herdr: &'f FakeHerdr,
@@ -46,8 +46,8 @@ impl Agents for ModelSaying<'_> {
     }
     fn start(&self, run: &RunState, role: &str, launch: &AgentLaunch) -> Result<Started, AgentError> {
         let mut started = self.herdr.start(run, role, launch)?;
-        if role == self.role {
-            started.model = (self.says)(launch.model.unwrap_or_default());
+        if let Some(model) = launch.model.filter(|m| role == self.role && !m.is_empty()) {
+            started.model_said = (self.says)(model);
         }
         Ok(started)
     }

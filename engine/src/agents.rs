@@ -124,10 +124,10 @@ pub struct Started {
     /// harness has no equivalent of, a model it cannot be given.
     pub unpassed: Vec<String>,
     /// What the harness's session said of the launch's model.
-    pub model: LaunchedModel,
+    pub model_said: LaunchedModel,
 }
 
-/// What a harness's session said of the model an agent was launched on (Started::model).
+/// What a harness's session said of the model an agent was launched on (Started::model_said).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LaunchedModel {
     /// It runs on the launch's model, or the launch named none.

@@ -781,9 +781,9 @@ impl Workflow<'_> {
     /// human is past a startup dialog leaves an agent the resume finds, waits for and prompts, never one unknown to
     /// the run.
     ///
-    /// An agent relaunched into its session keeps the model it took in place of the one asked of it
-    /// (AgentRecord::unoffered_model) while the same one is asked again and the reopened session does not say which
-    /// it runs on; every other start records what the session said.
+    /// An agent relaunched into its session and asked for the same model again keeps the model it took in place of that
+    /// one (AgentRecord::unoffered_model) when the reopened session does not say which it runs on; any other start
+    /// records only a substitute its session names, and none when the session says nothing.
     fn start(&mut self, role: &str, mut record: AgentRecord, start: AgentStart) -> Result<bool, StartFailure> {
         let earlier = self.state.agents.get(role);
         let (session, unoffered_model) = match start {
@@ -815,7 +815,7 @@ impl Workflow<'_> {
         };
         let started = self.agents.start(s, role, &launch)?;
         if let Some(agent) = self.state.agents.get_mut(role) {
-            match started.model {
+            match started.model_said {
                 LaunchedModel::Given => agent.unoffered_model = None,
                 LaunchedModel::Unoffered(unoffered) => agent.unoffered_model = Some(unoffered),
                 LaunchedModel::Unknown => {}

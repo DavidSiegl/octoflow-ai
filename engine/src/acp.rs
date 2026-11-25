@@ -216,13 +216,13 @@ impl<'h> AcpAgents<'h> {
             }
         };
         unpassed.extend(set_mode(h, &ask, &session, &opened, mode, &how.mode)?);
-        let (said, model) = match how.model {
+        let (said, model_said) = match how.model {
             Some(model) => set_model(h, &ask, &session, &opened, &model)?,
             None => (None, LaunchedModel::Given),
         };
         unpassed.extend(said);
         let agent = Agent { connection: Arc::new(connection), session, harness: h.kind };
-        Ok((agent, Started { asking: false, unpassed, model }))
+        Ok((agent, Started { asking: false, unpassed, model_said }))
     }
 }
 
@@ -715,8 +715,9 @@ fn set_mode(
 
 /// Put the session that the agent of harness h opened, as its answer opened has it, on model, asking the agent by ask
 /// (choose). Returns the log's sentence when it could not, and what the session said of model: Given when it was set
-/// or the session was already on it, Unoffered with the one the session is on when the session lists its models and
-/// model is not among them, Unknown when it lists none. Errors: the agent refuses the request, or does not answer it.
+/// or the session was already on it; Unoffered with the one the session is on when the session lists its models and
+/// model is not among them, or names the one it is on and lists none; Unknown when it names neither. Errors: the agent
+/// refuses the request, or does not answer it.
 fn set_model(
     h: &Harness,
     ask: &dyn Fn(&str, Value) -> Result<Value, AgentError>,
@@ -728,7 +729,7 @@ fn set_model(
     if taken.as_deref() == Some(model) || choose(ask, session, opened, &MODEL, model)? {
         return Ok((None, LaunchedModel::Given));
     }
-    if config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
+    if taken.is_none() && config_option(opened, &MODEL).is_none() && opened.pointer(MODEL.list).is_none() {
         let said = format!("{}'s session names no models, so it may not run on {model}", h.kind);
         return Ok((Some(said), LaunchedModel::Unknown));
     }

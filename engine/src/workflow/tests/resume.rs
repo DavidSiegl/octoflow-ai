@@ -559,18 +559,20 @@ fn exited_builder_without_session_gets_a_recovery_prompt() {
 }
 
 /// An exited Builder that was started on sonnet when its session did not offer opus keeps that substitute when its
-/// reopened session names no models (todo 116); a reopened session that takes opus, or a fresh one, replaces it.
+/// reopened session, asked for opus again, names no models (todo 116); a reopened session that takes opus, a fresh
+/// one, or a resume that asks the role for another model replaces it.
 #[test]
 fn a_reopened_session_that_names_no_models_keeps_the_model_its_agent_took_instead() {
     let earlier = UnofferedModel { asked: "opus".into(), taken: Some("sonnet".into()) };
     let cases = [
-        ("reopened, naming no models", Some("s-build"), LaunchedModel::Unknown, Some("sonnet")),
-        ("reopened, on opus", Some("s-build"), LaunchedModel::Given, Some("opus")),
-        ("fresh, naming no models", None, LaunchedModel::Unknown, Some("opus")),
+        ("reopened, naming no models", "opus", Some("s-build"), LaunchedModel::Unknown, Some("sonnet")),
+        ("reopened, on opus", "opus", Some("s-build"), LaunchedModel::Given, Some("opus")),
+        ("fresh, naming no models", "opus", None, LaunchedModel::Unknown, Some("opus")),
+        ("reopened on haiku asked, naming no models", "haiku", Some("s-build"), LaunchedModel::Unknown, Some("haiku")),
     ];
-    for (case, session, said, ran_on) in cases {
+    for (case, asked, session, said, ran_on) in cases {
         let mut state = prompted(saved_run("build", 2, FULL), "build-2.md");
-        state.models.insert("build".into(), "opus".into());
+        state.models.insert("build".into(), asked.into());
         state.agents.get_mut("build").expect("a saved Builder").unoffered_model = Some(earlier.clone());
         let sessions: Vec<(&str, &str)> = session.map(|s| ("build", s)).into_iter().collect();
         let seen = seen();
