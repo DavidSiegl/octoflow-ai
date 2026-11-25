@@ -788,6 +788,7 @@ impl Workflow<'_> {
         let h = harness(&self.next_harness(role)?)?;
         record.session.clone_from(&session);
         record.unprompted = Some(start);
+        record.model = Some(self.state.models.get(role).cloned().unwrap_or_default());
         self.state.agents.insert(role.to_string(), record);
         self.save()?;
         let label = self.label(role);

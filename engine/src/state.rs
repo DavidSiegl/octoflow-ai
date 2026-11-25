@@ -231,6 +231,11 @@ pub struct AgentRecord {
     /// saved by an engine that did not keep it reads as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unoffered_model: Option<UnofferedModel>,
+    /// The role's model (RunState::models) when this agent was started, empty for none: the one it asked its harness
+    /// for, which a resume that changes the role's model does not change for an agent still running. None for a record
+    /// saved by an engine that did not keep it, or one not yet started (Workflow::start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// The fields of the record this engine does not know, as read, written after its own.
     #[serde(flatten)]
     pub unknown: Object,
@@ -368,6 +373,7 @@ impl AgentRecord {
             unprompted: None,
             past_startup: false,
             unoffered_model: None,
+            model: None,
             unknown: Object::new(),
         }
     }
@@ -598,17 +604,16 @@ impl RunState {
         }
     }
 
-    /// The model the role's agent runs on: the role's (models; an empty one counts as none), unless its started
-    /// agent's session did not offer that one (AgentRecord::unoffered_model). models is what the run last set, so an
-    /// agent started before a resume changed the role's model is named with the new one (todo 115).
+    /// The model the role's agent runs on: the one it was started on (AgentRecord::model), or the role's (models) for
+    /// a role with no started agent or one saved by an engine that did not keep it, an empty one counting as none;
+    /// unless its session did not offer that one (AgentRecord::unoffered_model).
     pub fn model_ran_on(&self, role: &str) -> ModelRanOn<'_> {
-        match self.agents.get(role).and_then(|a| a.unoffered_model.as_ref()) {
-            Some(u) => ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) },
-            None => ModelRanOn {
-                model: self.models.get(role).map(String::as_str).filter(|m| !m.is_empty()),
-                unoffered: None,
-            },
+        let agent = self.agents.get(role);
+        if let Some(u) = agent.and_then(|a| a.unoffered_model.as_ref()) {
+            return ModelRanOn { model: u.taken.as_deref(), unoffered: Some(&u.asked) };
         }
+        let model = agent.and_then(|a| a.model.as_ref()).or_else(|| self.models.get(role));
+        ModelRanOn { model: model.map(String::as_str).filter(|m| !m.is_empty()), unoffered: None }
     }
 
     /// Whether the run is done: phase DONE, though its orchestrator may still be ending it (crate::runs, health).
