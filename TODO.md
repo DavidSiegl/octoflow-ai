@@ -65,6 +65,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   request "Fix…", where 0.100.4 kept 72 characters of it. That follows the rule decided on run-findings ticket 04
   (last word boundary within the limit), which does not address this case. Closing it is the user's call: a
   fallback to a mid-word cut when the boundary keeps too little of the title (say, under half of it).
+- **A new run's own sweep can delete the branch it is about to take as its base.** Raised by cross-review 317 (F1):
+  "`new_run` calls `prune::sweep_branches` before `new_state`; `take_base_branch` … records `base_branch` only
+  afterwards", so with a closed run's pull request merged and no prune since, `octoflow run` on that branch deletes
+  origin's copy in its sweep, then refuses it as a branch "which origin does not have". The same holds for drain's
+  sweep (`engine/src/cli/drain.rs`). Prune leaves a branch alone only once a run records it as its base (todo 113).
+  Would close when the sweep of a run that is starting leaves alone the branch checked out in the project, which
+  that run is about to take.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
@@ -82,9 +89,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   file is what keeps the change's settings out. Would close when octoflow-gate takes the judge's rules and settings
   without a settings file, as a `--rules` option, or reports an empty one as its defaults. Decided against (the user's
   ruling, 2026-11-11): either costs a gate release and a `BUILT_IN_PIN` bump for the name of one file in the report.
-- **Comments that point at TODO.md for what is now a ticket.** The entries they name became todo tickets on
-  2026-11-24, and each ticket's change rewrites its comment: `take_base_branch`'s doc (`engine/src/workflow.rs`, "A
-  run's base can be a closed run's branch prune deletes") is todo/113 (GitHub #632).
 - **Only a round's first Builder report that changes nothing tracked skips the quality step.** Kept by choice (the
   user's ruling, 2026-11-24, todo-tickets): the narrowing of todo 90's wording in `take_turn`'s `unjudgeable`
   (`engine/src/workflow.rs`) costs one gate run in a rare case.

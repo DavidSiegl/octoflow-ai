@@ -321,7 +321,8 @@ octoflow forget --all
 # After you resolved a pull request's conflict and pushed: drop its warning, and its draft if it was approved
 octoflow refresh e292fb
 
-# Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree
+# Delete the branches of runs whose pull request is merged, or closed 14 days ago, and a leftover clean worktree;
+# a run's branch stays while another run not closed builds on it
 octoflow prune --dry-run
 
 # Every finished run's metrics.json, forgotten runs' included, one JSON line each: outcome, roles, turns with times

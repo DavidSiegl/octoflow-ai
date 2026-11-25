@@ -267,6 +267,30 @@ fn remote_moved_past_the_pull_requests_head_is_kept() {
 }
 
 #[test]
+fn a_run_whose_branch_a_run_not_closed_builds_on_waits_until_that_run_is_closed() {
+    let p = Prune::new();
+    let base = "orchestrator/task-aaaaaa";
+    let run_id = p.add(run("aaaaaa", merged()).with("closed", "workspace closed"));
+    let builder = p.add(run("bbbbbb", open()).n(8).with("base_branch", base));
+    let r = p.pruned(&run_id);
+    assert_eq!(r.skipped, Some(format!("run {builder} builds on its branch")));
+    assert_eq!(p.host().remote.get(base).map(String::as_str), Some(PR_HEAD));
+    assert_eq!(p.host().branches.get(base).map(String::as_str), Some(PR_HEAD));
+    // Nothing recorded, so the run still waits for prune, and forget keeps it.
+    assert_eq!(p.cleanup(&run_id), Value::Null);
+    assert_ne!(p.cli.main(&["forget", "--cwd", "/proj", &run_id]), 0);
+    assert!(p.host().files.contains_key(&state_path(&run_id)));
+
+    // Once the run building on it is closed, the next sweep, which revisits nothing, deletes both sides.
+    let mut saved = p.saved(&builder);
+    saved.insert("closed".into(), Value::from("workspace closed"));
+    p.resave(&builder, saved);
+    let r = p.pruned(&run_id);
+    assert_eq!((r.local.as_str(), r.remote.as_str(), r.cleanup.as_deref()), ("deleted", "deleted", Some("deleted")));
+    assert!(p.host().remote.get(base).is_none());
+}
+
+#[test]
 fn remote_already_gone_drops_the_stale_tracking_ref() {
     let p = Prune::new();
     let run_id = p.add(run("aaaaaa", merged()).remote(None));
