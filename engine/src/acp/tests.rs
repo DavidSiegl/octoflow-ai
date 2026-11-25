@@ -669,9 +669,10 @@ fn the_usage_of_a_prompt_pending_at_an_end_a_restart_or_a_settle_is_recorded() {
 }
 
 /// An agent that answers neither its prompt nor the cancel is waited for once: the run's end that follows its settle
-/// kills it at once. A settle once the run's Ctrl-C is raised waits for none and cancels none.
+/// kills it at once. A settle once the run's Ctrl-C is raised cancels it at once, without SETTLE_MS's wait for its
+/// prompt, and waits KILL_SETTLE_MS for the cancel's answer.
 #[test]
-fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
+fn an_agent_settled_once_is_not_waited_for_again_until_the_ctrl_c() {
     let f = Fixture::new();
     let human = Heard::default();
     let agents = f.agents(&human);
@@ -690,11 +691,61 @@ fn an_agent_settled_once_or_after_the_ctrl_c_is_not_waited_for() {
     f.interrupt.raise();
     let settling = Instant::now();
     agents.settle(&f.run);
-    assert!(settling.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", settling.elapsed());
-    // The fake agent logs a cancel within milliseconds of getting it: one logged only after this sleep lets a wrong
-    // settle pass, and never fails a right one.
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(cancels(), cancelled_before, "{}", f.log());
+    let waited = settling.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(cancels(), cancelled_before + 1, "{}", f.log());
+}
+
+/// A Ctrl-C raised while a settle waits for the answers to its cancels gives the agents KILL_SETTLE_MS from then, not
+/// nothing: what they answer in it is recorded before the run's end kills them (cross-review 311, round 2).
+#[test]
+fn a_ctrl_c_during_the_wait_for_the_cancels_still_gives_the_agents_kill_settle_ms() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    let raised_after = Duration::from_millis(SETTLE_MS + SETTLE_MS / 4);
+    let interrupt = f.interrupt.clone();
+    let raising = std::thread::spawn(move || {
+        std::thread::sleep(raised_after);
+        interrupt.raise();
+    });
+
+    let settling = Instant::now();
+    agents.settle(&f.run);
+
+    let waited = settling.elapsed();
+    raising.join().unwrap();
+    assert!(raised_after + Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+}
+
+/// Agents settled at a Ctrl-C with prompts pending, as an interrupted run settles them before its release, are
+/// cancelled and given KILL_SETTLE_MS to answer, so the usage an answer carries is recorded; the wait for one that
+/// never answers ends once that is up, not SETTLE_MS later (cross-review 275 F5). A message from the human to a
+/// stopped agent is refused: nothing would cancel its prompt (cross-review 311 F2).
+#[test]
+fn agents_settled_at_a_ctrl_c_are_cancelled_and_the_usage_of_their_answers_recorded() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    for (role, text) in [("builder", "HANG"), ("reviewer", "DEAF")] {
+        agents.start(&f.run, role, &launch("agy")).expect("start");
+        agents.prompt(&f.run, role, text).expect("prompt");
+    }
+    f.interrupt.raise();
+
+    let settling = Instant::now();
+    agents.settle(&f.run);
+
+    let waited = settling.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(f.log().matches("session/cancel ").count(), 2, "{}", f.log());
+    assert_eq!(session_usage(&read(&usage_file(&f.run)), "s-1").len(), 1, "the HANG agent's answer to its cancel");
+    agents.await_human(&f.run, "builder", Waiting::Idle);
+    assert_eq!(agents.message("builder", "go on"), Err(CommandError::NotWaiting));
 }
 
 #[test]

@@ -352,6 +352,9 @@ impl<'a> Workflow<'a> {
                 return Err(Stopped::Failed(e));
             }
             Err(_) => {
+                // Settled while the Ctrl-C is raised, which gives the agents a short wait, and before the release, so
+                // that the run reads as released only once its agents' answers are recorded.
+                self.agents.settle(&self.state);
                 // Caught, so that the commands that record the stop run.
                 self.interrupt.catch();
                 self.release("interrupted");
