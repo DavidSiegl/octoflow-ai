@@ -4,7 +4,7 @@
 use crate::harness::{Tokens, Usage};
 use crate::json::{Object, ValueExt};
 use crate::pipeline::Pipeline;
-use crate::state::{RunState, TurnRecord};
+use crate::state::{RunState, TurnRecord, NOTHING_TO_PUBLISH};
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde_json::json;
@@ -173,7 +173,7 @@ pub fn run_summary(state: &RunState, pipeline: &Pipeline, rounds: &[String], now
     });
     let pr = match s.pr_url.as_deref().filter(|u| !u.is_empty()) {
         Some(url) => url,
-        None if s.nothing_to_publish => "none: nothing tracked changed since the base, so there was nothing to publish",
+        None if s.nothing_to_publish => NOTHING_TO_PUBLISH,
         None => "none",
     };
     let branch = s.branch.as_deref().filter(|b| !b.is_empty()).map_or("none".to_string(), |b| format!("`{b}`"));

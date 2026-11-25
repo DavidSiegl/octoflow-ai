@@ -15,6 +15,7 @@ use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{RUNNING, STALE};
 use crate::state::{
     find_run, judged_by_several, run_dir, AgentRecord, Backend, RunState, SavedRun, StepVerdict, TurnRecord,
+    NOTHING_TO_PUBLISH,
 };
 use crate::summary::turn_lines;
 use serde_json::Value;
@@ -57,6 +58,8 @@ pub const BLOCKED_STATUS: &str = "blocked";
 ///   (SavedRun::problem), which tells what to do with the run.
 /// - pr: null without a pull request, else {"url", "state", "error"}; state and error are null here, and
 ///   fill_pr_states sets one of them.
+/// - nothing_to_publish: whether the run succeeded with nothing tracked changed since its base, and so opened no pull
+///   request (RunState::nothing_to_publish).
 /// - turns: the turn records as saved, [] for a run saved before them.
 /// - resume_command: the command that resumes a stale run that is not closed; null otherwise, and for an "acp" run,
 ///   which the app resumes and the CLI refuses.
@@ -131,6 +134,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
             Value::Object(object([("url", Value::from(url)), ("state", Value::Null), ("error", Value::Null)]))
         }),
     );
+    record.insert("nothing_to_publish".into(), Value::from(s.nothing_to_publish));
     // Records of strings, numbers and JSON values serialize without fail.
     record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
     record.insert("resume_command".into(), optional(resume));
@@ -335,7 +339,13 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
         ("worktree", s.worktree.clone()),
         ("branch", s.branch.clone()),
         ("base", s.base_branch.clone()),
-        ("pr", s.pr_url.clone()),
+        (
+            "pr",
+            s.pr_url
+                .clone()
+                .filter(|url| !url.is_empty())
+                .or_else(|| s.nothing_to_publish.then(|| NOTHING_TO_PUBLISH.into())),
+        ),
         ("cleanup", s.branch_cleanup.clone()),
         ("quality", quality_gate_line(s)),
         ("conflicts", Some(s.conflicts.join(", "))),

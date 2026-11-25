@@ -167,6 +167,9 @@ export interface RunRecord {
   branch: string | null;
   worktree: string | null;
   pr: { url: string; state: string | null; error: string | null } | null;
+  /** Whether the run succeeded with nothing tracked changed since its base, and so opened no pull request; absent
+   * from a server before 0.103.0. */
+  nothing_to_publish?: boolean;
   turns: Turn[];
   resume_command: string | null;
   /** Whether a resume would take the run up and find something left to do: a stale run, one stopped as interrupted or

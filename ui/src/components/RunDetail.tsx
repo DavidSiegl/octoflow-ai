@@ -35,6 +35,10 @@ export function RunDetail({ api, project, entry, onClose }: Props) {
         {record.pr && (
           <OutsideLink target={{ page: record.pr.url }}>{record.pr.url}</OutsideLink>
         )}
+        {/* Worded as the engine's summary.md and show word it (NOTHING_TO_PUBLISH in engine/src/state.rs). */}
+        {!record.pr && record.nothing_to_publish && (
+          <p className="no-pr">No pull request: nothing tracked changed since the base, so there was nothing to publish.</p>
+        )}
       </header>
       <RunMap record={record} />
       <div className="files-and-file">
