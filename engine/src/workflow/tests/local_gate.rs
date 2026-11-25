@@ -227,6 +227,31 @@ fn on_a_machine_that_fails_the_preflight_the_run_fails_before_the_interview() {
 }
 
 #[test]
+fn a_gated_run_resumed_past_round_0_runs_the_preflight_again_unless_it_is_publishing() {
+    let no_curl = |f: &Fixture| {
+        f.host.state().run_command = Some(Box::new(|_, argv| {
+            let (command, stderr) = (argv.join(" "), b"curl is not on PATH\n".to_vec());
+            Some(Ok(Exec { command, status: 1, stdout: Vec::new(), stderr }))
+        }));
+    };
+    let f = Fixture::resume(Rc::new(FakeHost::default()), saved_run("review", 1, FULL), vec![], &[], &[]).gated();
+    no_curl(&f);
+    let e = failure(f.workflow(f.as_saved()).run());
+    assert!(e.contains("curl is not on PATH"), "{e}");
+    assert!(names(&f, "prompt").is_empty());
+
+    // Publishing, with its pull request open, it judges nothing more: neither the gate's tools nor gitleaks are asked.
+    let mut state = saved_run("publish", 1, FULL);
+    (state.pull_request, state.verdict, state.pr_url) =
+        (true, Some(APPROVE.into()), Some("https://github.com/o/r/pull/7".into()));
+    state.base_branch = Some("main".into());
+    let f = Fixture::resume(Rc::new(FakeHost::default()), state, vec![], &[], &[]).gated();
+    no_curl(&f);
+    f.host.state().gitleaks_missing = true;
+    assert_eq!(f.workflow(f.as_saved()).run(), verdict(APPROVE));
+}
+
+#[test]
 fn a_gate_still_running_when_the_rounds_deadline_passes_is_stopped() {
     let f = gated_locally(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])], vec![GateRun::Hangs]);
 
