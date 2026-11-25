@@ -1109,14 +1109,25 @@ pub trait Host {
     /// Delete the directory of the run of the project at cwd whose id is run_id, keeping its metrics: run_metrics
     /// gives the same records before and after. The run's metrics.json, when it has one, is added to an archive in
     /// the project first, unless a forget_run interrupted after that step already added it, so that forgetting a run
-    /// again finishes the job. Forgets of other runs of the project at the same time keep their lines too. Whether
-    /// the run may be deleted is the caller's to decide. Errors: run_id is not a plain name, before anything is read;
-    /// the metrics.json or the archive cannot be read, the metrics.json is not JSON, or the archive cannot be written
-    /// (the directory then stays); or remove_run_dir's.
-    fn forget_run(&self, cwd: &str, run_id: &str) -> Result<(), OrchestratorError> {
+    /// again finishes the job. With scope Inside, the scope serve acts in, the metrics.json is read as read_inside
+    /// reads it, and one that leads out of the run directory, or in a run directory that leads out of the runs
+    /// directory, counts as none: nothing is archived, so its record leaves run_metrics, and the run is still
+    /// forgotten. With Every, links are followed. Forgets of other runs of the project at the same time keep their
+    /// lines too. Whether the run may be deleted is the caller's to decide. Errors: run_id is not a
+    /// plain name, before anything is read; the metrics.json or the archive cannot be read, the metrics.json is not
+    /// JSON, or the archive cannot be written (the directory then stays); or remove_run_dir's.
+    fn forget_run(&self, cwd: &str, run_id: &str, scope: RunScope) -> Result<(), OrchestratorError> {
         crate::paths::plain_name(run_id)?;
-        let metrics_path = format!("{}/{METRICS_FILE}", run_dir(cwd, run_id));
-        if let Some(text) = self.read(&metrics_path)? {
+        let dir = run_dir(cwd, run_id);
+        let metrics_path = format!("{dir}/{METRICS_FILE}");
+        let text = match scope {
+            RunScope::Every => self.read(&metrics_path)?,
+            RunScope::Inside => match self.read_inside(&dir, METRICS_FILE)? {
+                RunFileText::Text(text) => Some(text),
+                RunFileText::Missing | RunFileText::Outside => None,
+            },
+        };
+        if let Some(text) = text {
             let metrics = serde_json::from_str::<Value>(&text)
                 .map_err(|e| OrchestratorError(format!("corrupt {metrics_path}: {e}")))?;
             let archive_path = format!("{cwd}/{METRICS_ARCHIVE}");
