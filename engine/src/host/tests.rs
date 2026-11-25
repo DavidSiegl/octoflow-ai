@@ -982,8 +982,8 @@ fn what_leads_out_of_a_run_directory_is_neither_listed_nor_read_over_ssh() {
     assert_eq!(names("away"), Vec::<String>::new());
     assert_eq!(names("nosuch"), Vec::<String>::new());
     let read = |run: &str, name: &str| ssh.host.read_inside(&format!("{runs}/{run}"), name).unwrap();
-    assert_eq!(read("r", "chain.md"), RunFileText::Text("a".to_string()));
-    assert_eq!(read("alias", "a.md"), RunFileText::Text("a".to_string()));
+    assert_eq!(read("r", "chain.md"), RunFileText::Text(b"a".to_vec()));
+    assert_eq!(read("alias", "a.md"), RunFileText::Text(b"a".to_vec()));
     for name in ["up.md", "out.md", "beside.md"] {
         assert_eq!(read("r", name), RunFileText::Outside, "{name}");
     }
@@ -1043,6 +1043,19 @@ fn a_link_removed_while_it_is_resolved_is_missing_not_outside() {
     let bin = TempDir::new();
     tool_that_loses(&bin.path(), "readlink", &format!("{run_dir}/in.md"));
     assert_eq!(host_with_tools(&bin.path()).read_inside(&run_dir, "in.md").unwrap(), RunFileText::Missing);
+}
+
+#[test]
+fn a_run_file_that_is_not_utf8_is_read_as_its_bytes() {
+    let d = TempDir::new();
+    let run_dir = d.join(&format!("{RUNS_DIR}/r"));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    // A journal a crash cut inside a character, as run-findings 05 found one; its line ends kept as they are.
+    let cut = b"{\"journal\":1}\r\n{\"seq\":1,\"text\":\"\xe2\x80".to_vec();
+    std::fs::write(format!("{run_dir}/build.events.jsonl"), &cut).unwrap();
+    let bin = TempDir::new();
+    let read = host_with_tools(&bin.path()).read_inside(&run_dir, "build.events.jsonl").unwrap();
+    assert_eq!(read, RunFileText::Text(cut));
 }
 
 #[test]

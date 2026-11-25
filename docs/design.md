@@ -171,15 +171,15 @@ what its agents have pending at once and gives them `KILL_SETTLE_MS` (2 seconds)
 they are killed; a second Ctrl-C does not cut that short. A session no response gave a `usage` for has `"unknown"`
 tokens. ACP's `usage_update` notification is not read: it carries the context window and a cost, not the four kinds.
 
-An ACP run also keeps, in its run directory, each role's journal `<role>.events.jsonl`: every session the role ran,
-each prompt, ACP's session updates verbatim, each permission asked (numbered by the journal) and its answer, each
-turn's end and the agent's exit, one JSON line each after a `{"journal": 1}` header, for the app to replay. A line a
-crash cut short is passed over by its readers, and the role's next agent ends it before appending, so that its own
-lines read. Each
-agent's process group is recorded as `<role>.acp.group` (its pgid and its leader's start time), so that a resume ends
-a group the orchestrator before it left behind, if it is still the recorded one, before starting the role again.
-While the run runs, `socket` names the Unix socket it listens on, by which the app answers a permission or stops
-the run; a run started by serve keeps its output in `run.log`.
+An ACP run also keeps, in its run directory, each role's journal `<role>.events.jsonl`: every session the role ran, each
+prompt, ACP's session updates verbatim, each permission asked (numbered by the journal) and its answer, each turn's end
+and the agent's exit, one JSON line each after a `{"journal": 1}` header, for the app to replay. A crash, or a failed
+write, can cut a line short, inside a character as well: every reader, the app's view included, passes over a line that
+does not read, and the next line appended starts on a line of its own. A first line cut short is written again, as the
+file holds nothing else yet. Each agent's process group is recorded as `<role>.acp.group` (its pgid and its leader's
+start time), so that a resume ends a group the orchestrator before it left behind, if it is still the recorded one,
+before starting the role again. While the run runs, `socket` names the Unix socket it listens on, by which the app
+answers a permission or stops the run; a run started by serve keeps its output in `run.log`.
 
 ## Evals
 

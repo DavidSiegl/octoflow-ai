@@ -487,13 +487,8 @@ pub fn journal_name(role: &str) -> String {
 /// written whole, as by a crash, is passed over, bytes that are not UTF-8 among them. Errors: the journal cannot be
 /// read.
 pub fn waited_seconds(run: &RunState, role: &str, from: i64, to: i64) -> Result<i64, OrchestratorError> {
-    let path = format!("{}/{}", run.dir(), journal_name(role));
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(OrchestratorError(format!("cannot read {path}: {e}"))),
-    };
-    Ok(journal::waited_seconds_in(&String::from_utf8_lossy(&bytes), from, to))
+    let text = journal::text(&format!("{}/{}", run.dir(), journal_name(role)))?;
+    Ok(journal::waited_seconds_in(&text, from, to))
 }
 
 /// The path of the record of the role's agent's process group in the run directory dir.

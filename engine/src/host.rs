@@ -225,8 +225,9 @@ pub struct RunFile {
 /// A run directory's file as [`Host::read_inside`] reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunFileText {
-    /// The file's text.
-    Text(String),
+    /// The file's bytes, as it holds them: line ends kept, and bytes that are not UTF-8 too, so that each reader decides
+    /// how to decode them.
+    Text(Vec<u8>),
     /// There is no such file, or no such run directory.
     Missing,
     /// The file, or the run directory, leads out of where it must stay; nothing was read.
@@ -1153,14 +1154,14 @@ pub trait Host {
         let dir = run_dir(cwd, run_id);
         let metrics_path = format!("{dir}/{METRICS_FILE}");
         let text = match scope {
-            RunScope::Every => self.read(&metrics_path)?,
+            RunScope::Every => self.read(&metrics_path)?.map(String::into_bytes),
             RunScope::Inside => match self.read_inside(&dir, METRICS_FILE)? {
-                RunFileText::Text(text) => Some(text),
+                RunFileText::Text(bytes) => Some(bytes),
                 RunFileText::Missing | RunFileText::Outside => None,
             },
         };
         if let Some(text) = text {
-            let metrics = serde_json::from_str::<Value>(&text)
+            let metrics = serde_json::from_slice::<Value>(&text)
                 .map_err(|e| OrchestratorError(format!("corrupt {metrics_path}: {e}")))?;
             let archive_path = format!("{cwd}/{METRICS_ARCHIVE}");
             let archived = archived_metrics(&self.read(&archive_path)?.unwrap_or_default(), &archive_path)?;
@@ -1195,9 +1196,9 @@ pub trait Host {
         parsed_run_files(run_dir, &checked(self, &argv, proc)?)
     }
 
-    /// The text of the file name, a plain name, in run_dir, if it stays inside the run directory as run_files_inside
+    /// The bytes of the file name, a plain name, in run_dir, if it stays inside the run directory as run_files_inside
     /// lists only those that do: Outside, having read nothing, for a file that leads out or a run_dir that does;
-    /// Missing for a file not there, or removed before it is read. Errors: the file cannot be read, or is not UTF-8.
+    /// Missing for a file not there, or removed before it is read. Errors: the file cannot be read.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
         // What is read is the path below resolved, so the links it walked are not followed again; one put in its
         // place after that is: a race left open, here as in run_states_inside and run_files_inside, which check a
@@ -1209,7 +1210,7 @@ pub trait Host {
             run_dir_resolved(),
             cat_unless_gone("$r")
         );
-        let proc = self.run(&["sh", "-c", &script, "_", run_dir, name], None, DEFAULT_TIMEOUT)?;
+        let proc = self.run_verbatim(&["sh", "-c", &script, "_", run_dir, name], None, DEFAULT_TIMEOUT)?;
         match proc.status {
             0 => Ok(RunFileText::Text(proc.stdout)),
             MISSING_FILE_STATUS => Ok(RunFileText::Missing),

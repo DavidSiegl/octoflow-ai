@@ -42,11 +42,6 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
-- **The app cannot show a role's journal that a crash cut inside a character.** Found with run-findings 05: the
-  engine reads such a journal lossily (`Journal::open`, `acp::waited_seconds`), but serve's journal endpoint reads
-  it through `Host::read_inside` (`engine/src/serve/runs.rs`, `ProjectRuns::read`), which refuses a file that is
-  not UTF-8, so the app's view of that role fails for the rest of the run. Closes when serve reads a journal
-  lossily too, as `acp::replay` already passes over a line that does not parse.
 - **The run detail's two ages tick on separate clocks.** Raised by cross-review 287 (F1): `Status`
   (`ui/src/components/RunDetail.tsx`) and `NowLine` (`ui/src/components/RunMap.tsx`) each call `useNow`
   (`ui/src/hooks.ts`), each with its own `setInterval`, so each second the heartbeat age and the running turn's length
