@@ -18,10 +18,10 @@ pub fn spec_title(spec: &str) -> Option<String> {
 
 /// title as the title of a run's commit and pull request: at most 72 chars, Unicode scalar values rather than what
 /// a reader sees as one character (72 is git's and GitHub's customary width for a commit's first line). A longer one
-/// is cut at its last blank that leaves room for a "…" after it, which marks the cut, with the blanks before the cut
-/// dropped, as long as at least half the limit (36 chars) is left before the "…". Otherwise, as when there is no
-/// such blank, it is cut inside a word: its first 71 chars and the "…", which may split a character built of
-/// several chars, such as a flag.
+/// is cut at its last blank that leaves room for a "…" after it, which marks the cut, as long as at least half the
+/// limit (36 chars) is left before the "…". Otherwise, as when there is no such blank, it is cut inside a word after
+/// its first 71 chars, which may split a character built of several chars, such as a flag. Either way the blanks
+/// before the "…" are dropped.
 pub fn commit_title(title: &str) -> String {
     const LIMIT: usize = 72;
     if title.chars().count() <= LIMIT {
@@ -32,7 +32,7 @@ pub fn commit_title(title: &str) -> String {
     let words =
         window.rfind(char::is_whitespace).map(|i| window[..i].trim_end()).filter(|w| w.chars().count() >= LIMIT / 2);
     let head: String = title.chars().take(LIMIT - 1).collect();
-    format!("{}…", words.unwrap_or(&head))
+    format!("{}…", words.unwrap_or(head.trim_end()))
 }
 
 /// The branch a run publishes its change on: BRANCH_PREFIX, the title lower-cased with each run of characters other

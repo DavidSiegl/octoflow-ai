@@ -164,7 +164,7 @@ impl Prune {
 
     /// prune_branches by run id, ordered as returned.
     fn prune(&self, dry_run: bool, revisit: bool) -> Vec<(String, PrunedRun)> {
-        let pruned = self.cli.with(|w| prune_branches(w, "/proj", dry_run, revisit, None)).expect("prune_branches");
+        let pruned = self.cli.with(|w| prune_branches(w, "/proj", dry_run, revisit, false)).expect("prune_branches");
         pruned.into_iter().map(|r| (r.run_id.clone(), r)).collect()
     }
 
@@ -847,6 +847,8 @@ fn single_branches() {
 fn nothing_when_there_was_nothing_to_do() {
     let p = Prune::new();
     assert!(p.sweep().is_empty());
+    // No candidate, no git: not even for the branch the starting run takes (review 338, F1).
+    assert!(p.host().git_calls.is_empty());
     p.add(run("aaaaaa", open()));
     p.add(run("bbbbbb", merged()).n(8).with("branch_cleanup", "kept: checked out in /proj"));
     // Both sides already gone: recorded, but nothing deleted.
@@ -886,7 +888,7 @@ fn a_failure_during_a_ctrl_c_stops_prune_and_the_sweep() {
     p.add(run("aaaaaa", failing(1, "interrupted")));
     p.add(run("bbbbbb", merged()).n(8));
     p.cli.f.interrupt.raise();
-    let e = p.cli.with(|w| prune_branches(w, "/proj", false, false, None)).unwrap_err();
+    let e = p.cli.with(|w| prune_branches(w, "/proj", false, false, false)).unwrap_err();
     assert!(e.0.contains("interrupted"), "{e}");
     // Nothing logged, and the second run not looked at.
     assert!(p.log().is_empty());
@@ -1153,7 +1155,7 @@ fn prune_on_real_git_with_worktree(in_worktree: bool) -> PrunedRun {
         .with(|world| {
             let mut world = *world;
             world.with.host = &repo.host;
-            prune_branches(&world, &repo.path, false, false, None)
+            prune_branches(&world, &repo.path, false, false, false)
         })
         .unwrap();
     let [r] = &pruned[..] else { panic!("{pruned:?}") };

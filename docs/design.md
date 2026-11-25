@@ -310,7 +310,8 @@ commits is a separate question.
 A run that opens a pull request leaves its branch `orchestrator/<slug>-<key>` locally and on `origin`. `prune`
 deletes it once the pull request is merged, or has been closed for 14 days, and every run that will open a pull
 request does the same sweep before it starts; the sweep passes over branches it kept before, `prune` looks at
-them again. Only a run's own recorded branch is a candidate, and only when the run has a pull request and is not
+them again, and the sweep spares the branch checked out in the project, which the starting run is about to take as
+its base. Only a run's own recorded branch is a candidate, and only when the run has a pull request and is not
 `running`. A run without one may hold the Builder's uncommitted work, so it is never touched. The pull request's
 state and head commit come from `gh pr view`, run where the project is.
 
