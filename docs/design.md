@@ -103,12 +103,11 @@ each round's quality gates and the verdict of each verdict step that judged it, 
 harness did not offer the role's model, the roles and turns tables name the one its agent ran on instead and the one
 asked for: "sonnet (opus not offered)", or "default (o3 not offered)" when its session named none it took; an agent a
 resume relaunches into that session, asking it for the same model, keeps the name when the reopened session names no
-model. A resume that
-ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the orchestrator that
-ended it stopped before releasing it, which it does once both files are written: a resume then writes them again,
-releases the run, tells the human it finished and closes a published run's workspace (`Workflow::run`). The pull
-request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a line per
-turn.
+model. A resume that ends again rewrites it with every turn; a run that is already `done` is not rewritten, unless the
+orchestrator that ended it stopped before releasing it, which it does once both files are written: a resume then writes
+them again, releases the run, tells the human it finished and closes a published run's workspace (`Workflow::run`). The
+pull request's body ends with the same table up to publishing, collapsed under "Run timings", and `show` prints a line
+per turn.
 
 ## Run metrics
 
