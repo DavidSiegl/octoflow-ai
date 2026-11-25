@@ -54,11 +54,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `disableConcurrentBuilds()`) moves Latest back. Two such builds that both list the releases before either creates
   its own also put the lower version's notes on both pages (`ci/release-notes.sh`). Closed when Release passes
   `--latest` only for the highest version and the Release stage is serialized, or such overlap is shown not to happen.
-- **The desktop app shows a turn's time without its permission waits.** Raised by cross-review 301 (F6): the run
-  map (`ui/src/components/RunMap.tsx`, its turn durations) shows a turn's whole `seconds`, though over ACP, where
-  the app is where permissions are answered, the turn record now holds `waited_seconds` too and `summary.md` shows
-  "3m 44s (3m 19s waiting)". Closes when the app's `TurnRecord` (`ui/src/api.ts`) reads the field and the run map
-  shows it the same way.
+- **The desktop app shows a turn's time without its waits.** Raised by cross-review 301 (F6), widened by 318 (F3):
+  the run map (`ui/src/components/RunMap.tsx`, its turn durations) shows a turn's whole `seconds`, though the turn
+  record holds `waited_seconds` (over ACP, where the app is where permissions are answered) and
+  `outside_wait_seconds` too, and `summary.md` shows "12m 03s (3m 19s waiting for you, 6m 00s waiting outside the
+  run)". Closes when the run map shows an ended turn's waits the same way; `Turn` (`ui/src/api.ts`) declares both.
 - **A short first word before one long token leaves a near-empty title.** Raised by cross-review 300 (finding 1):
   `commit_title` (`engine/src/pull_request.rs`) cuts a title over 72 chars at its last blank whenever anything
   precedes it, so a task's first line `Fix https://example.com/<an 80-character path>` titles the commit and pull

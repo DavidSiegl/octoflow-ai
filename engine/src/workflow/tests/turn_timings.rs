@@ -586,7 +586,7 @@ fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
     let f = Fixture::on(Rc::new(FakeHost::default()), state, vec![]);
     let (dir, path) = (f.state.dir(), f.state.build_path(1));
     let line = |seq: u64, seconds: i64, kind: &str| {
-        let at = crate::summary::iso_utc(HOST_EPOCH + seconds);
+        let at = crate::timestamp::iso_utc(HOST_EPOCH + seconds);
         format!(r#"{{"seq":{seq},"at":"{at}","kind":"{kind}","request":1}}"#)
     };
     let journal = [r#"{"journal":1}"#.to_string(), line(1, 100, "permission"), line(2, 220, "answered")];
@@ -681,7 +681,7 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
     for t in &quality {
         assert_eq!((&t.harness, &t.model, t.human_paced), (&None, &None, false));
     }
-    let seconds = |at: &Option<String>| crate::summary::epoch_seconds(at.as_deref().unwrap()).unwrap();
+    let seconds = |at: &Option<String>| crate::timestamp::epoch_seconds(at.as_deref().unwrap()).unwrap();
     for t in &turns {
         assert!(seconds(&t.started_at) <= seconds(&t.ended_at));
         assert_eq!(t.seconds, Some(seconds(&t.ended_at) - seconds(&t.started_at)));
@@ -821,7 +821,7 @@ fn a_gated_run_of_two_rounds_records_its_turns_and_quality_rounds() {
     let roles: Object = object([("spec", claude.clone()), ("build", claude.clone()), ("review", claude)]);
     assert_eq!(field(metrics, "roles"), &Value::Object(roles));
     assert_eq!(field(metrics, "started_at"), &Value::from(at(0)));
-    let ended = crate::summary::epoch_seconds(field(metrics, "ended_at").as_str().unwrap()).unwrap();
+    let ended = crate::timestamp::epoch_seconds(field(metrics, "ended_at").as_str().unwrap()).unwrap();
     assert_eq!(field(metrics, "seconds"), &Value::from(ended - HOST_EPOCH));
     assert_eq!(f.saved().get("quality_rounds"), Some(&quality_rounds));
 }

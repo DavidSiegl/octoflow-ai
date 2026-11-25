@@ -430,7 +430,7 @@ pub fn helper_cases() -> Vec<HelperCase> {
 }
 
 /// text, a recording's state.json, with each "<time>" string in it a time as
-/// crate::summary::iso_utc writes it, the first at epoch (Unix seconds) and each a minute after the one before, and
+/// crate::timestamp::iso_utc writes it, the first at epoch (Unix seconds) and each a minute after the one before, and
 /// each "<seconds>" string a count, 5 and then 7 more each time.
 pub fn denormalized(text: &str, epoch: i64) -> String {
     use serde_json::Value;
@@ -441,7 +441,7 @@ pub fn denormalized(text: &str, epoch: i64) -> String {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
         if let Some(after) = rest.strip_prefix("\"<time>\"") {
-            out.push_str(&Value::from(crate::summary::iso_utc(epoch + 60 * times)).to_string());
+            out.push_str(&Value::from(crate::timestamp::iso_utc(epoch + 60 * times)).to_string());
             times += 1;
             rest = after;
         } else if let Some(after) = rest.strip_prefix("\"<seconds>\"") {

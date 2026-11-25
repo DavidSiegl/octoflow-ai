@@ -1010,7 +1010,7 @@ fn journal(f: &Fixture) -> Vec<Value> {
     lines
         .map(|mut line| {
             if let Some(at) = line.as_object_mut().and_then(|o| o.remove("at")) {
-                assert!(crate::summary::epoch_time(at.as_str().expect("a text")).is_ok(), "{at}");
+                assert!(crate::timestamp::epoch_time(at.as_str().expect("a text")).is_ok(), "{at}");
             }
             line
         })
@@ -1222,7 +1222,7 @@ fn a_journal_line_cut_mid_character_costs_only_that_line_of_the_waits() {
         text.extend(part);
     }
     std::fs::write(format!("{}/{}", run.dir(), journal_name("build")), text).unwrap();
-    let from = crate::summary::epoch_seconds("2026-11-24T12:00:00+00:00").unwrap();
+    let from = crate::timestamp::epoch_seconds("2026-11-24T12:00:00+00:00").unwrap();
 
     assert_eq!(waited_seconds(&run, "build", from, from + 60), Ok(15));
     assert_eq!(waited_seconds(&run, "review", from, from + 60), Ok(0));

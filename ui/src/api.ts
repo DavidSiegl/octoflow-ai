@@ -123,6 +123,13 @@ export interface Turn {
   ended_at: string | null;
   /** From started_at to ended_at; null while either is. */
   seconds: number | null;
+  /** Of seconds, how many the agent waited for the human's answer to a permission (an ACP run), and how many it
+   * reported waiting on something outside the run; absent when not recorded (the engine's TurnRecord says when). */
+  waited_seconds?: number;
+  outside_wait_seconds?: number;
+  /** What the turn's role reports it waits on outside the run, and since when (an ISO time), while that wait stands;
+   * absent while none does. */
+  waiting_on?: { on: string; since: string };
 }
 
 /** One verdict a verdict step gave: the round it judged, the step's id, and APPROVE or CHANGES_REQUESTED. */

@@ -13,8 +13,8 @@ use crate::constants::{APPROVE, CHANGES_REQUESTED, EXIT_ERROR, STALE_SECONDS};
 use crate::host::fake::{FakeHost, FakePr, HOST_EPOCH};
 use crate::host::{Completed, ProcessHost};
 use crate::interrupt::Interrupt;
-use crate::summary::iso_utc;
 use crate::test_support::{accepting, impl_, read_saved, solo, TempDir};
+use crate::timestamp::iso_utc;
 use crate::workflow_file::workflow_definition;
 
 const RUN_ID: &str = "20260930-070000-c0ffee";

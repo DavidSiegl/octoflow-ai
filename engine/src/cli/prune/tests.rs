@@ -22,7 +22,7 @@ use crate::json::object;
 use crate::json::Object;
 use crate::state::format_problem;
 use crate::state::RunState;
-use crate::summary::iso_utc;
+use crate::timestamp::iso_utc;
 use crate::workflow::fixture::{build_turn, review_turn, saved_run, spec_turn, Fixture};
 use serde_json::Value;
 

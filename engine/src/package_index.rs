@@ -31,12 +31,12 @@ pub struct Upload {
 }
 
 impl Upload {
-    /// The upload at iso, a time with an offset as crate::summary::epoch_time reads it; why not, as jiff words it, for
+    /// The upload at iso, a time with an offset as crate::timestamp::epoch_time reads it; why not, as jiff words it, for
     /// one that is not such a time.
     pub fn from_iso(iso: &str) -> Result<Upload, String> {
         let pieces = jiff::fmt::temporal::Pieces::parse(iso).map_err(|e| e.to_string())?;
         let date = pieces.date().strftime("%Y-%m-%d").to_string();
-        Ok(Upload { at: crate::summary::epoch_time(iso)?, date })
+        Ok(Upload { at: crate::timestamp::epoch_time(iso)?, date })
     }
 }
 

@@ -571,7 +571,7 @@ fn answer_usage(format: LogFormat, line: &str, seen: &mut HashSet<MessageId>) ->
     let entry = entry.as_object()?;
     let message = entry.get("message")?.as_object()?;
     let usage = message.get("usage")?;
-    let when = crate::summary::epoch_time(entry.get("timestamp")?.as_str()?).ok()?;
+    let when = crate::timestamp::epoch_time(entry.get("timestamp")?.as_str()?).ok()?;
     let keys = match format {
         LogFormat::ClaudeCode => {
             if entry.get("type").and_then(Value::as_str) != Some("assistant") {

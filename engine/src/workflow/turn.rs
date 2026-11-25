@@ -13,8 +13,8 @@ use crate::harness::harness;
 use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use crate::state::{AgentRecord, AgentStart, Backend, RunState, TurnRecord};
-use crate::summary::{epoch_seconds, iso_utc};
+use crate::state::{AgentRecord, AgentStart, Backend, RunState, StandingWait, TurnRecord};
+use crate::timestamp::{epoch_seconds, iso_utc};
 use serde_json::Value;
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -182,6 +182,7 @@ impl Workflow<'_> {
             && self.state.prompted.as_deref() == Some(file.as_str());
         if !goes_on {
             self.host.remove(&waiting_path(path))?;
+            self.record_wait(&file, None)?;
         }
         let message = self.prompt_for(how, &file, &t.text, t.fresh_text.as_deref(), path)?;
         self.announce(role, how, message.is_some(), &t.announce)?;
@@ -479,9 +480,13 @@ impl Workflow<'_> {
     /// Whether the role's wait on something outside the run stands at this poll (waiting_on), polls counting the polls
     /// in a row before it that found it standing, which this one updates. The human is told of a wait once, at its
     /// second poll, not its first: a poll can read the file between the agent's emptying it and its writing what it
-    /// waits on. A rewritten reason is not told again; a withdrawal goes to the log. Errors: as waiting_on's.
-    fn poll_wait(&self, role: &str, path: &str, polls: &mut u32) -> Result<bool, OrchestratorError> {
+    /// waits on. A rewritten reason is not told again; a withdrawal goes to the log. The turn's record follows the
+    /// wait from that second poll too (record_wait). Errors: as waiting_on's and record_wait's.
+    fn poll_wait(&mut self, role: &str, path: &str, polls: &mut u32) -> Outcome<bool> {
         let waiting = self.waiting_on(path)?;
+        if waiting.is_none() || *polls > 0 {
+            self.record_wait(file_name(path), waiting.as_deref())?;
+        }
         match &waiting {
             Some(what) if *polls == 1 => self.ask_human(role, &format!("is waiting on {what}")),
             None if *polls > 0 => self.human.log(&format!("[{role}] is no longer waiting")),
@@ -489,6 +494,36 @@ impl Workflow<'_> {
         }
         *polls = if waiting.is_some() { *polls + 1 } else { 0 };
         Ok(waiting.is_some())
+    }
+
+    /// Bring the record of the turn under way that writes file (TurnRecord::waiting_on) up to what its role waits on
+    /// now, None for nothing, and save it if that changed it: a new wait starts at the host's now, a rewritten one
+    /// takes its new reason and keeps its start, and a withdrawn one ends now. A file with no turn under way records
+    /// nothing. Errors: the host's time cannot be read, a standing wait's start is not a time, or the state cannot
+    /// be saved.
+    fn record_wait(&mut self, file: &str, waiting: Option<&str>) -> Outcome<()> {
+        let Some(i) = self.open_turn(file) else {
+            return Ok(());
+        };
+        let standing = self.state.turns[i].waiting_on.as_ref();
+        if waiting == standing.map(|w| w.on.as_str()) {
+            return Ok(());
+        }
+        let since = standing.map(|w| w.since.clone());
+        match waiting {
+            Some(on) => {
+                let since = match since {
+                    Some(since) => since,
+                    None => iso_utc(self.host.now()?),
+                };
+                self.state.turns[i].waiting_on = Some(StandingWait { on: on.to_string(), since });
+            }
+            None => {
+                let now = self.host.now()?;
+                self.state.turns[i].end_wait(now)?;
+            }
+        }
+        self.save()
     }
 
     /// What the role reports its turn waits on, from the waiting file of its handoff file at path (waiting_path): the
@@ -587,6 +622,8 @@ impl Workflow<'_> {
             ended_at: None,
             seconds: None,
             waited_seconds: None,
+            outside_wait_seconds: None,
+            waiting_on: None,
             unknown: Object::new(),
         }
     }
@@ -629,6 +666,7 @@ impl Workflow<'_> {
             _ => None,
         };
         let record = &mut self.state.turns[i];
+        record.end_wait(ended)?;
         record.ended_at = Some(iso_utc(ended));
         record.seconds = started.map(|started| ended - started);
         record.waited_seconds = waited;

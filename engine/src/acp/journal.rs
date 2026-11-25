@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 
 use crate::error::OrchestratorError;
-use crate::summary::{epoch_seconds, iso_utc};
+use crate::timestamp::{epoch_seconds, iso_utc};
 
 /// The version of the journal's lines and of the run socket's messages, one number for both: raised by a change an
 /// older reader would get wrong (a field renamed or removed, a meaning changed), not by a field or kind added, which

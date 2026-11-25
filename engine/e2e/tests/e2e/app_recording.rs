@@ -140,8 +140,8 @@ fn stand_in_turn(turn: &Value, k: usize, project: &Path) -> Value {
     let Value::Object(fields) = turn else { panic!("a turn that is no object: {turn}") };
     let timed = fields.iter().map(|(key, v)| {
         let v = match (key.as_str(), v.as_str()) {
-            ("started_at", Some("<time>")) => Value::from(octoflow_engine::summary::iso_utc(started)),
-            ("ended_at", Some("<time>")) => Value::from(octoflow_engine::summary::iso_utc(started + 300)),
+            ("started_at", Some("<time>")) => Value::from(octoflow_engine::timestamp::iso_utc(started)),
+            ("ended_at", Some("<time>")) => Value::from(octoflow_engine::timestamp::iso_utc(started + 300)),
             ("seconds", Some("<seconds>")) => Value::from(300),
             _ => stand_in(v, Some(key), project),
         };

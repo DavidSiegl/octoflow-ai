@@ -1,10 +1,11 @@
 //! What a run's records say once it ends: its turns as summary.md, the pull request and show print them, summary.md
-//! itself, metrics.json for the metrics command, and the times and durations they are written in.
+//! itself, metrics.json for the metrics command, and the durations they are written in.
 
 use crate::harness::{Tokens, Usage};
 use crate::json::{Object, ValueExt};
 use crate::pipeline::Pipeline;
 use crate::state::{RunState, TurnRecord, NOTHING_TO_PUBLISH};
+use crate::timestamp::{epoch_seconds, iso_utc};
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde_json::json;
@@ -12,28 +13,6 @@ use serde_json::Value;
 
 /// The version of run_metrics' shape, raised when a key changes its meaning or goes.
 pub const METRICS_VERSION: i64 = 1;
-
-/// seconds since the epoch as an RFC 3339 time in UTC to the second, with its offset written out:
-/// 2026-10-28T08:34:31+00:00. The engine writes every time it records so.
-pub fn iso_utc(seconds: i64) -> String {
-    // Seconds beyond jiff's years -9999 to 9999 are clamped to its bounds; no clock gives them.
-    let seconds = seconds.clamp(Timestamp::MIN.as_second(), Timestamp::MAX.as_second());
-    let at = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
-    at.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string()
-}
-
-/// The seconds since the epoch, with their fraction to the microsecond, of an ISO 8601 time with an offset (Z, +hh:mm
-/// or +hh), as jiff's Timestamp reads it: RFC 3339 and ISO 8601's basic format among its forms. Errors: iso is not
-/// such a time, a time without an offset among them, as jiff words it.
-pub fn epoch_time(iso: &str) -> Result<f64, String> {
-    let at: Timestamp = iso.parse().map_err(|e: jiff::Error| e.to_string())?;
-    Ok(at.as_microsecond() as f64 / 1e6)
-}
-
-/// epoch_time's whole seconds, the fraction cut off; errors as its.
-pub fn epoch_seconds(iso: &str) -> Result<i64, String> {
-    epoch_time(iso).map(|seconds| seconds.floor() as i64)
-}
 
 /// A duration as summary.md and the tables write it: 42s, 3m 07s, 2h 05m.
 pub fn format_duration(seconds: i64) -> String {
@@ -71,9 +50,10 @@ struct TurnCells {
 
 impl TurnCells {
     /// A turn record's values as the tables show them, its start in zone. A start or duration that is not known
-    /// shows as ?: a file written before turns were recorded, or a turn still open. A duration that holds waits for
-    /// the human's answer to a permission says how much of it they took: "3m 44s (3m 19s waiting)". A quality
-    /// analysis runs in no harness.
+    /// shows as ?: a file written before turns were recorded, or a turn still open. A duration that holds waits says
+    /// how much of it they took, those for the human's answer to a permission apart from those the role reported on
+    /// something outside the run: "12m 03s (3m 19s waiting for you, 6m 00s waiting outside the run)"; the two can
+    /// overlap (TurnRecord::outside_wait_seconds). A quality analysis runs in no harness.
     fn of(t: &TurnRecord, zone: &TimeZone) -> TurnCells {
         let set = |text: &Option<String>| text.clone().filter(|t| !t.is_empty());
         let harness = t.harness.clone();
@@ -103,12 +83,22 @@ impl TurnCells {
             harness: harness.unwrap_or_else(|| "-".into()),
             model,
             start,
-            duration: match (t.seconds, t.waited_seconds) {
-                (None, _) => "?".into(),
-                (Some(seconds), Some(waited)) if waited > 0 => {
-                    format!("{} ({} waiting)", format_duration(seconds), format_duration(waited))
+            duration: match t.seconds {
+                None => "?".into(),
+                Some(seconds) => {
+                    let waits: Vec<String> =
+                        [(t.waited_seconds, "for you"), (t.outside_wait_seconds, "outside the run")]
+                            .into_iter()
+                            .filter_map(|(n, on)| {
+                                n.filter(|&n| n > 0).map(|n| format!("{} waiting {on}", format_duration(n)))
+                            })
+                            .collect();
+                    if waits.is_empty() {
+                        format_duration(seconds)
+                    } else {
+                        format!("{} ({})", format_duration(seconds), waits.join(", "))
+                    }
                 }
-                (Some(seconds), _) => format_duration(seconds),
             },
             file: t.file.clone(),
         }
@@ -116,7 +106,7 @@ impl TurnCells {
 }
 
 /// The turns as a Markdown table, the human-paced ones marked: their time is the human's as much as the agent's; a
-/// turn's waits for a permission's answer show in its duration (TurnCells::of).
+/// turn's waits show in its duration (TurnCells::of).
 pub fn turns_table(turns: &[TurnRecord]) -> String {
     let head = ["step", "role", "round", "harness", "model", "start (UTC)", "duration", "file"].map(String::from);
     let mut rows = vec![head.to_vec(), vec!["---".to_string(); head.len()]];
@@ -254,6 +244,9 @@ pub fn run_metrics(state: &RunState, now: i64) -> Value {
             });
             if let Some(waited) = t.waited_seconds {
                 turn["waited_seconds"] = waited.into();
+            }
+            if let Some(waited) = t.outside_wait_seconds {
+                turn["outside_wait_seconds"] = waited.into();
             }
             if let Some(asked) = t.unoffered_model.as_deref() {
                 turn["unoffered_model"] = asked.into();

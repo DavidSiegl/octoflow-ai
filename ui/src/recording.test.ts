@@ -19,8 +19,12 @@ const VERDICT: KeysOf<StepVerdict> = { round: true, step: true, verdict: true };
 const PR: KeysOf<NonNullable<RunRecord["pr"]>> = { url: true, state: true, error: true };
 const TURN: KeysOf<Turn> = {
   step: true, role: true, round: true, quality_round: true, file: true, agent: true, model: true, unoffered_model: true, session: true,
-  tokens: true, human_paced: true, started_at: true, ended_at: true, seconds: true,
+  tokens: true, human_paced: true, started_at: true, ended_at: true, seconds: true, waited_seconds: true,
+  outside_wait_seconds: true, waiting_on: true,
 };
+
+/** The keys serve sends only while they hold something, by place: a recorded object without one is not held to it. */
+const SENT_WHEN_SET: Record<string, string[]> = { turns: ["waited_seconds", "outside_wait_seconds", "waiting_on"] };
 
 /** The keys api.ts gives a record and each object in it, by where the object is in the record. */
 const TYPED: Record<string, Record<string, true>> = {
@@ -48,8 +52,9 @@ describe("the keys of a run record", () => {
     // Without an example the recording holds api.ts to nothing here.
     expect(sent.length).toBeGreaterThan(0);
     const typed = Object.keys(TYPED[place] ?? {}).sort();
+    const whenSet = SENT_WHEN_SET[place] ?? [];
     for (const object of sent) {
-      expect(Object.keys(object).sort()).toEqual(typed);
+      expect(Object.keys(object).sort()).toEqual(typed.filter((key) => key in object || !whenSet.includes(key)));
     }
   });
 });

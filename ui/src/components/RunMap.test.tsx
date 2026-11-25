@@ -141,6 +141,14 @@ describe("RunMap", () => {
     ]);
   });
 
+  it("says what the running turn's role waits on outside the run, and for how long, while it does", () => {
+    const waiting = turn("build", 2, "build-2.md", 1140, null, { waiting_on: { on: "the merge of pull request #526", since: ago(240) } });
+    const { rerender } = render(<RunMap record={record({ turns: [...record().turns.slice(0, -1), waiting] })} />);
+    expect(screen.getByText("build · claude opus-5.5 · running 19m · waiting 4m on the merge of pull request #526")).toBeInTheDocument();
+    rerender(<RunMap record={record()} />);
+    expect(screen.getByText("build · claude opus-5.5 · running 19m")).toBeInTheDocument();
+  });
+
   it("names the model a turn ran on, and the role's model its harness did not offer", () => {
     const turns = [
       turn("spec", 0, "spec.md", 3900, 3480, { model: "opus-5.5", unoffered_model: "haiku-5.5" }),
