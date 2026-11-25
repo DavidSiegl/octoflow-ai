@@ -232,7 +232,7 @@ fn build_1_under_way() -> TurnRecord {
 
 #[test]
 fn ending_a_wait_adds_its_seconds_to_those_of_the_waits_ended_before() {
-    let at = |s: i64| crate::summary::iso_utc(1_791_000_000 + s);
+    let at = |s: i64| crate::timestamp::iso_utc(1_791_000_000 + s);
     let mut turn = build_1_under_way();
     assert_eq!(turn.end_wait(1_791_000_100), Ok(()));
     assert_eq!(turn.outside_wait_seconds, None);

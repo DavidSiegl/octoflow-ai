@@ -384,7 +384,7 @@ pub(crate) fn working() -> Turn {
 
 /// The time on a FakeHost whose clock reads seconds, as a turn record has it.
 pub(crate) fn at(seconds: i64) -> String {
-    crate::summary::iso_utc(crate::host::fake::HOST_EPOCH + seconds)
+    crate::timestamp::iso_utc(crate::host::fake::HOST_EPOCH + seconds)
 }
 
 /// The turn record of a step that started and ended at these host clock readings (None: not known): equal to a record

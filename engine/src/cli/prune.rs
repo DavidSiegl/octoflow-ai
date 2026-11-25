@@ -229,7 +229,7 @@ pub fn pull_request_pending(pr: &PullRequest, number: &str, now: f64) -> Result<
     let Some(at) = pr.closed_at.as_deref() else {
         return Err(OrchestratorError(format!("PR #{number} is closed without a closing time")));
     };
-    let Ok(closed) = crate::summary::epoch_time(at) else {
+    let Ok(closed) = crate::timestamp::epoch_time(at) else {
         return Err(OrchestratorError(format!("PR #{number} is closed at {at:?}, which is not a time")));
     };
     if now - closed > CLOSED_BRANCH_GRACE as f64 {

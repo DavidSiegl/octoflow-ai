@@ -39,6 +39,7 @@ pub mod serve;
 pub mod spec_file;
 pub mod state;
 pub mod summary;
+pub mod timestamp;
 pub mod workflow;
 pub mod workflow_file;
 

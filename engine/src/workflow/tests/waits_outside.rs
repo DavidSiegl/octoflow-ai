@@ -35,7 +35,7 @@ fn build_1_turn(wf: &Workflow) -> TurnRecord {
 /// it: started 200s and waiting 100s before HOST_EPOCH.
 fn waiting_build_turn(wf: &Workflow) -> TurnRecord {
     let mut record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH - 200));
-    let since = crate::summary::iso_utc(HOST_EPOCH - 100);
+    let since = crate::timestamp::iso_utc(HOST_EPOCH - 100);
     record.waiting_on = Some(crate::state::StandingWait { on: WHAT.to_string(), since });
     record
 }
