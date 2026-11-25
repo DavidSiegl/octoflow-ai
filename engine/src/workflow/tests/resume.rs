@@ -5,12 +5,17 @@
 
 use std::cell::RefCell;
 
+use super::model_saying::ModelSaying;
 use super::pull_request::rounds;
 use super::*;
+use crate::agents::LaunchedModel;
 use crate::constants::{METRICS_FILE, SUMMARY_FILE};
 use crate::json::object;
 use crate::pipeline::DEFAULT_WORKFLOW;
+use crate::pull_request::{provenance, GateEvidence};
+use crate::state::UnofferedModel;
 use crate::test_support::herdr_server;
+use crate::workflow::{Collaborators, Workflow};
 use crate::workflow_file::workflow_definition;
 
 /// saved_run, its prompt for file counted as delivered.
@@ -113,6 +118,65 @@ fn a_live_agent_saved_without_its_session_has_it_noted_before_its_turn_is_record
     let review = wf.state().turns.iter().find(|t| t.role == "review").expect("a review turn");
     assert_eq!(review.session.as_deref(), Some("s-review"));
     assert_eq!(review.tokens, serde_json::json!({"input": 10, "output": 20, "cache_read": 7, "cache_write": 1}));
+}
+
+/// A resume that gives a role another model leaves its agent still running on the one it was started on, and the run
+/// names that one for it (todo 115): in its next turn's record, summary.md's roles table and the commit's trailers.
+#[test]
+fn a_resume_that_changes_a_role_s_model_names_the_one_its_running_agent_was_started_on() {
+    let mut state = prompted(saved_run("review", 1, FULL), "build-1.md");
+    state.models.insert("review".into(), "opus".into());
+    state.agents.get_mut("review").expect("a saved Reviewer").model = Some("opus".into());
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        vec![("review", vec![review_turn(1, APPROVE)])],
+        &["review"],
+        &[("review", "s-review")],
+    );
+    let mut settings = f.as_saved();
+    settings.agents.models.insert("review".into(), "haiku".into());
+    let mut wf = f.workflow(settings);
+
+    assert_eq!(wf.run(), verdict(APPROVE));
+
+    assert!(!names(&f, "start").contains(&"review-a1b2c3".to_string()), "the live agent is not started again");
+    let review = wf.state().turns.iter().find(|t| t.role == "review").expect("a review turn");
+    assert_eq!(review.model.as_deref(), Some("opus"));
+    let summary = f.host.state().files.get(&path(&f, SUMMARY_FILE)).cloned().expect("summary.md");
+    assert!(summary.contains("| Reviewer (review) | claude | opus |\n"), "{summary}");
+    let trailers = provenance(wf.state(), &GateEvidence { last: None, unjudged: false });
+    assert!(trailers.contains(&("Octoflow-Role".to_string(), "review=claude/opus".to_string())), "{trailers:?}");
+}
+
+/// The role's next agent takes the resume's model: an exited one relaunched into its session asks for it, and its
+/// record and turn name it (todo 115).
+#[test]
+fn a_resume_that_changes_a_role_s_model_relaunches_its_exited_agent_on_the_new_one() {
+    let seen = seen();
+    let mut state = prompted(saved_run("build", 2, FULL), "build-2.md");
+    state.models.insert("build".into(), "opus".into());
+    state.agents.get_mut("build").expect("a saved Builder").model = Some("opus".into());
+    let f = Fixture::resume(
+        Rc::new(FakeHost::default()),
+        state,
+        build_and_approve(2, &seen),
+        &["review"],
+        &[("build", "s-build")],
+    );
+    let mut settings = f.as_saved();
+    settings.agents.models.insert("build".into(), "haiku".into());
+    let mut wf = f.workflow(settings);
+
+    assert_eq!(wf.run(), verdict(APPROVE));
+
+    assert_eq!(
+        starts(&f),
+        [("build-a1b2c3".into(), "w1:p2".into(), strings(&["--resume", "s-build", "--model", "haiku"]))]
+    );
+    assert_eq!(wf.state().agents["build"].model.as_deref(), Some("haiku"));
+    let build = wf.state().turns.iter().find(|t| t.role == "build").expect("a build turn");
+    assert_eq!(build.model.as_deref(), Some("haiku"));
 }
 
 #[test]
@@ -492,6 +556,42 @@ fn exited_builder_without_session_gets_a_recovery_prompt() {
     assert!(first.contains("You are the Builder"), "{first}");
     assert!(first.contains("This is round 2, and you are a fresh session"), "{first}");
     assert!(first.contains(&f.state.review_path(1)), "{first}");
+}
+
+/// An exited Builder that was started on sonnet when its session did not offer opus keeps that substitute when its
+/// reopened session, asked for opus again, names no models (todo 116); a reopened session that takes opus, a fresh
+/// one, or a resume that asks the role for another model replaces it.
+#[test]
+fn a_reopened_session_that_names_no_models_keeps_the_model_its_agent_took_instead() {
+    let earlier = UnofferedModel { asked: "opus".into(), taken: Some("sonnet".into()) };
+    let cases = [
+        ("reopened, naming no models", "opus", Some("s-build"), LaunchedModel::Unknown, Some("sonnet")),
+        ("reopened, on opus", "opus", Some("s-build"), LaunchedModel::Given, Some("opus")),
+        ("fresh, naming no models", "opus", None, LaunchedModel::Unknown, Some("opus")),
+        ("reopened on haiku asked, naming no models", "haiku", Some("s-build"), LaunchedModel::Unknown, Some("haiku")),
+    ];
+    for (case, asked, session, said, ran_on) in cases {
+        let mut state = prompted(saved_run("build", 2, FULL), "build-2.md");
+        state.models.insert("build".into(), asked.into());
+        state.agents.get_mut("build").expect("a saved Builder").unoffered_model = Some(earlier.clone());
+        let sessions: Vec<(&str, &str)> = session.map(|s| ("build", s)).into_iter().collect();
+        let seen = seen();
+        let f =
+            Fixture::resume(Rc::new(FakeHost::default()), state, build_and_approve(2, &seen), &["review"], &sessions);
+        let says = |_: &str| said.clone();
+        let agents = ModelSaying { herdr: &f.herdr, role: "build", says: &says };
+        let collaborators = Collaborators { agents: &agents, ..f.collaborators() };
+        let mut settings = f.as_saved();
+        settings.agents.models = f.state.models.clone();
+        let mut wf = Workflow::new(collaborators, f.state.clone(), settings).expect("Workflow::new takes the settings");
+
+        assert_eq!(wf.run(), verdict(APPROVE), "{case}");
+
+        let kept = (ran_on == Some("sonnet")).then(|| earlier.clone());
+        assert_eq!(wf.state().agents["build"].unoffered_model, kept, "{case}");
+        let build = wf.state().turns.iter().find(|t| t.role == "build").expect("a build turn");
+        assert_eq!(build.model.as_deref(), ran_on, "{case}");
+    }
 }
 
 #[test]

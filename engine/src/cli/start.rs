@@ -186,6 +186,7 @@ pub fn resumable_state(
     if let Some(mode) = s.permission_mode.as_ref().filter(|m| !m.is_empty()) {
         state.permission_mode = Some(mode.clone());
     }
+    // Taken up by each role's next agent; one still running keeps the model it was started on (AgentRecord::model).
     state.models = merged(&state.models, role_models(s, pipeline.roles())?);
     // Taken up by each role's next agent; one still running keeps its harness. Refused before any turn runs when a
     // role's is one this orchestrator no longer takes, as a run saved by an earlier release can name.
