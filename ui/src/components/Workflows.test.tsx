@@ -533,24 +533,23 @@ describe("the run form's Edit… and New…", { timeout: EDITOR_TIMEOUT_MS }, ()
     const form = await openForm(start);
     fireEvent.change(within(form).getByLabelText("Task"), { target: { value: "a task" } });
     fireEvent.change(within(form).getByLabelText("Workflow"), { target: { value: "tdd" } });
-    // The read after the save waits at the server until the test answers it. The form issues it from an effect, which
-    // React may run after editAndSave returns, so the test waits for the read to arrive rather than answering at once:
-    // an answer before it would answer nothing and leave the read waiting for good.
-    let arrive: (answer: () => void) => void = () => {};
-    const arrived = new Promise<() => void>((resolve) => (arrive = resolve));
+    // Each /workflows read waits at the server until its answer, kept here, is called. The form issues the read after
+    // the save from an effect, which React may run after editAndSave returns, so the test waits for the read to arrive
+    // rather than answering at once: an answer before it would answer nothing and leave the read waiting for good.
+    const answers: (() => void)[] = [];
     const fetch = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (new URL(url).pathname === "/workflows") {
-        await new Promise<void>((answer) => arrive(answer));
+        await new Promise<void>((answer) => answers.push(answer));
       }
       return fetch(url, init);
     });
     await editAndSave(form);
     expect(within(form).getByText("Reading the workflows…")).toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
-    const answer = await arrived;
+    await waitFor(() => expect(answers, "one read of /workflows after the save").toHaveLength(1), { timeout: 5000 });
     expect(within(form).getByRole("button", { name: "Start" })).toBeDisabled();
-    answer();
+    answers.forEach((answer) => answer());
     await waitFor(() => expect(within(form).getByRole("button", { name: "Start" })).toBeEnabled());
     expect(within(form).getByLabelText("Workflow")).toHaveValue("tdd");
   });
