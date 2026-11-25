@@ -707,6 +707,34 @@ fn an_agent_settled_once_is_not_waited_for_again_until_the_ctrl_c() {
     assert_eq!(cancels(), cancelled_before + 1, "{}", f.log());
 }
 
+/// A cancel, as at a run's failure, cancels the prompt an agent has pending at once, without SETTLE_MS's wait for it,
+/// and records the usage the cancel's answer carries; an agent that answers neither is waited for KILL_SETTLE_MS, and
+/// no longer (todo 117).
+#[test]
+fn a_cancel_ends_a_pending_prompt_at_once_and_waits_at_most_kill_settle_ms() {
+    let f = Fixture::new();
+    let human = Heard::default();
+    let agents = f.agents(&human);
+    let recorded = || session_usage(&read(&usage_file(&f.run)), "s-1").len();
+    let cancels = || f.log().matches("session/cancel ").count();
+
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "HANG").expect("prompt");
+    let stopping = Instant::now();
+    agents.cancel(&f.run);
+    assert!(stopping.elapsed() < Duration::from_millis(SETTLE_MS / 2), "{:?}", stopping.elapsed());
+    assert_eq!((recorded(), cancels()), (1, 1), "{}", f.log());
+
+    agents.start(&f.run, "builder", &launch("agy")).expect("start");
+    agents.prompt(&f.run, "builder", "DEAF").expect("prompt");
+    let stopping = Instant::now();
+    agents.cancel(&f.run);
+    let waited = stopping.elapsed();
+    assert!(Duration::from_millis(KILL_SETTLE_MS) <= waited, "{waited:?}");
+    assert!(waited < Duration::from_millis(KILL_SETTLE_MS + SETTLE_MS / 2), "{waited:?}");
+    assert_eq!(cancels(), 2, "{}", f.log());
+}
+
 /// A Ctrl-C raised while a settle waits for the answers to its cancels gives the agents KILL_SETTLE_MS from then, not
 /// nothing: what they answer in it is recorded before the run's end kills them (cross-review 311, round 2).
 #[test]

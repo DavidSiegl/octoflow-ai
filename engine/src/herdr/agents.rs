@@ -143,6 +143,8 @@ impl<H: Herdr + ?Sized> Agents for H {
     }
 
     fn settle(&self, _run: &RunState) {}
+
+    fn cancel(&self, _run: &RunState) {}
 }
 
 impl<W: Workspaces + ?Sized> RunPlaces for W {
