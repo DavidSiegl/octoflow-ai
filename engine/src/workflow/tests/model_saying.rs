@@ -75,4 +75,7 @@ impl Agents for ModelSaying<'_> {
     fn settle(&self, run: &RunState) {
         self.herdr.settle(run)
     }
+    fn cancel(&self, run: &RunState) {
+        self.herdr.cancel(run)
+    }
 }

@@ -202,11 +202,17 @@ pub trait Agents: RunPlaces {
     fn whereabouts(&self, run: &RunState, role: &str) -> String;
 
     /// Let what the agents are still doing end and be recorded, once the run's turns are over, before their tokens
-    /// are counted, or once it is interrupted, before its release; the agents run on. ACP: an agent's usage is recorded
-    /// only when it answers a prompt, which can come after the turn's file, so each prompt still pending is given a
-    /// bounded time to be answered, then cancelled and given that time again; once the run's Ctrl-C is raised,
-    /// cancelled at once and given a shorter time. herdr: nothing to do, the harnesses' session logs hold the usage.
+    /// are counted; the agents run on. ACP: an agent's usage is recorded only when it answers a prompt, which can come
+    /// after the turn's file, so each prompt still pending is given a bounded time to be answered, then cancelled and
+    /// given that time again; once the run's Ctrl-C is raised, cancelled at once and given a shorter time. herdr:
+    /// nothing to do, the harnesses' session logs hold the usage.
     fn settle(&self, run: &RunState);
+
+    /// Cancel what the agents are doing, once the run stops short of done, at a Ctrl-C or a failure (after its last
+    /// turn too, as in publishing), before its release; the agents run on, for the run's end to kill or keep. ACP: each
+    /// prompt still pending is cancelled at once, and the agents get the short time a settle at a Ctrl-C gives them to
+    /// answer, so that the usage the answer carries is recorded. herdr: nothing to do, as for settle.
+    fn cancel(&self, run: &RunState);
 }
 
 /// A run's agents as anything but its orchestrator reaches them, from the run's saved state: close, and serve's.

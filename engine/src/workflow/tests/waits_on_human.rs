@@ -1,5 +1,6 @@
 //! When a turn lets the human's message reach its agent (Agents::await_human): while the agent is idle in an
-//! interview, and once a non-interview agent has stalled; and when a run lets its agents settle (Agents::settle).
+//! interview, and once a non-interview agent has stalled; and when a run lets its agents settle (Agents::settle) or
+//! cancels them (Agents::cancel).
 
 use std::cell::RefCell;
 
@@ -10,8 +11,8 @@ use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::workflow::{Collaborators, Workflow};
 
-/// The fixture's FakeHerdr as the run's Agents, with each Agents::await_human and Agents::settle it is asked
-/// recorded.
+/// The fixture's FakeHerdr as the run's Agents, with each Agents::await_human, Agents::settle and Agents::cancel it is
+/// asked recorded.
 struct Awaited<'f> {
     herdr: &'f FakeHerdr,
     /// The run's Ctrl-C, as the run's agents see it.
@@ -20,9 +21,11 @@ struct Awaited<'f> {
     asked: RefCell<Vec<(String, Waiting)>>,
     /// The run as each settle found it, in order.
     settled: RefCell<Vec<Settle>>,
+    /// The run as each cancel found it, in order.
+    cancelled: RefCell<Vec<Settle>>,
 }
 
-/// The run as a settle found it.
+/// The run as a settle or a cancel found it.
 #[derive(Debug, PartialEq)]
 struct Settle {
     /// Some turn of the run had its tokens counted.
@@ -41,6 +44,16 @@ impl<'f> Awaited<'f> {
             interrupt: f.interrupt.clone(),
             asked: RefCell::default(),
             settled: RefCell::default(),
+            cancelled: RefCell::default(),
+        }
+    }
+
+    /// The run as a settle or a cancel finds it.
+    fn found(&self, run: &RunState) -> Settle {
+        Settle {
+            counted: run.turns.iter().any(|t| t.tokens.is_set()),
+            owned: run.owner.is_some(),
+            interrupted: self.interrupt.is_raised(),
         }
     }
 }
@@ -92,12 +105,12 @@ impl Agents for Awaited<'_> {
         self.herdr.whereabouts(run, role)
     }
     fn settle(&self, run: &RunState) {
-        self.settled.borrow_mut().push(Settle {
-            counted: run.turns.iter().any(|t| t.tokens.is_set()),
-            owned: run.owner.is_some(),
-            interrupted: self.interrupt.is_raised(),
-        });
+        self.settled.borrow_mut().push(self.found(run));
         self.herdr.settle(run)
+    }
+    fn cancel(&self, run: &RunState) {
+        self.cancelled.borrow_mut().push(self.found(run));
+        self.herdr.cancel(run)
     }
 }
 
@@ -184,11 +197,10 @@ fn a_finished_run_s_agents_settle_before_its_tokens_are_counted() {
     assert_eq!(agents.settled.into_inner(), [Settle { counted: false, owned: true, interrupted: false }]);
 }
 
-/// An interrupted run's agents settle before its release, with the Ctrl-C still raised: an ACP agent then gets a
-/// short wait to answer its cancel with its usage, and the run reads as released only once that is recorded
-/// (cross-review 311 F1).
+/// An interrupted run's agents are cancelled before its release: an ACP agent then gets a short wait to answer its
+/// cancel with its usage, and the run reads as released only once that is recorded (cross-review 311 F1).
 #[test]
-fn an_interrupted_run_s_agents_settle_before_its_release() {
+fn an_interrupted_run_s_agents_are_cancelled_before_its_release() {
     let f = Fixture::new(vec![("spec", vec![idle()])]);
     let interrupt = f.interrupt.clone();
     f.clock.hook(move |now| {
@@ -203,5 +215,51 @@ fn an_interrupted_run_s_agents_settle_before_its_release() {
         .run();
 
     assert_eq!(ran, Err(Stopped::Interrupted));
-    assert_eq!(agents.settled.into_inner(), [Settle { counted: false, owned: true, interrupted: true }]);
+    assert_eq!(agents.cancelled.into_inner(), [Settle { counted: false, owned: true, interrupted: true }]);
+    assert_eq!(agents.settled.into_inner(), []);
+}
+
+/// A run that fails cancels its agents before its release, as an interrupted one does, so that an ACP agent's pending
+/// prompt is cancelled and its usage recorded before the agent is killed (todo 117).
+#[test]
+fn a_failed_run_s_agents_are_cancelled_before_its_release() {
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![build_turn(1)])]);
+    f.herdr.state().dropped.insert("build".into(), 2);
+    let agents = Awaited::new(&f);
+
+    let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
+        .expect("Workflow::new takes the settings")
+        .run();
+
+    assert!(matches!(ran, Err(Stopped::Failed(_))), "{ran:?}");
+    assert_eq!(agents.cancelled.into_inner(), [Settle { counted: false, owned: true, interrupted: false }]);
+    assert_eq!(agents.settled.into_inner(), []);
+}
+
+/// A run taken over is another orchestrator's, and so are the files its agents' answers would be recorded in: its
+/// agents are neither cancelled nor settled, only left for the run's end to kill (todo 117).
+#[test]
+fn a_taken_over_run_s_agents_are_not_cancelled() {
+    let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![idle()])]);
+    let path = format!("{}/state.json", f.state.dir());
+    let host = Rc::clone(&f.host);
+    f.clock.hook(move |now| {
+        let mut files = host.state();
+        let saved = files.files.get(&path).cloned().expect("a saved state.json");
+        let mut saved: Value = serde_json::from_str(&saved).expect("state.json is JSON");
+        if now > 30.0 && saved["owner"]["pid"] != 4242 {
+            saved["owner"] =
+                serde_json::json!({"host": "laptop", "pid": 4242, "started_at": "2026-09-30T07:00:00+00:00"});
+            files.files.insert(path.clone(), saved.to_string());
+        }
+    });
+    let agents = Awaited::new(&f);
+
+    let ran = Workflow::new(Collaborators { agents: &agents, ..f.collaborators() }, f.state.clone(), no_pr())
+        .expect("Workflow::new takes the settings")
+        .run();
+
+    assert!(matches!(ran, Err(Stopped::TakenOver(_))), "{ran:?}");
+    assert_eq!(agents.cancelled.into_inner(), []);
+    assert_eq!(agents.settled.into_inner(), []);
 }
