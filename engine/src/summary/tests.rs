@@ -89,7 +89,7 @@ fn a_turn_that_waited_says_how_long_for_each_kind_of_wait_and_its_metrics_too() 
     let table = turns_table(&turns);
     let lines = turn_lines(&turns, &jiff::tz::TimeZone::UTC);
     let mut s = approved_run();
-    s.turns = turns.to_vec();
+    s.turns = turns.to_vec().into();
     let metrics = run_metrics(&s, 1_791_000_300);
 
     assert!(table.contains("| 3m 44s (3m 19s waiting for you) | review-1.md |"), "{table}");
@@ -136,7 +136,8 @@ fn approved_run() -> RunState {
         turn("review", "review-1.md", Some(1800), Some(2100), |t| {
             t.insert("model".into(), Value::from("opus"));
         }),
-    ];
+    ]
+    .into();
     s
 }
 
@@ -183,7 +184,7 @@ fn turns_with_unknown_starts_and_ends_and_quality_rounds() {
         ]
     );
     let mut s = approved_run();
-    s.turns = vec![analysis];
+    s.turns = vec![analysis].into();
     s.restored = vec![serde_json::from_str::<Value>(
         r#"{"round": 1, "file": "locked-build-1.diff", "paths": {"tests": ["a", "b"], "x": ["c"]}}"#,
     )
@@ -255,7 +256,7 @@ fn run_with_unoffered_models() -> RunState {
         |asked: &str, taken: Option<&str>| Some(UnofferedModel { asked: asked.into(), taken: taken.map(String::from) });
     s.agents["review"].unoffered_model = unoffered("opus", Some("sonnet"));
     s.agents["build"].unoffered_model = unoffered("o3", None);
-    for t in &mut s.turns {
+    for t in s.turns.iter_mut() {
         (t.model, t.unoffered_model) = match t.role.as_str() {
             "review" => (Some("sonnet".into()), Some("opus".into())),
             "build" => (None, Some("o3".into())),

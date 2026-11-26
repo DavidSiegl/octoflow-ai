@@ -84,10 +84,10 @@ impl<'a> Workflow<'a> {
                 // Saved before the gate starts: a quality file a resume finds written was judged by this release.
                 let unsaved_pin = self.state.built_in_gate_pin.is_none();
                 self.state.built_in_gate_pin.get_or_insert_with(|| local_gate::BUILT_IN_PIN.to_string());
-                let opened = self.open_turn(&file).is_none();
+                let opened = self.state.turns.under_way(&file).is_none();
                 if opened {
                     let record = self.turn_record(QUALITY, &file, Some(self.host.now()?));
-                    self.state.turns.push(record);
+                    self.state.turns.open(record);
                 }
                 if opened || unsaved_pin {
                     self.save()?;

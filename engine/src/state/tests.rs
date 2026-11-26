@@ -227,7 +227,7 @@ fn a_standing_wait_and_the_seconds_of_those_ended_are_saved_as_read() {
 
 /// turn_with's record as read.
 fn build_1_under_way() -> TurnRecord {
-    RunState::from_text(&saved_with(&[("turns", Some(&turn_with(&[])))])).unwrap().turns.remove(0)
+    RunState::from_text(&saved_with(&[("turns", Some(&turn_with(&[])))])).unwrap().turns[0].clone()
 }
 
 #[test]
@@ -569,4 +569,83 @@ fn ambiguous_key() {
 #[test]
 fn no_match() {
     assert_eq!(find_run(&runs(), "abcdef", "/p").unwrap_err().0, "no run abcdef under /p/.octoflow-ai/runs");
+}
+
+/// A turn's start in the ledger tests, in seconds since the epoch.
+const START: i64 = 1_791_000_000;
+
+/// build_1_under_way's record, but writing file in step.
+fn under_way(step: &str, file: &str) -> TurnRecord {
+    TurnRecord { step: step.into(), file: file.into(), ..build_1_under_way() }
+}
+
+#[test]
+fn a_file_has_at_most_one_turn_under_way() {
+    let mut turns = Turns::default();
+    assert!(turns.open(under_way("build", "build-1.md")));
+    assert!(!turns.open(TurnRecord { round: 2, ..under_way("build", "build-1.md") }));
+    assert_eq!(turns.under_way("build-1.md").map(|t| t.round), Some(1));
+
+    turns.under_way_mut("build-1.md").unwrap().end(START + 60, Some("s1"), None).unwrap();
+    assert!(turns.under_way("build-1.md").is_none());
+    assert!(turns.open(TurnRecord { round: 2, ..under_way("build", "build-1.md") }));
+    assert_eq!(turns.len(), 2);
+}
+
+#[test]
+fn a_moved_file_takes_its_latest_record_along() {
+    let mut turns = Turns::from(vec![under_way("build", "build-1.md")]);
+    turns.under_way_mut("build-1.md").unwrap().end(START + 60, Some("s1"), None).unwrap();
+    turns.open(under_way("build", "build-1.md"));
+
+    turns.moved("build-1.md", "build-1.rejected.md");
+    turns.moved("review-1.md", "review-1.rejected.md");
+
+    let files: Vec<&str> = turns.iter().map(|t| t.file.as_str()).collect();
+    assert_eq!(files, ["build-1.md", "build-1.rejected.md"]);
+    assert!(turns.under_way("build-1.md").is_none());
+}
+
+#[test]
+fn dropping_a_step_s_turns_under_way_keeps_its_ended_ones_and_other_steps() {
+    let mut ended = under_way(QUALITY, "quality-1-1.md");
+    ended.end(START + 60, Some("s1"), None).unwrap();
+    let mut turns = Turns::from(vec![ended, under_way(QUALITY, "quality-1-2.md"), under_way("build", "build-2.md")]);
+
+    turns.drop_under_way(QUALITY);
+
+    let files: Vec<&str> = turns.iter().map(|t| t.file.as_str()).collect();
+    assert_eq!(files, ["quality-1-1.md", "build-2.md"]);
+}
+
+#[test]
+fn a_wait_keeps_its_start_when_rewritten_and_adds_up_when_withdrawn() {
+    let mut turn = TurnRecord { started_at: Some(iso_utc(START)), ..build_1_under_way() };
+    turn.wait(Some("CI"), START + 10).unwrap();
+    turn.wait(Some("CI, run 2"), START + 20).unwrap();
+    assert_eq!(turn.waiting_on, Some(StandingWait { on: "CI, run 2".into(), since: iso_utc(START + 10) }));
+
+    turn.wait(None, START + 40).unwrap();
+    turn.wait(None, START + 50).unwrap();
+    assert_eq!((turn.outside_wait_seconds, &turn.waiting_on), (Some(30), &None));
+}
+
+#[test]
+fn an_ended_turn_lasts_from_its_start_and_forgets_a_session_it_did_not_end_in() {
+    let mut turn = TurnRecord { started_at: Some(iso_utc(START)), ..build_1_under_way() };
+    turn.wait(Some("CI"), START + 100).unwrap();
+
+    turn.end(START + 300, Some("s2"), Some(7)).unwrap();
+
+    assert_eq!((turn.seconds, turn.waited_seconds, turn.outside_wait_seconds), (Some(300), Some(7), Some(200)));
+    assert_eq!((turn.ended_at, turn.session, turn.waiting_on), (Some(iso_utc(START + 300)), None, None));
+}
+
+#[test]
+fn a_turn_with_no_known_start_ends_with_no_length() {
+    let mut turn = TurnRecord { started_at: None, ..build_1_under_way() };
+
+    turn.end(START, Some("s1"), None).unwrap();
+
+    assert_eq!((turn.seconds, turn.session.as_deref()), (None, Some("s1")));
 }

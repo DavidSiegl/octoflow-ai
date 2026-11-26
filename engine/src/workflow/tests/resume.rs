@@ -677,7 +677,7 @@ fn stopped_after_saving_done() -> RunState {
     state.verdict = Some(APPROVE.into());
     state.pull_request = true;
     state.owner = Some(object([("pid", Value::from(4242)), ("host", Value::from("gone"))]));
-    state.turns = vec![record("build", "build-1.md", Some(-100), Some(-50)).map()];
+    state.turns = vec![record("build", "build-1.md", Some(-100), Some(-50)).map()].into();
     state
 }
 

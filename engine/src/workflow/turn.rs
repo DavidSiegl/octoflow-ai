@@ -12,8 +12,8 @@ use crate::harness::harness;
 use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use crate::state::{AgentRecord, AgentStart, RunState, StandingWait, TurnRecord};
-use crate::timestamp::{epoch_seconds, iso_utc};
+use crate::state::{AgentRecord, AgentStart, RunState, TurnRecord};
+use crate::timestamp::iso_utc;
 use serde_json::Value;
 
 /// What a turn does once its agent is ready, before any prompt.
@@ -190,7 +190,7 @@ impl Workflow<'_> {
             // A resumed or restarted turn keeps its record and start. Read before the prompt goes out, so that no
             // agent can write its file before its turn started (its mtime still can: end_turn counts that as the
             // start).
-            let started = if self.open_turn(&file).is_some() { None } else { Some(self.host.now()?) };
+            let started = if self.state.turns.under_way(&file).is_some() { None } else { Some(self.host.now()?) };
             self.deliver(role, path, &message)?;
             // Recorded only once the prompt is taken. Dying between sending and confirming costs one duplicate
             // prompt, which the role answers by writing the same file again.
@@ -198,7 +198,7 @@ impl Workflow<'_> {
             self.clear_unprompted(role);
             if let Some(started) = started {
                 let record = self.turn_record(role, &file, Some(started));
-                self.state.turns.push(record);
+                self.state.turns.open(record);
             }
             self.save()?;
         }
@@ -286,9 +286,7 @@ impl Workflow<'_> {
         // The turn's record, which written closed, goes with the file, as in retry; the wait opens a record of its
         // own, human-paced (turn_record).
         let moved = file_name(&blocked).to_string();
-        if let Some(t) = s.turns.iter_mut().rev().find(|t| t.file == file) {
-            t.file.clone_from(&moved);
-        }
+        s.turns.moved(&file, &moved);
         self.save()?;
         self.host.rename(path, &blocked)?;
         self.human.log(&format!("[{role}] {file} is blocked: {question}; moved it to {moved}"));
@@ -391,9 +389,7 @@ impl Workflow<'_> {
         // The turn's record, which written closed, goes with the file, whose mtime the rename kept; the retry opens a
         // record of its own.
         let moved = file_name(&rejected).to_string();
-        if let Some(record) = self.state.turns.iter_mut().rev().find(|t| t.file == file) {
-            record.file.clone_from(&moved);
-        }
+        self.state.turns.moved(&file, &moved);
         self.save()?;
         self.human.log(&format!("[{role}] {file} {why}; moved it to {moved}, prompting once more"));
         Ok(())
@@ -495,32 +491,20 @@ impl Workflow<'_> {
         Ok(waiting.is_some())
     }
 
-    /// Bring the record of the turn under way that writes file (TurnRecord::waiting_on) up to what its role waits on
-    /// now, None for nothing, and save it if that changed it: a new wait starts at the host's now, a rewritten one
-    /// takes its new reason and keeps its start, and a withdrawn one ends now. A file with no turn under way records
-    /// nothing. Errors: the host's time cannot be read, a standing wait's start is not a time, or the state cannot
-    /// be saved.
+    /// Bring the record of the turn under way that writes file up to what its role waits on now, None for nothing,
+    /// at the host's now (TurnRecord::wait), and save it if that changed it; the host's time is read only then. A
+    /// file with no turn under way records nothing. Errors: the host's time cannot be read, TurnRecord::wait's, or the
+    /// state cannot be saved.
     fn record_wait(&mut self, file: &str, waiting: Option<&str>) -> Outcome<()> {
-        let Some(i) = self.open_turn(file) else {
+        let Some(turn) = self.state.turns.under_way(file) else {
             return Ok(());
         };
-        let standing = self.state.turns[i].waiting_on.as_ref();
-        if waiting == standing.map(|w| w.on.as_str()) {
+        if waiting == turn.waiting_on.as_ref().map(|w| w.on.as_str()) {
             return Ok(());
         }
-        let since = standing.map(|w| w.since.clone());
-        match waiting {
-            Some(on) => {
-                let since = match since {
-                    Some(since) => since,
-                    None => iso_utc(self.host.now()?),
-                };
-                self.state.turns[i].waiting_on = Some(StandingWait { on: on.to_string(), since });
-            }
-            None => {
-                let now = self.host.now()?;
-                self.state.turns[i].end_wait(now)?;
-            }
+        let now = self.host.now()?;
+        if let Some(turn) = self.state.turns.under_way_mut(file) {
+            turn.wait(waiting, now)?;
         }
         self.save()
     }
@@ -585,11 +569,6 @@ impl Workflow<'_> {
         )))
     }
 
-    /// The index in RunState.turns of the record of the turn under way that writes file; None when there is none.
-    pub(super) fn open_turn(&self, file: &str) -> Option<usize> {
-        self.state.turns.iter().position(|t| t.file == file && t.under_way())
-    }
-
     /// An open record of the current phase's turn that writes file: the current step's, or with no step of the phase,
     /// a quality analysis, which runs no agent. started is None when the turn's start is not known.
     pub(super) fn turn_record(&self, role: &str, file: &str, started: Option<i64>) -> TurnRecord {
@@ -637,38 +616,27 @@ impl Workflow<'_> {
     /// written that soon after a start read at the turn of a second is stamped in the second before.
     pub(super) fn end_turn(&mut self, role: &str, path: &str) -> Outcome<()> {
         let file = file_name(path);
-        let i = match self.open_turn(file) {
-            Some(i) => i,
+        let (started, ran_agent) = match self.state.turns.under_way(file) {
+            Some(turn) => (turn.start()?, turn.harness.is_some()),
             // Closed already, by an orchestrator that stopped before the run moved on.
             None if self.state.turns.iter().any(|t| t.file == file) => return Ok(()),
             None => {
                 let record = self.turn_record(role, file, None);
-                self.state.turns.push(record);
-                self.state.turns.len() - 1
+                let ran_agent = record.harness.is_some();
+                self.state.turns.open(record);
+                (None, ran_agent)
             }
         };
-        let session = self.state.agents.get(role).and_then(|a| a.session.clone());
-        let record = &mut self.state.turns[i];
-        if record.session != session {
-            record.session = None;
-        }
-        let started = record
-            .started_at
-            .as_deref()
-            .map(epoch_seconds)
-            .transpose()
-            .map_err(|e| OrchestratorError(format!("the turn that wrote {file} started at no time: {e}")))?;
         let mtime = self.host.mtime(path)?;
         let ended = started.map_or(mtime, |started| mtime.max(started));
         let waited = match started {
-            Some(started) if self.state.turns[i].harness.is_some() => self.waited_seconds(role, started, ended),
+            Some(started) if ran_agent => self.waited_seconds(role, started, ended),
             _ => None,
         };
-        let record = &mut self.state.turns[i];
-        record.end_wait(ended)?;
-        record.ended_at = Some(iso_utc(ended));
-        record.seconds = started.map(|started| ended - started);
-        record.waited_seconds = waited;
+        let session = self.state.agents.get(role).and_then(|a| a.session.clone());
+        if let Some(turn) = self.state.turns.under_way_mut(file) {
+            turn.end(ended, session.as_deref(), waited)?;
+        }
         self.save()
     }
 

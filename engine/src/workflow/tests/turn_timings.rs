@@ -126,7 +126,7 @@ fn the_end_is_the_files_mtime_even_when_no_orchestrator_watched() {
 fn a_restarted_agent_keeps_its_turns_record() {
     let mut state = saved_run("build", 2, FULL);
     state.prompted = Some("build-2.md".into());
-    state.turns = vec![record("build", "build-2.md", Some(-1000), None).with("round", 2).map()];
+    state.turns = vec![record("build", "build-2.md", Some(-1000), None).with("round", 2).map()].into();
     let script = vec![("build", vec![taking(50, build_turn(2))]), ("review", vec![review_turn(2, APPROVE)])];
     let f = Fixture::resume(Rc::new(FakeHost::default()), state, script, &["review"], &[]);
     let mut wf = f.workflow(f.as_saved());
@@ -142,7 +142,7 @@ fn a_record_closed_before_the_run_moved_on_is_not_recorded_again() {
     let closed = record("build", "build-1.md", Some(-100), Some(-50));
     let mut state = saved_run("build", 1, &["spec", "build"]);
     state.prompted = Some("build-1.md".into());
-    state.turns = vec![closed.map()];
+    state.turns = vec![closed.map()].into();
     let f =
         Fixture::resume(Rc::new(FakeHost::default()), state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.put(&f.state.build_path(1), "report");
@@ -537,11 +537,11 @@ fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
         wf.agents = &acp;
     }
     let record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH));
-    wf.state.turns.push(record);
+    wf.state.turns.open(record);
 
     wf.end_turn("build", &path).expect("the turn closes");
 
-    wf.state.turns.pop().unwrap()
+    wf.state.turns.last().cloned().unwrap()
 }
 
 #[test]
@@ -565,7 +565,8 @@ fn a_turn_that_changed_sessions_has_unknown_tokens() {
     state.turns = vec![record("build", "build-1.md", Some(-100), None)
         .with("session", "s-old")
         .with("tokens", Value::Null)
-        .map()];
+        .map()]
+    .into();
     let f = Fixture::resume(
         Rc::new(FakeHost::default()),
         state,
@@ -620,7 +621,7 @@ fn quality_rounds_and_answers_have_records_of_their_own() {
         assert_eq!((&t.harness, &t.model, t.human_paced), (&None, &None, false));
     }
     let seconds = |at: &Option<String>| crate::timestamp::epoch_seconds(at.as_deref().unwrap()).unwrap();
-    for t in &turns {
+    for t in turns.iter() {
         assert!(seconds(&t.started_at) <= seconds(&t.ended_at));
         assert_eq!(t.seconds, Some(seconds(&t.ended_at) - seconds(&t.started_at)));
     }
@@ -638,7 +639,8 @@ fn a_resumed_analysis_keeps_its_start() {
     state.turns = vec![record("quality", "quality-1-1.md", Some(-500), None)
         .with("quality_round", 1)
         .with("agent", Value::Null)
-        .map()];
+        .map()]
+    .into();
     let f = Fixture::resume_gated(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[]);
     let mut wf = f.workflow(f.as_saved_gated());
 

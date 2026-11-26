@@ -345,7 +345,7 @@ fn a_failed_preflight_refuses_before_any_turn() {
 fn off_in_quality_drops_the_analysis_and_goes_to_the_reviewer() {
     let mut state = gated_pr_run("quality", 2);
     let analysis = record(QUALITY, "quality-1-2.md", Some(0), None).with("quality_round", 2).with("agent", Value::Null);
-    state.turns = vec![analysis.map()];
+    state.turns = vec![analysis.map()].into();
     let host = pr_host();
     turn_off(&mut state, &DEFAULT_WORKFLOW, &host).expect("the gate turns off");
 
