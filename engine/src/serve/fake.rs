@@ -4,17 +4,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::constants::{METRICS_FILE, RUNS_DIR, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Workspaces};
-use crate::host::{Exec, ExecError, Host, RunFile, RunFileText};
+use crate::host::fake::memory_runs;
+use crate::host::{Exec, ExecError, Host, RunFile, RunFileText, RunScope};
 use crate::serve::Reached;
 use crate::state::SavedRun;
 
-/// A Host whose files are `files`, whose run_states_inside and run_state_inside read the state.json of each run among
-/// them that names the run its directory is named for, whose
-/// run_files_inside lists those under a run directory by their `mtimes`, as the real Host's does, and which records
-/// the path of every read, read_inside's included, in `reads`. It is this machine's, runs no command, and none of its
+/// A Host whose files are `files`, whose saved runs are those files as the real Host would give them
+/// (host/fake/memory_runs.rs), its run files listed by their `mtimes`, and which records the path of every read,
+/// read_inside's included, in `reads`. It is this machine's, runs no command, and none of its
 /// files is a link, so every one stays inside its run directory.
 #[derive(Default)]
 pub struct ServeHost {
@@ -49,32 +48,15 @@ impl ServeHost {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// The runs under the project at cwd as run_states_inside reads them, only the one named only when given, each
-    /// lacking an ending file when `files` has no summary.md or metrics.json in its directory; fails with
-    /// run_states_inside_error while it is set.
+    /// The runs under the project at cwd as run_states_inside reads them, only the one named only when given; fails
+    /// with run_states_inside_error while it is set.
     fn runs_inside(&self, cwd: &str, only: Option<&str>) -> Result<Vec<SavedRun>, OrchestratorError> {
         let s = self.state();
         if let Some(e) = &s.run_states_inside_error {
             return Err(OrchestratorError(e.clone()));
         }
-        let runs = format!("{cwd}/{RUNS_DIR}/");
-        let mut states = vec![];
-        for (path, text) in &s.files {
-            let Some((dir, "state.json")) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) else {
-                continue;
-            };
-            if only.is_some_and(|only| only != dir) {
-                continue;
-            }
-            let path = format!("{runs}{dir}");
-            let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !s.files.contains_key(&format!("{path}/{f}")));
-            let run = SavedRun::read(s.ages.get(dir).copied().unwrap_or(0), &path, text.as_bytes())
-                .lacking_ending_file(lacks);
-            if run.shown().run_id == dir {
-                states.push(run);
-            }
-        }
-        Ok(states)
+        let age = |dir: &str| s.ages.get(dir).copied().unwrap_or(0);
+        Ok(memory_runs::run_states(&s.files, age, cwd, RunScope::Inside, only))
     }
 }
 
@@ -106,26 +88,13 @@ impl Host for ServeHost {
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        Ok(self
-            .read(&format!("{run_dir}/{name}"))?
-            .map_or(RunFileText::Missing, |text| RunFileText::Text(text.into_bytes())))
+        memory_runs::read_inside(self, run_dir, name)
     }
 
     fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
         let mut s = self.state();
         s.run_files_inside_calls += 1;
-        let mut files: Vec<RunFile> = s
-            .files
-            .iter()
-            .filter(|(p, _)| p.starts_with(&format!("{run_dir}/")) && **p != format!("{run_dir}/state.json"))
-            .map(|(p, text)| RunFile {
-                path: p.clone(),
-                mtime: s.mtimes.get(p).copied().unwrap_or(0),
-                size: text.len() as u64,
-            })
-            .collect();
-        files.sort_by(|a, b| (a.mtime, &a.path).cmp(&(b.mtime, &b.path)));
-        Ok(files)
+        Ok(memory_runs::run_files(&s.files, |path| s.mtimes.get(path).copied().unwrap_or(0), run_dir))
     }
 }
 

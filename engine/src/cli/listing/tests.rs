@@ -889,8 +889,9 @@ fn every_agent_with_its_kind_and_pane() {
 #[test]
 fn files_oldest_first() {
     let cli = show_host(&[show_state(&[])]);
-    for name in ["spec.md", "build-1.md", "review-1.md"] {
+    for (mtime, name) in [(1, "spec.md"), (2, "build-1.md"), (3, "review-1.md")] {
         put(&cli, name, "x");
+        cli.f.host.state().mtimes.insert(format!("{SHOW_DIR}/{name}"), mtime);
     }
     let out = show(&cli, "a1b2c3").1;
     assert!(
