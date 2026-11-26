@@ -23,9 +23,9 @@ serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Under an AppImage run without FUSE, the CLI asks for SIGTERM when its parent, the AppImage's runtime, dies
-# (Cli::run), through nix's safe API, as the engine uses it. Already in Cargo.lock through the engine, so it adds no
-# crate (GitHub issue #240).
-nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+# (Cli::run), and the window tells whether it runs from the AppImage's FUSE mount (on_fuse), through nix's safe API,
+# as the engine uses it. Already in Cargo.lock through the engine, so it adds no crate (GitHub issue #240).
+nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal"] }
 
 [dev-dependencies]
 # The tests' scratch directories, removed when dropped. Approved by the user for ticket 48, 2026-11-13.

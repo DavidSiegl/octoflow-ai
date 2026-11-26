@@ -74,7 +74,8 @@ pub struct Reached {
 /// Errors: the project cannot be reached. [`project_host`] is the real one.
 pub type Connect = dyn Fn(&str, &Interrupt) -> Result<Reached, OrchestratorError> + Send + Sync;
 
-/// The program's `serve`: start a RunServer that also answers origins, its setup marker and workflows in config, print {"url", "token"} as one JSON line on
+/// The program's `serve`: start a RunServer that also answers origins, its setup marker and workflows in config, its
+/// runs started by run_program (None for its own; RunServer::start), print {"url", "token"} as one JSON line on
 /// standard output, and serve until SIGINT or SIGTERM; returns 0 then, the server stopped. Returns EXIT_ERROR, with
 /// one line on standard error, when no port can be bound, or when the line cannot be printed, as when whoever
 /// started serve has stopped reading its standard output: nobody could reach the server then. SIGHUP keeps its
@@ -84,13 +85,13 @@ pub type Connect = dyn Fn(&str, &Interrupt) -> Result<Reached, OrchestratorError
 /// instead of it: SIGINT and SIGTERM are blocked in every thread and waited for here, also when the process started
 /// with one ignored, which then stops serve too (Linux delivers a blocked signal that
 /// is ignored to sigwait; a BSD kernel, macOS's, discards it, so there serve does not stop at an ignored one).
-pub fn serve_command(origins: &[String], config: &ConfigDir) -> i32 {
+pub fn serve_command(origins: &[String], run_program: Option<String>, config: &ConfigDir) -> i32 {
     let signals: SigSet = [Signal::SIGINT, Signal::SIGTERM].into_iter().collect();
     if let Err(e) = signals.thread_block() {
         eprintln!("error: cannot wait for SIGINT and SIGTERM: {e}");
         return EXIT_ERROR;
     }
-    let started = RunServer::start(origins, Box::new(project_host), Setup::of(config), config.clone());
+    let started = RunServer::start(origins, run_program, Box::new(project_host), Setup::of(config), config.clone());
     serve(started, &mut io::stdout(), &mut io::stderr(), || signals.wait().map(drop).map_err(io::Error::from))
 }
 
@@ -298,20 +299,32 @@ struct Shared {
     config: ConfigDir,
     /// How POST /run waits for the run it starts.
     start_wait: StartWait,
+    /// The program POST /run and POST /resume start their runs by; None for serve's own (serve_program).
+    run_program: Option<String>,
 }
 
 impl RunServer {
     /// Bind a free port of 127.0.0.1 and start answering on it, also requests from origins (the desktop app's webview,
     /// such as tauri://localhost), each project reached by connect, its setup checked and marked by setup, the
-    /// workflows a run can be started with read from config. Errors: no port can be bound, or no token made from the
-    /// system's random bytes, or no thread started.
-    pub fn start(origins: &[String], connect: Box<Connect>, setup: Setup, config: ConfigDir) -> io::Result<RunServer> {
-        RunServer::start_polling(origins, connect, setup, config, SERVE_POLL, START_WAIT)
+    /// workflows a run can be started with read from config. Its runs and resumes start by run_program, a program
+    /// that takes the CLI's `run` and `resume` as serve's own does, which must outlive serve; None for serve's own.
+    /// The desktop app gives its AppImage file while it runs from the AppImage's mount, which ends with the app,
+    /// taking serve's program with it. Errors: no port can be bound, or no token made from the system's random
+    /// bytes, or no thread started.
+    pub fn start(
+        origins: &[String],
+        run_program: Option<String>,
+        connect: Box<Connect>,
+        setup: Setup,
+        config: ConfigDir,
+    ) -> io::Result<RunServer> {
+        RunServer::start_polling(origins, run_program, connect, setup, config, SERVE_POLL, START_WAIT)
     }
 
     /// As start, the event streams polling every poll, and POST /run waiting as start_wait says.
     pub(crate) fn start_polling(
         origins: &[String],
+        run_program: Option<String>,
         connect: Box<Connect>,
         setup: Setup,
         config: ConfigDir,
@@ -336,6 +349,7 @@ impl RunServer {
             poll,
             config,
             start_wait,
+            run_program,
         });
         let listening = Arc::new(Mutex::new(Some(Arc::new(on(&listener)?))));
         let (dispatched, to) = (Arc::clone(&listening), Arc::clone(&shared));
@@ -1054,10 +1068,10 @@ fn run_closed(run: &RunClosed) -> Value {
     ])
 }
 
-/// The answer to POST /run once its body is run and its project project: the run started, by this program, as a new
-/// run id, and waited for.
+/// The answer to POST /run once its body is run and its project project: the run started, by run_program's program, as
+/// a new run id, and waited for.
 fn start_answer(shared: &Shared, project: &ProjectRuns, run: &RunRequest) -> Answer {
-    let program = match run_program() {
+    let program = match run_program(shared) {
         Ok(path) => path,
         Err(why) => return (500, error(&why)),
     };
@@ -1091,7 +1105,7 @@ fn post_resume(shared: &Shared, request: Request, query: &HashMap<String, String
 
 /// POST /resume's answer, once its project is reached, for the run run_id.
 fn resume_answer(shared: &Shared, project: &ProjectRuns, run_id: &str) -> Answer {
-    let program = match run_program() {
+    let program = match run_program(shared) {
         Ok(path) => path,
         Err(why) => return (500, error(&why)),
     };
@@ -1111,16 +1125,17 @@ fn resume_answer(shared: &Shared, project: &ProjectRuns, run_id: &str) -> Answer
     }
 }
 
-/// The program a run, or its resume, is started by: serve's own (serve_program), but under an AppImage the AppImage
-/// file. Errors: serve_program's.
-fn run_program() -> Result<String, String> {
-    // Under an AppImage serve's program is in its mount, which ends with the app; the AppImage file itself starts
-    // the same program (ui/src-tauri/src/lib.rs's CLI dispatch) for a run, which outlives the app.
-    let appimage = std::env::var("APPIMAGE").ok().filter(|p| !p.is_empty());
-    appimage.map_or_else(serve_program, Ok)
+/// The program a run, or its resume, is started by: the one shared was given (RunServer::start) while it is there,
+/// else serve's own (serve_program). Errors: serve_program's.
+fn run_program(shared: &Shared) -> Result<String, String> {
+    // The app's AppImage file can be moved or deleted while the app runs, as an AppImage integrator moves it; the app's
+    // mount still holds serve's program then, which beats starting no run at all.
+    let given = shared.run_program.as_ref().filter(|path| std::path::Path::new(path).exists());
+    given.cloned().map_or_else(serve_program, Ok)
 }
 
-/// The path of serve's own program, which POST /run starts its runs by. Errors: it cannot be told, or is not UTF-8.
+/// The path of serve's own program, which POST /run and POST /resume start their runs by unless serve was given
+/// another (run_program). Errors: it cannot be told, or is not UTF-8.
 fn serve_program() -> Result<String, String> {
     let path = std::env::current_exe().map_err(|e| format!("cannot tell serve's program: {}", os_error(&e, None)))?;
     let path = path.into_os_string().into_string().map_err(|p| format!("serve's program {p:?} is not UTF-8"))?;
