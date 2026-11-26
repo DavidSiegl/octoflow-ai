@@ -13,8 +13,8 @@ pub(super) fn other_dir() -> String {
     format!("/proj/.octoflow-ai/runs/{OTHER_ID}")
 }
 
-/// A FakeHost whose /proj holds run OTHER_ID, which this host's ("here") orchestrator pid 3354482 last saved age seconds ago,
-/// its state.json's fields overridden by those of saved.
+/// A FakeHost whose /proj holds run OTHER_ID, which this host's ("here") orchestrator pid 3354482 last saved age
+/// seconds ago, its state.json's fields overridden by those of saved.
 pub(super) fn host_with_other_run(age: u64, saved: &[(&str, Value)]) -> Rc<FakeHost> {
     let host = FakeHost::default();
     let mut other = RunState::new(OTHER_ID, "another task", "/proj");
@@ -41,9 +41,8 @@ fn assert_refused(f: &Fixture, settings: RunSettings, beat: &str) {
     let other = f.host.state().files.get(&other_path).cloned();
     let message = failure(f.workflow(settings).run());
     let expected = format!(
-        "run {OTHER_ID} is running in /proj (pid 3354482 on {}, beat {beat} ago); one run at a time per checkout: \
-         wait for it, stop it, or use another clone",
-        "here"
+        "run {OTHER_ID} is running in /proj (pid 3354482 on here, beat {beat} ago); one run at a time per checkout: \
+         wait for it, stop it, or use another clone"
     );
     assert_eq!(message, expected);
     let saved = f.saved();

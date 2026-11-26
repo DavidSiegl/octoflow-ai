@@ -131,7 +131,8 @@ pub fn pid_alive(pid: i64) -> bool {
     }
 }
 
-/// This machine's name, as socket.gethostname gives it: what an owner record's host holds, and ThisMachine's name. "localhost" when the system cannot say.
+/// This machine's name, as socket.gethostname gives it: what an owner record's host holds, and ThisMachine's name.
+/// "localhost" when the system cannot say.
 pub fn local_host() -> String {
     nix::unistd::gethostname().map_or_else(|_| "localhost".to_string(), |name| name.to_string_lossy().into_owned())
 }

@@ -12,7 +12,7 @@ use super::{finish, hint_commands, prune, record_in_state, resume_command, Conne
 use crate::constants::{EXIT_ERROR, EXIT_WAITING, RUNS_DIR, SUCCEEDED};
 use crate::error::OrchestratorError;
 use crate::prompts::load_prompts;
-use crate::runs::{Health, RUNNING};
+use crate::runs::Health;
 use crate::state::{RunState, SavedRun};
 use crate::workflow::Stopped;
 
@@ -654,8 +654,11 @@ fn unfinished_run(
     let health = run.health(world.with.machine);
     // A run still running is waited for whatever release drives it, since the remedy for a state this release cannot
     // read is removing its directory; resume refuses any other such run, and the problem says what to do instead.
-    if let Some(Health::Running(why)) = &health {
-        return (format!("is {RUNNING} ({why})"), format!("wait for it to finish, or {start_over}"));
+    if let Some(running @ Health::Running(_)) = &health {
+        return (
+            format!("is {} ({})", running.name(), running.why()),
+            format!("wait for it to finish, or {start_over}"),
+        );
     }
     // Starting over would do a finished run's work twice, so its spec's header is the human's to set.
     if let Some(problem) = run.problem().filter(|_| s.done()) {

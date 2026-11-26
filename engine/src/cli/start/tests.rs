@@ -16,7 +16,6 @@ use crate::host::Host;
 use crate::json::object;
 use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
-use crate::runs::local_host;
 use crate::state::Backend;
 use crate::test_support::{herdr_server, quick, read_saved, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
@@ -211,22 +210,19 @@ fn a_run_whose_closed_is_empty_is_resumed() {
 
 // -- resume --force against another run of the checkout ------------------------------------------------------------
 
-/// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this host. The fixture of
+/// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this machine ("here", the
+/// Fixture's). The fixture of
 /// the state resumable_state gives, its pid_alive taking every pid for alive.
 fn force_resume(host: Rc<FakeHost>) -> Fixture {
     let mut saved = saved_run("review", 1, &["spec", "build", "review"]);
-    let owner = [("host", Value::from(local_host())), ("pid", Value::from(4242)), ("started_at", Value::from("x"))];
+    let owner = [("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("x"))];
     saved.owner = Some(object(owner));
     host.state().files.insert(format!("{}/state.json", saved.dir()), saved.to_text());
     host.state().ages.insert(saved.run_id.clone(), 30);
     let runs = host.run_states("/proj").unwrap();
-    let (state, _) = resumable_state(
-        &runs,
-        &resume_args(&["a1b2c3", "--force"]),
-        "/proj",
-        ThisMachine::new(&local_host(), &|_| true),
-    )
-    .expect("--force resumes a run that looks alive");
+    let (state, _) =
+        resumable_state(&runs, &resume_args(&["a1b2c3", "--force"]), "/proj", ThisMachine::new("here", &|_| true))
+            .expect("--force resumes a run that looks alive");
     let mut f = Fixture::resume(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.pid_alive = Box::new(|_| true);
     f
@@ -240,14 +236,14 @@ fn force_takes_over_the_run_itself() {
 
 #[test]
 fn force_does_not_override_another_live_run() {
-    // The checkout's other run, saved 16 s ago by a live orchestrator of this host.
+    // The checkout's other run, saved 16 s ago by a live orchestrator of this machine ("here", the Fixture's).
     let other_id = "20261009-220151-537935";
     let host = Rc::new(FakeHost::default());
     let mut other = RunState::new(other_id, "another task", "/proj");
     other.phase = "build".into();
     other.round = 1;
     let owner = [
-        ("host", Value::from(local_host())),
+        ("host", Value::from("here")),
         ("pid", Value::from(3_354_482)),
         ("started_at", Value::from("2026-10-09T22:01:51+00:00")),
     ];
@@ -258,9 +254,8 @@ fn force_does_not_override_another_live_run() {
     let f = force_resume(host);
     let e = f.workflow(f.as_saved()).run().unwrap_err();
     let expected = format!(
-        "run {other_id} is running in /proj (pid 3354482 on {}, beat 16s ago); one run at a time per checkout: wait \
-         for it, stop it, or use another clone",
-        local_host()
+        "run {other_id} is running in /proj (pid 3354482 on here, beat 16s ago); one run at a time per checkout: \
+         wait for it, stop it, or use another clone"
     );
     assert_eq!(e.to_string(), expected);
     let saved = f.saved();
