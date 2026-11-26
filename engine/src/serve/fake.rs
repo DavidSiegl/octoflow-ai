@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::error::OrchestratorError;
 use crate::herdr::{AgentAddress, AgentConsole, HerdrError, HerdrServer, Workspaces};
-use crate::host::fake::saved_runs;
+use crate::host::fake::memory_runs;
 use crate::host::{Exec, ExecError, Host, RunFile, RunFileText, RunScope};
 use crate::serve::Reached;
 use crate::state::SavedRun;
 
 /// A Host whose files are `files`, whose saved runs are those files as the real Host would give them
-/// (host/fake/saved_runs.rs), its run files listed by their `mtimes`, and which records the path of every read,
+/// (host/fake/memory_runs.rs), its run files listed by their `mtimes`, and which records the path of every read,
 /// read_inside's included, in `reads`. It is this machine's, runs no command, and none of its
 /// files is a link, so every one stays inside its run directory.
 #[derive(Default)]
@@ -56,7 +56,7 @@ impl ServeHost {
             return Err(OrchestratorError(e.clone()));
         }
         let age = |dir: &str| s.ages.get(dir).copied().unwrap_or(0);
-        Ok(saved_runs::run_states(&s.files, age, cwd, RunScope::Inside, only))
+        Ok(memory_runs::run_states(&s.files, age, cwd, RunScope::Inside, only))
     }
 }
 
@@ -88,13 +88,13 @@ impl Host for ServeHost {
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        saved_runs::read_inside(self, run_dir, name)
+        memory_runs::read_inside(self, run_dir, name)
     }
 
     fn run_files_inside(&self, run_dir: &str) -> Result<Vec<RunFile>, OrchestratorError> {
         let mut s = self.state();
         s.run_files_inside_calls += 1;
-        Ok(saved_runs::run_files(&s.files, |path| s.mtimes.get(path).copied().unwrap_or(0), run_dir))
+        Ok(memory_runs::run_files(&s.files, |path| s.mtimes.get(path).copied().unwrap_or(0), run_dir))
     }
 }
 

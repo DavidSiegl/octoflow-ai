@@ -35,7 +35,7 @@ pub(crate) mod fake;
 /// How long a command may take when its caller names no other time, in seconds.
 pub const DEFAULT_TIMEOUT: u64 = 60;
 /// The status the scripts of read, read_inside and session_log exit with when the file they read is not there, and
-/// run_dir_resolved's when the run directory is not.
+/// saved_runs::run_dir_resolved's when the run directory is not.
 pub const MISSING_FILE_STATUS: i32 = 3;
 /// gh's exit status when it is not logged in, and sh's when gh is not installed: no gh call can succeed then.
 pub const GH_UNUSABLE_STATUS: [i32; 2] = [4, 127];

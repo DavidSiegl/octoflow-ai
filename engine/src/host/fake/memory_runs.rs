@@ -1,7 +1,7 @@
 //! A project's saved runs played from files held in memory, as the fakes keep them: one copy, for FakeHost and serve's
-//! ServeHost alike, of what the real Host's run-store methods (host/saved_runs.rs) give. Files in memory are never
-//! links, so nothing leads out of a run directory, and serve's view leaves out only a run whose state.json names
-//! another run.
+//! ServeHost alike, of what the real Host's run-store methods (host/saved_runs.rs) give; FakeHost's deletion of a run,
+//! which ServeHost does not play, stays its own. Files in memory are never links, so nothing leads out of a run
+//! directory, and serve's view leaves out only a run whose state.json names another run.
 
 use std::collections::BTreeMap;
 
@@ -9,6 +9,7 @@ use crate::constants::{METRICS_FILE, RUNS_DIR, SUMMARY_FILE};
 use crate::error::OrchestratorError;
 use crate::host::{Host, RunFile, RunFileText, RunScope};
 use crate::state::SavedRun;
+use serde_json::Value;
 
 /// The runs of the project at cwd that files, (path, text) pairs, hold a state.json for, as Host::run_states gives them
 /// (scope Every) or Host::run_states_inside does (scope Inside), in the order of their directories' names. only, when
@@ -35,10 +36,31 @@ pub(crate) fn run_states<'a>(
         let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !files.contains_key(format!("{run_dir}/{f}").as_str()));
         let run = SavedRun::read(age(dir), &run_dir, text.as_bytes()).lacking_ending_file(lacks);
         if scope == RunScope::Every || run.shown().run_id == dir {
-            states.push(run);
+            states.push((dir, run));
         }
     }
-    states
+    // By path, "runs/a-1/state.json" comes before "runs/a/state.json"; the real Host's glob gives a before a-1.
+    states.sort_by_key(|(dir, _)| *dir);
+    states.into_iter().map(|(_, run)| run).collect()
+}
+
+/// The metrics.json of each run of the project at cwd among files, (path, text) pairs, as Host::run_metrics reads
+/// those of the runs still there, before it adds the archive's. Errors: one that is not JSON.
+pub(crate) fn live_metrics<'a>(
+    files: impl IntoIterator<Item = (&'a String, &'a String)>,
+    cwd: &str,
+) -> Result<Vec<Value>, OrchestratorError> {
+    let runs = format!("{cwd}/{RUNS_DIR}/");
+    files
+        .into_iter()
+        .filter(|(path, _)| {
+            path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')).is_some_and(|(_, name)| name == METRICS_FILE)
+        })
+        .map(|(_, text)| {
+            serde_json::from_str::<Value>(text)
+                .map_err(|e| OrchestratorError(format!("corrupt {METRICS_FILE} under {cwd}/{RUNS_DIR}: {e}")))
+        })
+        .collect()
 }
 
 /// The files directly in run_dir among files, (path, text) pairs, as Host::run_files lists them: state.json and

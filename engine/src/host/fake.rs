@@ -19,7 +19,7 @@ use crate::quality::Leak;
 use crate::state::SavedRun;
 use serde_json::Value;
 
-pub(crate) mod saved_runs;
+pub(crate) mod memory_runs;
 
 /// What a FakeHost's clock reads when the workflow's clock reads 0: far from it, so a time taken from the wrong clock
 /// shows.
@@ -391,6 +391,29 @@ impl FakeHost {
         let mut s = self.state();
         s.files.shift_remove(path);
         s.changed.insert(path.to_string());
+    }
+
+    /// The runs of the project at cwd as run_states gives them, or, with only, as run_state gives the run of that
+    /// directory: the test's own (FakeState::run_states_with) when its hook answers, only's run among them found by the
+    /// run id its state names; else the real host's when FakeState::processes is set; else those `files` holds.
+    fn runs(&self, cwd: &str, only: Option<&str>) -> Result<Vec<SavedRun>, OrchestratorError> {
+        let hook = self.state().run_states_with.take();
+        if let Some(mut hook) = hook {
+            let answer = hook(cwd);
+            self.state().run_states_with = Some(hook);
+            if let Some(answer) = answer {
+                return Ok(answer?.into_iter().filter(|run| only.is_none_or(|id| run.shown().run_id == id)).collect());
+            }
+        }
+        let s = self.state();
+        match (&s.processes, only) {
+            (Some(real), None) => real.run_states(cwd),
+            (Some(real), Some(run_id)) => Ok(real.run_state(cwd, run_id)?.into_iter().collect()),
+            (None, _) => {
+                let age = |dir: &str| s.ages.get(dir).copied().unwrap_or(0);
+                Ok(memory_runs::run_states(&s.files, age, cwd, RunScope::Every, only))
+            }
+        }
     }
 }
 
@@ -768,7 +791,7 @@ impl Host for FakeHost {
     }
 
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        saved_runs::read_inside(self, run_dir, name)
+        memory_runs::read_inside(self, run_dir, name)
     }
 
     /// write of the file's text in `files` with text at its end, as one write.
@@ -1114,16 +1137,7 @@ impl Host for FakeHost {
     }
 
     fn run_states(&self, cwd: &str) -> Result<Vec<SavedRun>, OrchestratorError> {
-        let hook = self.state().run_states_with.take();
-        if let Some(mut hook) = hook {
-            let answer = hook(cwd);
-            self.state().run_states_with = Some(hook);
-            if let Some(answer) = answer {
-                return answer;
-            }
-        }
-        let s = self.state();
-        Ok(saved_runs::run_states(&s.files, |dir| s.ages.get(dir).copied().unwrap_or(0), cwd, RunScope::Every, None))
+        self.runs(cwd, None)
     }
 
     /// The real host's records when FakeState::processes is set; else the run directories' metrics.json in `files`,
@@ -1133,20 +1147,7 @@ impl Host for FakeHost {
         if let Some(real) = real {
             return real.run_metrics(cwd);
         }
-        let runs = format!("{cwd}/{}/", crate::constants::RUNS_DIR);
-        let live = self
-            .state()
-            .files
-            .iter()
-            .filter(|(path, _)| {
-                path.strip_prefix(&runs)
-                    .and_then(|rest| rest.split_once('/'))
-                    .is_some_and(|(_, name)| name == "metrics.json")
-            })
-            .map(|(path, text)| {
-                serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let live = memory_runs::live_metrics(&self.state().files, cwd)?;
         super::saved_runs::with_archived_metrics(self, cwd, live)
     }
 
@@ -1172,7 +1173,7 @@ impl Host for FakeHost {
     }
 
     fn run_state(&self, cwd: &str, run_id: &str) -> Result<Option<SavedRun>, OrchestratorError> {
-        Ok(self.run_states(cwd)?.into_iter().find(|run| run.shown().run_id == run_id))
+        Ok(self.runs(cwd, Some(run_id))?.into_iter().next())
     }
 
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real
@@ -1182,7 +1183,7 @@ impl Host for FakeHost {
         if let Some(real) = &s.processes {
             return real.run_files(run_dir);
         }
-        Ok(saved_runs::run_files(&s.files, |path| s.mtimes.get(path).copied().unwrap_or(0), run_dir))
+        Ok(memory_runs::run_files(&s.files, |path| s.mtimes.get(path).copied().unwrap_or(0), run_dir))
     }
 
     fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {
