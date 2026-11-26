@@ -492,7 +492,7 @@ impl Workflow<'_> {
     }
 
     /// Bring the record of the turn under way that writes file up to what its role waits on now, None for nothing,
-    /// at the host's now (TurnRecord::wait), and save it if that changed it; the host's time is read only then. A
+    /// at the host's now (TurnRecord::wait), and save it if that changed it. A
     /// file with no turn under way records nothing. Errors: the host's time cannot be read, TurnRecord::wait's, or the
     /// state cannot be saved.
     fn record_wait(&mut self, file: &str, waiting: Option<&str>) -> Outcome<()> {
@@ -502,9 +502,9 @@ impl Workflow<'_> {
         if waiting == turn.waiting_on.as_ref().map(|w| w.on.as_str()) {
             return Ok(());
         }
-        let now = self.host.now()?;
+        let host = self.host;
         if let Some(turn) = self.state.turns.under_way_mut(file) {
-            turn.wait(waiting, now)?;
+            turn.wait(waiting, || host.now())?;
         }
         self.save()
     }

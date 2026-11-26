@@ -537,6 +537,7 @@ fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
         wf.agents = &acp;
     }
     let record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH));
+    assert!(wf.state.turns.is_empty(), "the fixture holds no turn the seeded one could meet");
     wf.state.turns.open(record);
 
     wf.end_turn("build", &path).expect("the turn closes");

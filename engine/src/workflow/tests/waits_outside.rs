@@ -241,6 +241,7 @@ fn a_resume_that_finds_the_wait_standing_waits_too() {
     });
     let mut wf = f.workflow(f.as_saved());
     let record = waiting_build_turn(&wf);
+    assert!(wf.state.turns.is_empty(), "the fixture holds no turn the seeded one could meet");
     wf.state.turns.open(record);
     assert_eq!(wf.run(), verdict(APPROVE));
     assert_eq!(waits_told(&f), 1);
@@ -289,6 +290,7 @@ fn a_wait_left_by_an_agent_that_exited_is_dropped_for_the_session_started_in_its
     f.clock.hook(|now| assert!(now < 20_000.0, "the turn did not time out"));
     let mut wf = f.workflow(f.as_saved());
     let record = waiting_build_turn(&wf);
+    assert!(wf.state.turns.is_empty(), "the fixture holds no turn the seeded one could meet");
     wf.state.turns.open(record);
     let message = failure(wf.run());
     assert!(message.starts_with(&format!("the Builder did not write {} within ", build_1())), "{message}");

@@ -256,13 +256,15 @@ fn run_with_unoffered_models() -> RunState {
         |asked: &str, taken: Option<&str>| Some(UnofferedModel { asked: asked.into(), taken: taken.map(String::from) });
     s.agents["review"].unoffered_model = unoffered("opus", Some("sonnet"));
     s.agents["build"].unoffered_model = unoffered("o3", None);
-    for t in s.turns.iter_mut() {
+    let mut turns = s.turns.to_vec();
+    for t in &mut turns {
         (t.model, t.unoffered_model) = match t.role.as_str() {
             "review" => (Some("sonnet".into()), Some("opus".into())),
             "build" => (None, Some("o3".into())),
             _ => (t.model.take(), None),
         };
     }
+    s.turns = turns.into();
     s
 }
 
@@ -283,7 +285,9 @@ fn the_metrics_name_the_model_a_role_ran_on_and_the_one_not_offered() {
     let mut s = run_with_unoffered_models();
     // An empty model, as an earlier engine saved for a role given one, is none, as in the roles.
     s.models.insert("spec".to_string(), String::new());
-    s.turns[0].model = Some(String::new());
+    let mut turns = s.turns.to_vec();
+    turns[0].model = Some(String::new());
+    s.turns = turns.into();
     let metrics = run_metrics(&s, 1_791_000_000 + 2100);
 
     assert_eq!(

@@ -582,14 +582,14 @@ fn under_way(step: &str, file: &str) -> TurnRecord {
 #[test]
 fn a_file_has_at_most_one_turn_under_way() {
     let mut turns = Turns::default();
-    assert!(turns.open(under_way("build", "build-1.md")));
-    assert!(!turns.open(TurnRecord { round: 2, ..under_way("build", "build-1.md") }));
-    assert_eq!(turns.under_way("build-1.md").map(|t| t.round), Some(1));
+    turns.open(under_way("build", "build-1.md"));
+    turns.open(TurnRecord { round: 2, ..under_way("build", "build-1.md") });
+    assert_eq!((turns.len(), turns.under_way("build-1.md").map(|t| t.round)), (1, Some(1)));
 
     turns.under_way_mut("build-1.md").unwrap().end(START + 60, Some("s1"), None).unwrap();
     assert!(turns.under_way("build-1.md").is_none());
-    assert!(turns.open(TurnRecord { round: 2, ..under_way("build", "build-1.md") }));
-    assert_eq!(turns.len(), 2);
+    turns.open(TurnRecord { round: 2, ..under_way("build", "build-1.md") });
+    assert_eq!((turns.len(), turns.under_way("build-1.md").map(|t| t.round)), (2, Some(2)));
 }
 
 #[test]
@@ -621,19 +621,20 @@ fn dropping_a_step_s_turns_under_way_keeps_its_ended_ones_and_other_steps() {
 #[test]
 fn a_wait_keeps_its_start_when_rewritten_and_adds_up_when_withdrawn() {
     let mut turn = TurnRecord { started_at: Some(iso_utc(START)), ..build_1_under_way() };
-    turn.wait(Some("CI"), START + 10).unwrap();
-    turn.wait(Some("CI, run 2"), START + 20).unwrap();
+    turn.wait(Some("CI"), || Ok(START + 10)).unwrap();
+    // A rewrite keeps the wait's start, so it asks no time.
+    turn.wait(Some("CI, run 2"), || panic!("a rewrite asked the time")).unwrap();
     assert_eq!(turn.waiting_on, Some(StandingWait { on: "CI, run 2".into(), since: iso_utc(START + 10) }));
 
-    turn.wait(None, START + 40).unwrap();
-    turn.wait(None, START + 50).unwrap();
+    turn.wait(None, || Ok(START + 40)).unwrap();
+    turn.wait(None, || panic!("no wait stands to end")).unwrap();
     assert_eq!((turn.outside_wait_seconds, &turn.waiting_on), (Some(30), &None));
 }
 
 #[test]
 fn an_ended_turn_lasts_from_its_start_and_forgets_a_session_it_did_not_end_in() {
     let mut turn = TurnRecord { started_at: Some(iso_utc(START)), ..build_1_under_way() };
-    turn.wait(Some("CI"), START + 100).unwrap();
+    turn.wait(Some("CI"), || Ok(START + 100)).unwrap();
 
     turn.end(START + 300, Some("s2"), Some(7)).unwrap();
 

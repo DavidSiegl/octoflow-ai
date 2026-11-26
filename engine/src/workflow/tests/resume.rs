@@ -684,7 +684,7 @@ fn stopped_after_saving_done() -> RunState {
 /// stopped_after_saving_done with its tokens counted, as its ending leaves it from then until its release.
 fn counted() -> RunState {
     let mut state = stopped_after_saving_done();
-    state.turns[0].tokens = Value::from(7);
+    state.turns.set_tokens([Value::from(7)]);
     state
 }
 
