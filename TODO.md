@@ -56,6 +56,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   clears `APPIMAGE` before serve starts, so a run outlives that serve's mount and can die by SIGBUS once it ends.
   Choosing the program in `Cli::run`, where `stop_with_appimage_runtime` already reads `APPIMAGE`, would cover the
   sidecar and the terminal alike.
+- **A pull request's new head waits for its superseded build.** Raised by cross-review 341 (nit 2):
+  `disableConcurrentBuilds()` (Jenkinsfile, `options`) serializes every branch and pull request job, so a push onto a
+  pull request whose build is running waits for that stale build before its own starts, delaying the green status
+  and auto-merge. `disableConcurrentBuilds(abortPrevious: env.BRANCH_NAME != 'main')` would abort a pull request's
+  stale build and keep main queueing; closed by that, once a Jenkins build shows `env` is set when `options` is read.
+- **A re-run of an older main build makes its lower release Latest.** Raised by cross-review 341: serializing main's
+  builds (todo 120) keeps releases in merge order, but a failed main build re-run after a later merge released still
+  makes its lower version Latest, since `gh release create` (Jenkinsfile, Release) passes no `--latest`. Closed by
+  passing `--latest=false` when a higher release exists, or by never re-running an old main build.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against

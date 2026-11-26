@@ -16,8 +16,8 @@
 # The Jenkinsfile's Release stage runs it from the repository's top level, giving GitHub what it prints as the
 # release's own words, which it puts before the notes it generates from the pull requests. A skipped version gets no
 # tag of its own: its commits were never built as a release, so there are no assets to give it. The highest release
-# counts, not the latest made, so that releases made out of order, when main's builds could still overlap (before the
-# Jenkinsfile's disableConcurrentBuilds), do not get a version's notes twice.
+# counts, not the latest made: a release can still be made below the highest one, by a failed main build re-run after
+# a later merge released, and must not then repeat the notes of the versions above it.
 set -eu
 
 [ $# -eq 1 ] || { echo "usage: release-notes.sh VERSION < TAGS" >&2; exit 2; }
