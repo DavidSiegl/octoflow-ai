@@ -5,7 +5,8 @@
 use super::{workspace_label, Agent, Direction, Herdr, HerdrError, Workspaces};
 use crate::agents::{Activity, AgentError, AgentLaunch, Agents, LaunchedModel, RunPlaces, Seen, Started, Waiting};
 use crate::error::OrchestratorError;
-use crate::harness::harness;
+use crate::harness::{harness, Usage};
+use crate::host::Host;
 use crate::human::Human;
 use crate::state::{AgentRecord, Backend, RunState};
 
@@ -145,6 +146,27 @@ impl<H: Herdr + ?Sized> Agents for H {
     fn settle(&self, _run: &RunState) {}
 
     fn cancel(&self, _run: &RunState) {}
+
+    fn session_usage(
+        &self,
+        _run: &RunState,
+        host: &dyn Host,
+        kind: &str,
+        session: &str,
+    ) -> Result<Option<Vec<Usage>>, OrchestratorError> {
+        let Some(log) = host.session_log(kind, session)? else { return Ok(None) };
+        Ok(Some(harness(kind)?.session_usage(&log)))
+    }
+
+    fn waited_seconds(
+        &self,
+        _run: &RunState,
+        _role: &str,
+        _from: i64,
+        _to: i64,
+    ) -> Result<Option<i64>, OrchestratorError> {
+        Ok(None)
+    }
 }
 
 impl<W: Workspaces + ?Sized> RunPlaces for W {

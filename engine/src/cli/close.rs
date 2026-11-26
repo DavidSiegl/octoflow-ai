@@ -286,19 +286,19 @@ pub struct RunStopped {
     pub failure: Option<String>,
 }
 
-/// Stop every desktop app run (Backend::Acp) of the project at cwd that world's scope reads as RUNNING, as the app's
-/// "Stop all" does, or with dry_run only say which: each is told to stop in turn (tell_stop), then each is waited for
-/// until it is released as interrupted (await_release), for at most STOP_WAIT from when it was told, so that the waits
-/// overlap rather than add up, and a run told late, after others' sockets were slow to answer, still gets all of it.
-/// A run of herdr's is left running: its human stops it in its pane. Returns the runs, in run id order, each with its
-/// failure, if any: one run that fails does not keep the others from stopping. Errors: the project's runs cannot be
-/// read.
+/// Stop every desktop app run (RunState::app_managed) of the project at cwd that world's scope reads as RUNNING, as
+/// the app's "Stop all" does, or with dry_run only say which: each is told to stop in turn (tell_stop), then each is
+/// waited for until it is released as interrupted (await_release), for at most STOP_WAIT from when it was told, so
+/// that the waits overlap rather than add up, and a run told late, after others' sockets were slow to answer, still
+/// gets all of it. A run of herdr's is left running: its human stops it in its pane. Returns the runs, in run id
+/// order, each with its failure, if any: one run that fails does not keep the others from stopping. Errors: the
+/// project's runs cannot be read.
 pub fn stop_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunStopped>, OrchestratorError> {
     let runs = world.scope.states(world.host, cwd)?;
     let mut running: Vec<&RunState> = runs
         .iter()
         .filter(|run| matches!(run.health(world.machine), Some(Health::Running(_))))
-        .filter_map(|run| run.state().ok().filter(|state| state.backend == Backend::Acp))
+        .filter_map(|run| run.state().ok().filter(|state| state.app_managed()))
         .collect();
     running.sort_by(|a, b| a.run_id.cmp(&b.run_id));
     let stopped = |state: &RunState, failure: Option<String>| RunStopped { run_id: state.run_id.clone(), failure };
@@ -434,8 +434,8 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
         return Ok(Decision::Refused(e));
     }
     let health = run.health(world.machine);
-    // Only the desktop app's runs can be stopped from here, through their socket; refuse_app_run passed it already.
-    let stop = matches!(&health, Some(Health::Running(_))) && state.backend == Backend::Acp;
+    // refuse_app_run passed an app-managed run already, which alone can be stopped from here.
+    let stop = matches!(&health, Some(Health::Running(_))) && state.app_managed();
     if let (Some(Health::Running(why)), false) = (&health, stop) {
         return Ok(Decision::Refused(OrchestratorError(format!(
             "run {} is still running ({why}); stop it before closing it",

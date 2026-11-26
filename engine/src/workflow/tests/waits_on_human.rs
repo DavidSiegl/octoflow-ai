@@ -6,7 +6,10 @@ use std::cell::RefCell;
 
 use super::*;
 use crate::agents::{AgentError, AgentLaunch, Agents, RunPlaces, Seen, Started, Waiting};
+use crate::error::OrchestratorError;
+use crate::harness::Usage;
 use crate::herdr::fake::FakeHerdr;
+use crate::host::Host;
 use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::workflow::{Collaborators, Workflow};
@@ -111,6 +114,18 @@ impl Agents for Awaited<'_> {
     fn cancel(&self, run: &RunState) {
         self.cancelled.borrow_mut().push(self.found(run));
         self.herdr.cancel(run)
+    }
+    fn session_usage(
+        &self,
+        run: &RunState,
+        host: &dyn Host,
+        kind: &str,
+        session: &str,
+    ) -> Result<Option<Vec<Usage>>, OrchestratorError> {
+        self.herdr.session_usage(run, host, kind, session)
+    }
+    fn waited_seconds(&self, run: &RunState, role: &str, from: i64, to: i64) -> Result<Option<i64>, OrchestratorError> {
+        self.herdr.waited_seconds(run, role, from, to)
     }
 }
 

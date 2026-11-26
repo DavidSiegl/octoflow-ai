@@ -2,7 +2,6 @@
 //! RunState.turns.
 
 use super::{How, Outcome, Stopped, Workflow};
-use crate::acp;
 use crate::agents::{Activity, AgentError, AgentLaunch, LaunchedModel, Seen, Waiting};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, HEARTBEAT_SECONDS, POLL_SECONDS, PROMPT_DELIVERY_SECONDS, STALL_SECONDS,
@@ -13,7 +12,7 @@ use crate::harness::harness;
 use crate::json::{object, Object, ValueExt};
 use crate::paths::{file_name, split_extension};
 use crate::prompts::Prompt;
-use crate::state::{AgentRecord, AgentStart, Backend, RunState, StandingWait, TurnRecord};
+use crate::state::{AgentRecord, AgentStart, RunState, StandingWait, TurnRecord};
 use crate::timestamp::{epoch_seconds, iso_utc};
 use serde_json::Value;
 
@@ -674,15 +673,12 @@ impl Workflow<'_> {
     }
 
     /// The role's agent's waits for a permission's answer from started to ended (since the epoch), as
-    /// TurnRecord::waited_seconds has them: None in a herdr run, and where the role's journal cannot be read, which
-    /// is logged.
+    /// Agents::waited_seconds gives them: None also where its record cannot be read, which is logged.
     fn waited_seconds(&self, role: &str, started: i64, ended: i64) -> Option<i64> {
-        if self.state.backend != Backend::Acp {
-            return None;
-        }
-        acp::waited_seconds(&self.state, role, started, ended)
-            .map_err(|e| self.human.log(&format!("[{role}] could not read its journal for the turn's waits: {e}")))
-            .ok()
+        self.agents.waited_seconds(&self.state, role, started, ended).unwrap_or_else(|e| {
+            self.human.log(&format!("[{role}] could not read its journal for the turn's waits: {e}"));
+            None
+        })
     }
 
     /// Make sure the role's agent is running, and say how: as `alive` finds it, else started again.

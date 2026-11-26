@@ -632,3 +632,19 @@ fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do(
         assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());
     }
 }
+
+#[test]
+fn resume_refuses_acp_for_a_run_whose_agents_run_in_herdr() {
+    // A done run still owned skips prepare, where the agents open, and ends with the agents --acp picks: over ACP, a
+    // herdr run's tokens would be read from a usage file it does not have.
+    let owner = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
+    let saved = saved_settings(&[("phase", Value::from("done")), ("owner", Value::Object(object(owner)))]);
+    let run = read_saved(HEARTBEAT_SECONDS + 1, &Value::Object(saved));
+    let dead = |_: i64| false;
+    let resumed = |argv: &[&str]| {
+        resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", ThisMachine::new("here", &dead))
+    };
+    assert!(resumed(&["a1b2c3"]).is_ok());
+    let Err(e) = resumed(&["a1b2c3", "--acp"]) else { panic!("resumed a herdr run with --acp") };
+    assert_eq!(e.0, "run 20260929-120000-a1b2c3 runs its agents in herdr, not over ACP; resume it without --acp");
+}

@@ -317,11 +317,11 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
     run_command(command, &world)
 }
 
-/// Refuse run to command (close, forget, refresh or resume) when it is the desktop app's (Backend::Acp) and acp, the
-/// command's --acp, is false: the app manages its runs, through serve, which alone passes --acp. Errors: so refused,
-/// naming the run, the app and command.
+/// Refuse run to command (close, forget, refresh or resume) when the desktop app manages it (RunState::app_managed)
+/// and acp, the command's --acp, which serve alone passes, is false. Errors: so refused, naming the run, the app and
+/// command.
 pub(crate) fn refuse_app_run(run: &RunState, command: &str, acp: bool) -> Result<(), OrchestratorError> {
-    if acp || run.backend != Backend::Acp {
+    if acp || !run.app_managed() {
         return Ok(());
     }
     Err(OrchestratorError(format!(
