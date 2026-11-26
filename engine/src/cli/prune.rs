@@ -10,7 +10,7 @@ use super::{record_in_state, Connected};
 use crate::constants::{BRANCH_PREFIX, CLOSED_BRANCH_GRACE, WORKTREES_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{git_status, GhError, Host, PullRequest};
-use crate::runs::RUNNING;
+use crate::runs::Health;
 use crate::state::{RunState, SavedRun};
 use crate::workflow::{origin_unreachable, reaching_origin, Collaborators};
 
@@ -164,8 +164,7 @@ fn opened_pull_request(state: &RunState) -> bool {
 fn is_prune_candidate(run: &SavedRun, world: &Connected, revisit: bool) -> bool {
     let s = run.shown();
     let kept = || opened_pull_request(s) && s.branch_cleanup.as_deref().is_some_and(|c| c.starts_with(BRANCH_KEPT));
-    (awaits_prune(s) || revisit && kept())
-        && !run.health(world.local_host, world.with.pid_alive).is_some_and(|(h, _)| h == RUNNING)
+    (awaits_prune(s) || revisit && kept()) && !matches!(run.health(world.with.machine), Some(Health::Running(_)))
 }
 
 /// Decide the run's worktree and each side of its branch, as state says, delete what may go, unless dry_run, and record

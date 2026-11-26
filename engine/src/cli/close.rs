@@ -10,7 +10,7 @@ use crate::constants::{EXIT_ERROR, RUNS_DIR};
 use crate::error::OrchestratorError;
 use crate::host::{git_status, Host, RunScope};
 use crate::interrupt::Interrupt;
-use crate::runs::RUNNING;
+use crate::runs::{Health, ThisMachine};
 use crate::state::{find_run, refs_prefix, Backend, RunState, SavedRun};
 
 /// What close talks to: the project's host, its runs' agents' places, this machine's processes, and where it says
@@ -24,10 +24,8 @@ pub struct Closer<'a> {
     pub places: &'a dyn RunPlaces,
     /// Once raised, close_all starts no further run.
     pub interrupt: &'a Interrupt,
-    /// Whether a process of a pid exists on this machine, for telling a run still running (RunState::health).
-    pub pid_alive: &'a dyn Fn(i64) -> bool,
-    /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
-    pub local_host: &'a str,
+    /// The machine close runs on, for telling a run still running (RunState::health).
+    pub machine: ThisMachine<'a>,
     /// Where close prints, which takes text as Connected::stdout does, a line with its line end.
     pub stdout: &'a dyn Fn(&str),
     /// Which of the project's runs close reads, and so can close.
@@ -299,7 +297,7 @@ pub fn stop_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunStopp
     let runs = world.scope.states(world.host, cwd)?;
     let mut running: Vec<&RunState> = runs
         .iter()
-        .filter(|run| matches!(run.health(world.local_host, world.pid_alive), Some((RUNNING, _))))
+        .filter(|run| matches!(run.health(world.machine), Some(Health::Running(_))))
         .filter_map(|run| run.state().ok().filter(|state| state.backend == Backend::Acp))
         .collect();
     running.sort_by(|a, b| a.run_id.cmp(&b.run_id));
@@ -344,7 +342,7 @@ fn await_release(world: &Closer, cwd: &str, run_id: &str, told: Instant) -> Resu
             .scope
             .state(world.host, cwd, run_id)?
             .ok_or_else(|| OrchestratorError(format!("run {run_id} is gone since it was told to stop")))?;
-        if !matches!(run.health(world.local_host, world.pid_alive), Some((RUNNING, _))) {
+        if !matches!(run.health(world.machine), Some(Health::Running(_))) {
             return Ok(());
         }
         if world.interrupt.is_raised() {
@@ -435,10 +433,10 @@ fn decide<'r>(world: &Closer, cwd: &str, run: &'r SavedRun) -> Result<Decision<'
     if let Err(e) = refuse_app_run(state, "close", world.acp) {
         return Ok(Decision::Refused(e));
     }
-    let health = run.health(world.local_host, world.pid_alive);
+    let health = run.health(world.machine);
     // Only the desktop app's runs can be stopped from here, through their socket; refuse_app_run passed it already.
-    let stop = matches!(&health, Some((RUNNING, _))) && state.backend == Backend::Acp;
-    if let (Some((RUNNING, why)), false) = (&health, stop) {
+    let stop = matches!(&health, Some(Health::Running(_))) && state.backend == Backend::Acp;
+    if let (Some(Health::Running(why)), false) = (&health, stop) {
         return Ok(Decision::Refused(OrchestratorError(format!(
             "run {} is still running ({why}); stop it before closing it",
             state.run_id
@@ -498,8 +496,7 @@ impl<'a> Closer<'a> {
             host: world.with.host,
             places: world.places,
             interrupt: world.with.interrupt,
-            pid_alive: world.with.pid_alive,
-            local_host: world.local_host,
+            machine: world.with.machine,
             stdout: world.stdout,
             scope: RunScope::Every,
             acp: world.acp,

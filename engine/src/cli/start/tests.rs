@@ -126,13 +126,23 @@ fn live_run_needs_force() {
     let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
     let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
     let alive = |_: i64| true;
-    let e = resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(
+        &[read_saved(30, &saved)],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        ThisMachine::new("here", &alive),
+    )
+    .unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
     );
-    let forced =
-        resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
+    let forced = resumable_state(
+        &[read_saved(30, &saved)],
+        &resume_args(&["a1b2c3", "--force"]),
+        "/proj",
+        ThisMachine::new("here", &alive),
+    );
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
 }
 
@@ -142,7 +152,13 @@ fn a_done_run_still_ending_needs_force() {
     let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
     let saved = Value::Object(saved_settings(&done));
     let alive = |_: i64| true;
-    let e = resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(
+        &[read_saved(30, &saved)],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        ThisMachine::new("here", &alive),
+    )
+    .unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
@@ -150,7 +166,13 @@ fn a_done_run_still_ending_needs_force() {
     // Once its orchestrator is gone, it is resumed so that its ending is finished.
     let dead = |_: i64| false;
     let late = HEARTBEAT_SECONDS + 1;
-    assert!(resumable_state(&[read_saved(late, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
+    assert!(resumable_state(
+        &[read_saved(late, &saved)],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        ThisMachine::new("here", &dead)
+    )
+    .is_ok());
 }
 
 #[test]
@@ -198,8 +220,13 @@ fn force_resume(host: Rc<FakeHost>) -> Fixture {
     host.state().files.insert(format!("{}/state.json", saved.dir()), saved.to_text());
     host.state().ages.insert(saved.run_id.clone(), 30);
     let runs = host.run_states("/proj").unwrap();
-    let (state, _) = resumable_state(&runs, &resume_args(&["a1b2c3", "--force"]), "/proj", &local_host(), &|_| true)
-        .expect("--force resumes a run that looks alive");
+    let (state, _) = resumable_state(
+        &runs,
+        &resume_args(&["a1b2c3", "--force"]),
+        "/proj",
+        ThisMachine::new(&local_host(), &|_| true),
+    )
+    .expect("--force resumes a run that looks alive");
     let mut f = Fixture::resume(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.pid_alive = Box::new(|_| true);
     f
@@ -319,7 +346,6 @@ fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir) -> Connected<'a> {
         with: f.collaborators(),
         places: &*f.herdr,
         config,
-        local_host: "here",
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &crate::cli::run_workflow,
@@ -598,10 +624,15 @@ fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do(
     for (what, saved, age, alive, lacking, expected) in cases {
         let run = read_saved(age, &Value::Object(saved)).lacking_ending_file(lacking);
         let pid_alive = move |_: i64| alive;
-        assert_eq!(resume_check::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
+        assert_eq!(resume_check::resumable(&run, ThisMachine::new("here", &pid_alive)).is_ok(), expected, "{what}");
         let backend = run.shown().backend;
         let argv: &[&str] = if backend == Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
-        let taken = resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", "here", &pid_alive);
+        let taken = resumable_state(
+            std::slice::from_ref(&run),
+            &resume_args(argv),
+            "/proj",
+            ThisMachine::new("here", &pid_alive),
+        );
         // resume also takes a finished run, which it leaves as it is (Workflow::run).
         assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());
     }

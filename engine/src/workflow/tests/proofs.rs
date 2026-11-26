@@ -786,7 +786,7 @@ fn proving_on(
         clocks: &clock,
         human: &told,
         interrupt,
-        pid_alive: &crate::runs::pid_alive,
+        machine: crate::runs::ThisMachine::new("here", &crate::runs::pid_alive),
         indexes: &crate::package_index::PackageIndexes::with_pypi(crate::pypi::fake::FakePyPI::from_json(
             Default::default(),
         )),

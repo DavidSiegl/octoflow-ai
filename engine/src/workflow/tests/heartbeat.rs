@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use super::*;
 use crate::constants::HEARTBEAT_SECONDS;
 use crate::herdr::HerdrError;
-use crate::runs::local_host;
 
 /// How many times the host wrote the run's state.json.
 fn state_writes(f: &Fixture) -> usize {
@@ -58,7 +57,7 @@ fn owner_is_recorded_and_released() {
     f.workflow(RunSettings::default()).run().unwrap();
     let owner = owners.borrow()[0].clone();
     assert_eq!(owner.get("pid"), Some(&Value::from(i64::from(std::process::id()))));
-    assert_eq!(owner.get("host"), Some(&Value::from(local_host())));
+    assert_eq!(owner.get("host"), Some(&Value::from("here")));
     assert_eq!(f.saved().get("owner"), Some(&Value::Null));
 }
 

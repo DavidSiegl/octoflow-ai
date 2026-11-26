@@ -12,7 +12,7 @@ use crate::handoff::parse_verdict;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
-use crate::runs::{RUNNING, STALE};
+use crate::runs::{Health, ThisMachine, STALE};
 use crate::state::{
     find_run, judged_by_several, run_dir, AgentRecord, Backend, RunState, SavedRun, StepVerdict, TurnRecord,
     NOTHING_TO_PUBLISH,
@@ -28,8 +28,8 @@ pub const BLOCKED_STATUS: &str = "blocked";
 
 /// A run's saved state as `list --json` prints it, and as the run list and `show` word it (run_rows).
 ///
-/// run is the run as Host::run_states read it, shown as far as it reads (SavedRun::shown); local_host and pid_alive
-/// are RunState::health's, and target the --machine and --cwd flags resume_command repeats. Reads nothing beyond
+/// run is the run as Host::run_states read it, shown as far as it reads (SavedRun::shown); machine is
+/// RunState::health's, and target the --machine and --cwd flags resume_command repeats. Reads nothing beyond
 /// run. The record has every key below, in this order; null means the key does not apply to the run:
 /// - id, key, task (the whole task), workflow: the run's id, its key (as resume takes it), task and workflow.
 /// - steps: the workflow's steps, each {"id", "role", "role_label", "loop_to", "quality_gated"}, in order; null when
@@ -67,15 +67,15 @@ pub const BLOCKED_STATUS: &str = "blocked";
 ///   (crate::cli::resume_check::resumable): a stale run, one released as interrupted or with a failure, or a done one
 ///   its orchestrator did not release or that lacks its summary or metrics; an "acp" run is resumed with serve's POST
 ///   /resume.
-pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> bool, target: &[String]) -> Object {
+pub fn run_record(run: &SavedRun, machine: ThisMachine, target: &[String]) -> Object {
     let s = run.shown();
     let unreadable = run.problem();
     let pipeline = s.pipeline().ok();
     let step = pipeline.as_ref().and_then(|p| p.step(&s.phase));
     let role = step.map(|st| st.role.clone());
-    let health = run.health(local_host, pid_alive);
-    let stale = health.as_ref().is_some_and(|(h, _)| *h == STALE);
-    let running = health.as_ref().is_some_and(|(h, _)| *h == RUNNING);
+    let health = run.health(machine);
+    let stale = matches!(health, Some(Health::Stale(_)));
+    let running = matches!(health, Some(Health::Running(_)));
     // resume refuses a run whose state.json it cannot read. A stale run of the desktop app's is resumed from the app,
     // and the CLI refuses it (crate::cli::refuse_app_run), so it has no command.
     let resumable_stale = stale && !s.is_closed() && unreadable.is_none();
@@ -112,8 +112,8 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     record.insert("agents".into(), agent_refs(&s.agents));
     // A unit variant serializes to its name without fail.
     record.insert("backend".into(), serde_json::to_value(s.backend).expect("a backend serializes"));
-    record.insert("health".into(), optional(health.as_ref().map(|(h, _)| h.to_string())));
-    record.insert("health_reason".into(), optional(health.map(|(_, why)| why)));
+    record.insert("health".into(), optional(health.as_ref().map(|h| h.name().to_string())));
+    record.insert("health_reason".into(), optional(health.as_ref().map(|h| h.why().to_string())));
     record.insert("heartbeat_age".into(), Value::from(run.age() as i64));
     record.insert(
         "waiting".into(),
@@ -138,7 +138,7 @@ pub fn run_record(run: &SavedRun, local_host: &str, pid_alive: &dyn Fn(i64) -> b
     // Records of strings, numbers and JSON values serialize without fail.
     record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
     record.insert("resume_command".into(), optional(resume));
-    record.insert("resumable".into(), Value::from(resumable(run, local_host, pid_alive).is_ok()));
+    record.insert("resumable".into(), Value::from(resumable(run, machine).is_ok()));
     record
 }
 
@@ -198,15 +198,10 @@ pub fn fill_pr_states(world: &Connected, cwd: &str, records: &mut [Object]) -> R
 
 /// Each run as `list` shows it: its id, phase, round, outcome and the first 100 characters of its task, from its
 /// record.
-pub fn run_rows(
-    runs: &[SavedRun],
-    local_host: &str,
-    pid_alive: &dyn Fn(i64) -> bool,
-    target: &[String],
-) -> Vec<[String; 5]> {
+pub fn run_rows(runs: &[SavedRun], machine: ThisMachine, target: &[String]) -> Vec<[String; 5]> {
     runs.iter()
         .map(|run| {
-            let record = run_record(run, local_host, pid_alive, target);
+            let record = run_record(run, machine, target);
             let text = |key: &str| record.get(key).expect("run_record sets a run's id, phase and task").text();
             let task: String = text("task").chars().take(100).collect();
             [text("id"), text("phase"), run_round(&record), run_outcome(&record), task]
@@ -292,7 +287,7 @@ pub fn print_runs(world: &Connected, runs: &[SavedRun], target: &[String]) {
         world.say("No runs.");
         return;
     }
-    for row in run_rows(runs, world.local_host, world.with.pid_alive, target) {
+    for row in run_rows(runs, world.with.machine, target) {
         world.say(&run_line(&row));
         world.say(&format!("    {}", row[4]));
     }
@@ -323,7 +318,7 @@ pub fn show_run(world: &Connected, cwd: &str, run_ref: &str, target: &[String]) 
     let host = world.with.host;
     let runs = host.run_states(cwd)?;
     let run = find_run(&runs, run_ref, cwd)?;
-    let row = &run_rows(std::slice::from_ref(run), world.local_host, world.with.pid_alive, target)[0];
+    let row = &run_rows(std::slice::from_ref(run), world.with.machine, target)[0];
     let s = run.shown();
     world.say(&run_line(row));
     world.say(&format!("    {}", s.task));

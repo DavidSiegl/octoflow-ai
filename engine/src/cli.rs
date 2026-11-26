@@ -28,7 +28,7 @@ use crate::interrupt::Interrupt;
 use crate::package_index::PackageIndexes;
 use crate::pipeline::Pipeline;
 use crate::run_commands::RunCommands;
-use crate::runs::{local_host, pid_alive};
+use crate::runs::{local_host, pid_alive, ThisMachine};
 use crate::spec_file::{read_spec_file, SpecFile};
 use crate::state::{run_dir, Backend, RunState};
 use crate::workflow::{Collaborators, DesktopNotify, LocalHuman, RunSettings, Stopped, SystemClocks, Workflow};
@@ -62,8 +62,6 @@ pub struct Connected<'a> {
     pub places: &'a dyn RunPlaces,
     /// The orchestrator's configuration directory on this machine: its prompt and workflow files.
     pub config: &'a ConfigDir,
-    /// This machine's name, which an owner record of a run here names (crate::runs::local_host).
-    pub local_host: &'a str,
     /// The program's standard output, which takes text as it is, a line with its line end: what a command prints.
     pub stdout: &'a dyn Fn(&str),
     /// The program's standard error, as stdout takes text: what a command prints there itself, not its log.
@@ -306,12 +304,11 @@ fn connect(command: &Command, local: &Local, human: &LocalHuman) -> Result<Ended
             clocks: &clocks,
             human,
             interrupt,
-            pid_alive: &pid_alive,
+            machine: ThisMachine::new(&here, &pid_alive),
             indexes: &indexes,
         },
         places: &places,
         config,
-        local_host: &here,
         stdout,
         stderr,
         workflow: &run_workflow,
@@ -426,11 +423,8 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
     let host = world.with.host;
     match runs {
         RunsCommand::List { json: true, pr_state } => {
-            let mut records: Vec<_> = host
-                .run_states(cwd)?
-                .iter()
-                .map(|run| listing::run_record(run, world.local_host, world.with.pid_alive, target))
-                .collect();
+            let mut records: Vec<_> =
+                host.run_states(cwd)?.iter().map(|run| listing::run_record(run, world.with.machine, target)).collect();
             if *pr_state {
                 listing::fill_pr_states(world, cwd, &mut records)?;
             }

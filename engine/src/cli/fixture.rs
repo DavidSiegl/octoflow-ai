@@ -66,7 +66,6 @@ impl Cli {
             with: self.f.collaborators(),
             places: &*self.f.herdr,
             config: &self.config,
-            local_host: "here",
             stdout: &print,
             stderr: &stderr,
             workflow,

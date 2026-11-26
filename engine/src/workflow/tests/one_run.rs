@@ -6,7 +6,6 @@ use super::worktree::worktree_run;
 use super::*;
 use crate::constants::{HEARTBEAT_SECONDS, STALE_SECONDS};
 use crate::json::object;
-use crate::runs::local_host;
 
 pub(super) const OTHER_ID: &str = "20261009-220151-537935";
 
@@ -14,7 +13,7 @@ pub(super) fn other_dir() -> String {
     format!("/proj/.octoflow-ai/runs/{OTHER_ID}")
 }
 
-/// A FakeHost whose /proj holds run OTHER_ID, which this host's orchestrator pid 3354482 last saved age seconds ago,
+/// A FakeHost whose /proj holds run OTHER_ID, which this host's ("here") orchestrator pid 3354482 last saved age seconds ago,
 /// its state.json's fields overridden by those of saved.
 pub(super) fn host_with_other_run(age: u64, saved: &[(&str, Value)]) -> Rc<FakeHost> {
     let host = FakeHost::default();
@@ -23,7 +22,7 @@ pub(super) fn host_with_other_run(age: u64, saved: &[(&str, Value)]) -> Rc<FakeH
     other.round = 1;
     let Value::Object(mut state) = other.to_json() else { unreachable!() };
     let owner = [
-        ("host", Value::from(local_host())),
+        ("host", Value::from("here")),
         ("pid", Value::from(3_354_482)),
         ("started_at", Value::from("2026-10-09T22:01:51+00:00")),
     ];
@@ -44,7 +43,7 @@ fn assert_refused(f: &Fixture, settings: RunSettings, beat: &str) {
     let expected = format!(
         "run {OTHER_ID} is running in /proj (pid 3354482 on {}, beat {beat} ago); one run at a time per checkout: \
          wait for it, stop it, or use another clone",
-        local_host()
+        "here"
     );
     assert_eq!(message, expected);
     let saved = f.saved();

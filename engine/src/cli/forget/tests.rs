@@ -386,8 +386,7 @@ fn two_sweeps_of_one_project_at_once_forget_a_run_once() {
                 stdout: &|_| {},
                 scope: crate::host::RunScope::Every,
                 acp: false,
-                pid_alive: &|pid| pid == this_pid(),
-                local_host: "here",
+                machine: crate::runs::ThisMachine::new("here", &|pid| pid == this_pid()),
             };
             *result.borrow_mut() = Some(forget_all(&other, "/proj", Sweep::All).map_err(|e| e.0));
         }

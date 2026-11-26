@@ -178,7 +178,6 @@ impl World {
             with: self.f.collaborators(),
             places: &*self.f.herdr,
             config: &config,
-            local_host: "here",
             stdout: &|_| {},
             stderr: &|_| {},
             workflow: &run_workflow,

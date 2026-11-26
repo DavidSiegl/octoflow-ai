@@ -517,7 +517,8 @@ pub fn resumable(flags: &[&str], saved: &Object) -> Result<crate::state::RunStat
         panic!("not a resume: {flags:?}")
     };
     let runs = [read_saved(10_000, &serde_json::Value::Object(saved.clone()))];
-    crate::cli::resumable_state(&runs, &args, "/proj", "here", &|_| false).map(|(state, _)| state)
+    crate::cli::resumable_state(&runs, &args, "/proj", crate::runs::ThisMachine::new("here", &|_| false))
+        .map(|(state, _)| state)
 }
 
 /// The herdr server a herdr CLI reaches with HERDR_SOCKET_PATH set to socket and HERDR_SESSION to session, each None

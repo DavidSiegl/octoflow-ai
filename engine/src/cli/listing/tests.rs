@@ -109,7 +109,7 @@ fn block() -> Value {
 /// is.
 fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
-    run_record(&read_saved(age, state), "here", &move |_| alive, &target)
+    run_record(&read_saved(age, state), ThisMachine::new("here", &move |_| alive), &target)
 }
 
 /// record's value of key.
@@ -360,7 +360,7 @@ fn a_state_json_that_is_not_json_or_names_no_run_lists_by_its_directory_as_not_r
     assert!(out.contains("error: /proj/.octoflow-ai/runs/broken/state.json is not JSON ("), "{out}");
     let nameless = "error: /proj/.octoflow-ai/runs/nameless/state.json is not a JSON object with a run_id";
     assert!(out.contains(nameless), "{out}");
-    assert!(!out.contains(RUNNING), "{out}");
+    assert!(!out.contains(crate::runs::RUNNING), "{out}");
 }
 
 #[test]
@@ -475,7 +475,7 @@ fn plain_lines_in_each_state() {
         (1_000_000, with(approved, &[("workflow", Value::from("gone"))])),
         (40, with(run("quality"), &[("owner", me()), ("quality_round", Value::from(2))])),
     ];
-    let rows = run_rows(&saved_runs(&runs), "here", &|_| true, &[]);
+    let rows = run_rows(&saved_runs(&runs), ThisMachine::new("here", &|_| true), &[]);
     assert_eq!(
         rows.iter().map(run_line).collect::<Vec<_>>(),
         [
@@ -577,7 +577,10 @@ fn one_record_per_run_in_order() {
     let doc = list_json(&cli, &[], &runs);
     let records = doc.get("runs").and_then(Value::as_array).unwrap();
     assert_eq!(records.iter().map(|r| r.get("key").unwrap().text()).collect::<Vec<_>>(), ["c0ffee", "beef00"]);
-    assert_eq!(records[0], Value::Object(run_record(&saved_runs(&runs)[0], "here", &crate::runs::pid_alive, &[])));
+    assert_eq!(
+        records[0],
+        Value::Object(run_record(&saved_runs(&runs)[0], ThisMachine::new("here", &crate::runs::pid_alive), &[]))
+    );
     // Written pretty-printed.
     assert_eq!(serde_json::to_string_pretty(&doc).unwrap(), {
         cli.main(&["list", "--json", "--cwd", "/proj"]);
@@ -1182,11 +1185,9 @@ fn the_wait_is_listed() {
             ("blocked", block()),
         ],
     );
-    let cli = alive();
-    cli.with(|world| {
-        let world = Connected { local_host: "box", ..*world };
-        print_runs(&world, &saved_runs(&[(40, saved)]), &[]);
-    });
+    let mut cli = alive();
+    cli.f.machine_name = "box".to_string();
+    cli.with(|world| print_runs(world, &saved_runs(&[(40, saved)]), &[]));
     assert_eq!(cli.lines()[0], format!("20260929-120000-a1b2c3  build    round 1  blocked: {QUESTION} (pane w1:p2)"));
 }
 

@@ -26,7 +26,7 @@ use crate::interrupt::Interrupt;
 use crate::json::{object, Object, ValueExt};
 use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
-use crate::runs::{local_host, pid_alive};
+use crate::runs::{local_host, pid_alive, ThisMachine};
 use crate::serve::FINISHED_RUN_WRITES;
 use crate::state::{run_dir, Backend, SavedRun};
 use serde_json::Value;
@@ -157,8 +157,7 @@ impl ProjectRuns {
             host: &*self.host,
             places: &EitherBackend { herdr: &*self.places, acp: &LeftoverGroups },
             interrupt: stopping,
-            pid_alive: &*self.pid_alive,
-            local_host: &here,
+            machine: ThisMachine::new(&here, &*self.pid_alive),
             stdout: &|_| {},
             scope: RunScope::Inside,
             acp: true,
@@ -183,8 +182,7 @@ impl ProjectRuns {
             stdout: &|_| {},
             scope: RunScope::Inside,
             acp: true,
-            pid_alive: &*self.pid_alive,
-            local_host: &here,
+            machine: ThisMachine::new(&here, &*self.pid_alive),
         };
         forget_all(&forgetter, &self.cwd, sweep)
     }
@@ -199,7 +197,8 @@ impl ProjectRuns {
     /// (Host::run_states_inside): another is no run to serve. Errors: the runs cannot be read.
     pub fn records(&self) -> Result<Vec<Object>, OrchestratorError> {
         let here = local_host();
-        Ok(self.saved_runs()?.iter().map(|run| self.record(run, &here)).collect())
+        let machine = ThisMachine::new(&here, &*self.pid_alive);
+        Ok(self.saved_runs()?.iter().map(|run| self.record(run, machine)).collect())
     }
 
     /// The runs records reads, as saved. Errors: as records.
@@ -207,9 +206,9 @@ impl ProjectRuns {
         self.host.run_states_inside(&self.cwd)
     }
 
-    /// run's record, as records gives it; here is local_host().
-    fn record(&self, run: &SavedRun, here: &str) -> Object {
-        run_record(run, here, &*self.pid_alive, &self.target)
+    /// run's record, as records gives it, judged from machine, this one.
+    fn record(&self, run: &SavedRun, machine: ThisMachine) -> Object {
+        run_record(run, machine, &self.target)
     }
 
     /// The run's files, oldest first, as a JSON list of {"name", "mtime", "size"}, mtime in seconds since the epoch and
@@ -372,7 +371,8 @@ impl ProjectRuns {
         if run.shown().backend != Backend::Acp {
             return Err(RunReadError::Conflict(format!("run {run_id} runs in herdr; resume it with its command")));
         }
-        resumable(run, &local_host(), &*self.pid_alive).map_err(|e| RunReadError::Conflict(e.0))?;
+        let here = local_host();
+        resumable(run, ThisMachine::new(&here, &*self.pid_alive)).map_err(|e| RunReadError::Conflict(e.0))?;
         let state = format!("{dir}/state.json");
         let before = self.host.read(&state)?;
         acp::end_leftovers(&dir)?;
@@ -531,8 +531,9 @@ impl<'p> RunWatch<'p> {
         let mut events = vec![];
         let mut sent = BTreeMap::new();
         let here = local_host();
+        let machine = ThisMachine::new(&here, &*self.project.pid_alive);
         for run in self.project.saved_runs()? {
-            let record = self.project.record(&run, &here);
+            let record = self.project.record(&run, machine);
             let saved_at = run.shown().heartbeat_at.clone();
             // Always a string: the run's id, or its directory's name for a state.json that names no run
             // (SavedRun::read).

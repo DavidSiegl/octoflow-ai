@@ -5,7 +5,6 @@ use super::one_run::{host_with_other_run, OTHER_ID};
 use super::worktree::worktree_run;
 use super::*;
 use crate::run_commands::RunCommands;
-use crate::runs::local_host;
 
 const OTHER_BRANCH: &str = "orchestrator/another-task-537935";
 
@@ -127,7 +126,7 @@ fn a_worktree_run_on_a_live_runs_branch_is_told_to_wait_for_it() {
         format!(
             "/proj is on {OTHER_BRANCH}, the branch of run {OTHER_ID}, which is running (pid 3354482 on {}, beat 16s \
              ago); wait for it to end, then check out its base branch, main",
-            local_host()
+            "here"
         )
     );
     assert!(f.herdr.state().calls.is_empty());

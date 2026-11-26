@@ -298,7 +298,13 @@ fn runs_are_list_json_records_locally() {
         .run_states(&d.root())
         .unwrap()
         .iter()
-        .map(|s| without_aging(run_record(s, &crate::runs::local_host(), &crate::runs::pid_alive, &target)))
+        .map(|s| {
+            without_aging(run_record(
+                s,
+                crate::runs::ThisMachine::new(&crate::runs::local_host(), &crate::runs::pid_alive),
+                &target,
+            ))
+        })
         .collect();
     let doc = reply.json();
     assert_eq!(doc.get("version"), Some(&Value::from(1)));

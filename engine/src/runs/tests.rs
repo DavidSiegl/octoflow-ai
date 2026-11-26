@@ -26,38 +26,41 @@ fn owner(host: &str) -> Object {
     ])
 }
 
-fn health(record: &RunState, age: u64, alive: bool) -> Option<(&'static str, String)> {
-    record.health(age, "here", &|_| alive)
+fn health(record: &RunState, age: u64, alive: bool) -> Option<Health> {
+    record.health(age, ThisMachine::new("here", &|_| alive))
 }
 
 #[test]
 fn fresh_heartbeat_is_running() {
     let got = health(&run_record("build", Some(owner("here")), None, None), 40, true);
-    assert_eq!(got, Some((RUNNING, "pid 4242 on here, beat 40s ago".to_string())));
+    assert_eq!(got, Some(Health::Running("pid 4242 on here, beat 40s ago".to_string())));
 }
 
 #[test]
 fn old_heartbeat_is_stale() {
     let got = health(&run_record("build", Some(owner("here")), None, None), STALE_SECONDS + 420, true);
-    assert_eq!(got, Some((STALE, "no heartbeat for 12m".to_string())));
+    assert_eq!(got, Some(Health::Stale("no heartbeat for 12m".to_string())));
 }
 
 #[test]
 fn dead_local_pid_is_stale_once_a_beat_is_late() {
     let record = run_record("build", Some(owner("here")), None, None);
-    assert_eq!(health(&record, HEARTBEAT_SECONDS + 1, false).unwrap(), (STALE, "orchestrator pid 4242 exited".into()));
-    assert_eq!(health(&record, 10, false).unwrap().0, RUNNING);
+    assert_eq!(
+        health(&record, HEARTBEAT_SECONDS + 1, false).unwrap(),
+        Health::Stale("orchestrator pid 4242 exited".into())
+    );
+    assert_eq!(health(&record, 10, false).unwrap().name(), RUNNING);
 }
 
 #[test]
 fn pid_on_another_host_is_not_checked() {
-    assert_eq!(health(&run_record("build", Some(owner("laptop")), None, None), 120, false).unwrap().0, RUNNING);
+    assert_eq!(health(&run_record("build", Some(owner("laptop")), None, None), 120, false).unwrap().name(), RUNNING);
 }
 
 #[test]
 fn run_from_before_owners_existed() {
     let got = health(&run_record("spec", None, None, None), 7 * 3600 + 720, true);
-    assert_eq!(got, Some((STALE, "no heartbeat for 7h12m".to_string())));
+    assert_eq!(got, Some(Health::Stale("no heartbeat for 7h12m".to_string())));
 }
 
 #[test]
@@ -69,8 +72,8 @@ fn finished_and_failed_runs_are_never_stale() {
 #[test]
 fn a_done_run_not_yet_released_is_judged_by_its_owner_as_ending() {
     let owned = run_record("done", Some(owner("here")), None, Some(APPROVE));
-    assert_eq!(health(&owned, 40, true), Some((RUNNING, "pid 4242 on here, beat 40s ago".to_string())));
-    assert_eq!(health(&owned, HEARTBEAT_SECONDS + 1, false).unwrap().0, STALE);
+    assert_eq!(health(&owned, 40, true), Some(Health::Running("pid 4242 on here, beat 40s ago".to_string())));
+    assert_eq!(health(&owned, HEARTBEAT_SECONDS + 1, false).unwrap().name(), STALE);
     assert_eq!(health(&run_record("done", Some(Object::new()), None, Some(APPROVE)), 40, true), None);
 }
 
@@ -79,16 +82,16 @@ fn an_owner_missing_its_pid_or_host_reads_as_unknown() {
     let mut no_host = owner("laptop");
     no_host.remove("host");
     let got = health(&run_record("build", Some(no_host), None, None), 40, true);
-    assert_eq!(got, Some((RUNNING, "pid 4242 on unknown, beat 40s ago".to_string())));
+    assert_eq!(got, Some(Health::Running("pid 4242 on unknown, beat 40s ago".to_string())));
     let mut no_pid = owner("laptop");
     no_pid.remove("pid");
     let got = health(&run_record("build", Some(no_pid), None, None), 40, true);
-    assert_eq!(got, Some((RUNNING, "pid unknown on laptop, beat 40s ago".to_string())));
+    assert_eq!(got, Some(Health::Running("pid unknown on laptop, beat 40s ago".to_string())));
 }
 
 #[test]
 fn a_failed_run_with_an_empty_error_is_judged_by_its_heartbeat() {
-    assert_eq!(health(&run_record("build", None, Some(""), None), 40, true).unwrap().0, RUNNING);
+    assert_eq!(health(&run_record("build", None, Some(""), None), 40, true).unwrap().name(), RUNNING);
 }
 
 #[test]
@@ -97,11 +100,14 @@ fn a_state_json_naming_no_run_is_driven_by_nothing() {
     let owned = Value::Object(owner("here")).to_string();
     for text in ["{not json".to_string(), format!(r#"{{"done": true, "owner": {owned}}}"#), "[]".to_string()] {
         let run = SavedRun::read(40, dir, text.as_bytes());
-        assert_eq!(run.health("here", &|_| true), None, "{text}");
+        assert_eq!(run.health(ThisMachine::new("here", &|_| true)), None, "{text}");
     }
     // One of a format this engine does not read may be another release's, which may still drive it.
     let other = format!(r#"{{"run_id": "20260930-070000-c0ffee", "format": 999, "owner": {owned}}}"#);
-    assert_eq!(SavedRun::read(40, dir, other.as_bytes()).health("here", &|_| true).unwrap().0, RUNNING);
+    assert_eq!(
+        SavedRun::read(40, dir, other.as_bytes()).health(ThisMachine::new("here", &|_| true)).unwrap().name(),
+        RUNNING
+    );
 }
 
 #[test]
