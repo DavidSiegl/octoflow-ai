@@ -486,7 +486,8 @@ fn tokens_come_from_the_session_the_turn_ran_in() {
 fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
     let f = Fixture::new(vec![("spec", vec![spec_turn()]), ("build", vec![taking(100, build_turn(1))])]);
     // The usage file is written during the review, once the build agent's session is known; the review's session
-    // has none. The run is herdr's, which the fakes play, until its tokens are counted again as an ACP run's.
+    // has none. The run is herdr's, which the fakes play, until its tokens are counted again as an ACP run's, by ACP's
+    // Agents.
     let (herdr, usage_file) = (Rc::clone(&f.herdr), crate::acp::usage_file(&f.state));
     let mut review = review_turn(1, APPROVE);
     let with_usage: Turn = Box::new(move |prompt, state, host| {
@@ -500,16 +501,18 @@ fn an_acp_run_s_tokens_come_from_the_usage_its_agents_answered_prompts_with() {
         review(prompt, state, host)
     });
     f.play("review", vec![taking(60, with_usage)]);
+    let acp = crate::acp::AcpAgents::new(&f.told, &f.interrupt);
     let mut wf = f.workflow(RunSettings::default());
     assert_eq!(wf.run(), verdict(APPROVE));
-    wf.state.backend = crate::state::Backend::Acp;
+    (wf.state.backend, wf.agents) = (crate::state::Backend::Acp, &acp);
     wf.count_tokens();
     let tokens: Vec<String> = wf.state().turns.iter().map(|t| t.tokens.to_string()).collect();
     assert_eq!(tokens, [r#""unknown""#, r#"{"input":11,"output":4,"cache_read":6,"cache_write":8}"#, r#""unknown""#]);
 }
 
-/// The build turn of a run of backend, started at HOST_EPOCH and its file written 300 s later, closed by end_turn
-/// with the Builder's journal, on disk, holding a permission asked at 100 s and answered at 220 s.
+/// The build turn of a run of backend, its agents ACP's for Backend::Acp, started at HOST_EPOCH and its file written
+/// 300 s later, closed by end_turn with the Builder's journal, on disk, holding a permission asked at 100 s and
+/// answered at 220 s.
 fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
     let tmp = crate::test_support::TempDir::new();
     let mut state = saved_run("build", 1, &["spec"]);
@@ -528,7 +531,11 @@ fn build_turn_closed(backend: crate::state::Backend) -> TurnRecord {
     host.files.insert(path.clone(), "# Build report\n".into());
     host.mtimes.insert(path.clone(), HOST_EPOCH + 300);
     drop(host);
+    let acp = crate::acp::AcpAgents::new(&f.told, &f.interrupt);
     let mut wf = f.workflow(f.as_saved());
+    if backend == crate::state::Backend::Acp {
+        wf.agents = &acp;
+    }
     let record = wf.turn_record("build", "build-1.md", Some(HOST_EPOCH));
     wf.state.turns.push(record);
 

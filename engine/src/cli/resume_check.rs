@@ -5,7 +5,7 @@ use super::refuse_app_run;
 use crate::error::OrchestratorError;
 use crate::pipeline::Pipeline;
 use crate::runs::{Health, ThisMachine};
-use crate::state::{Backend, RunState, SavedRun};
+use crate::state::{RunState, SavedRun};
 
 /// run's saved state and its workflow, as resume takes the run up before its flags apply, with its health judged
 /// from machine (RunState::health); acp is resume's --acp and force its --force.
@@ -43,7 +43,7 @@ pub(crate) fn resume_gate<'r>(
 ///
 /// Errors: why not, resume_gate's or that the run is finished.
 pub fn resumable(run: &SavedRun, machine: ThisMachine) -> Result<(), OrchestratorError> {
-    let acp = run.shown().backend == Backend::Acp;
+    let acp = run.shown().app_managed();
     let (state, _) = resume_gate(run, acp, false, machine)?;
     if state.done() && state.owner.is_none() && !run.lacks_ending_file() {
         return Err(OrchestratorError(format!("run {} is finished; nothing is left to resume", state.run_id)));

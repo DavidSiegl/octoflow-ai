@@ -78,4 +78,22 @@ impl Agents for ModelSaying<'_> {
     fn cancel(&self, run: &RunState) {
         self.herdr.cancel(run)
     }
+    fn session_usage(
+        &self,
+        run: &RunState,
+        host: &dyn crate::host::Host,
+        kind: &str,
+        session: &str,
+    ) -> Result<Option<Vec<crate::harness::Usage>>, crate::error::OrchestratorError> {
+        self.herdr.session_usage(run, host, kind, session)
+    }
+    fn waited_seconds(
+        &self,
+        run: &RunState,
+        role: &str,
+        from: i64,
+        to: i64,
+    ) -> Result<Option<i64>, crate::error::OrchestratorError> {
+        self.herdr.waited_seconds(run, role, from, to)
+    }
 }

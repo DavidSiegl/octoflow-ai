@@ -15,6 +15,8 @@
 use std::fmt;
 
 use crate::error::OrchestratorError;
+use crate::harness::Usage;
+use crate::host::Host;
 use crate::human::Human;
 use crate::state::{AgentRecord, Backend, RunState, UnofferedModel};
 
@@ -213,6 +215,23 @@ pub trait Agents: RunPlaces {
     /// prompt still pending is cancelled at once, and the agents get the short time a settle at a Ctrl-C gives them to
     /// answer, so that the usage the answer carries is recorded. herdr: nothing to do, as for settle.
     fn cancel(&self, run: &RunState);
+
+    /// The token usage the run recorded for session, a non-empty session id of harness kind, oldest first, read
+    /// through host: herdr's from the harness's session log (Host::session_log), ACP's from the usage its agents
+    /// answered prompts with. None where none is recorded: a harness without a session log, no such log, an ACP session
+    /// no answer of carried a usage. Errors: the record cannot be read, or kind is no harness.
+    fn session_usage(
+        &self,
+        run: &RunState,
+        host: &dyn Host,
+        kind: &str,
+        session: &str,
+    ) -> Result<Option<Vec<Usage>>, OrchestratorError>;
+
+    /// How many of the seconds from `from` to `to` (seconds since the epoch) the role's agent waited for the human's
+    /// answer to a permission it asked for: None where the backend records no such waits (herdr), 0 for a role it has
+    /// no record of. ACP: as crate::acp::waited_seconds measures them. Errors: the record of the waits cannot be read.
+    fn waited_seconds(&self, run: &RunState, role: &str, from: i64, to: i64) -> Result<Option<i64>, OrchestratorError>;
 }
 
 /// A run's agents as anything but its orchestrator reaches them, from the run's saved state: close, and serve's.

@@ -11,7 +11,6 @@ use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::acp;
 use crate::agents::{AgentError, Agents};
 use crate::constants::{
     APPROVE, CHANGES_REQUESTED, DEFAULT_HARNESS, DEFAULT_MAX_QUALITY_ROUNDS, DEFAULT_MAX_ROUNDS, DEFAULT_TURN_TIMEOUT,
@@ -19,7 +18,7 @@ use crate::constants::{
 };
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
-use crate::harness::{harness, AgentSettings, Usage};
+use crate::harness::{AgentSettings, Usage};
 use crate::host::{git_status, holds_nothing, Host, PushError, Scanned};
 use crate::human::Human;
 use crate::interrupt::Interrupt;
@@ -37,7 +36,7 @@ use crate::quality::parse_gate;
 use crate::run_commands::RunCommands;
 use crate::runs::{Health, ThisMachine};
 use crate::spec_file::SpecFile;
-use crate::state::{AgentStart, Backend, RunState, SavedRun};
+use crate::state::{AgentStart, RunState, SavedRun};
 use crate::summary::{run_metrics, run_summary, turn_tokens};
 use crate::timestamp::iso_utc;
 use crate::workflow_file::{run_pipeline, workflow_definition};
@@ -774,21 +773,13 @@ impl<'a> Workflow<'a> {
         }
     }
 
-    /// The token usage recorded for session, of harness kind, oldest first: a herdr run's from the harness's session
-    /// log, an ACP run's from the usage its agents answered prompts with (crate::acp::session_usage). None where none
-    /// is recorded: an empty session, a harness without a session log, an ACP session no answer of carried a usage.
-    /// Errors: the record cannot be read, or kind is no harness.
+    /// The token usage recorded for session, of harness kind, oldest first, as Agents::session_usage reads it; None
+    /// also for an empty session. Errors: Agents::session_usage's.
     fn session_usage(&self, kind: &str, session: &str) -> Result<Option<Vec<Usage>>, OrchestratorError> {
         if session.is_empty() {
             return Ok(None);
         }
-        if self.state.backend == Backend::Acp {
-            let Some(log) = self.host.read(&acp::usage_file(&self.state))? else { return Ok(None) };
-            let usage = acp::session_usage(&log, session);
-            return Ok((!usage.is_empty()).then_some(usage));
-        }
-        let Some(log) = self.host.session_log(kind, session)? else { return Ok(None) };
-        Ok(Some(harness(kind)?.session_usage(&log)))
+        self.agents.session_usage(&self.state, self.host, kind, session)
     }
 
     /// Per round, its quality gates and the verdict of each verdict step that judged it, as its handoff files say.
@@ -892,8 +883,7 @@ impl<'a> Workflow<'a> {
                     Some(Health::Running(why)) => {
                         format!("which is running ({why}); wait for it to end, then check out {base}")
                     }
-                    // The CLI refuses to close the desktop app's runs (cli::refuse_app_run).
-                    _ if other.backend == Backend::Acp => format!(
+                    _ if other.app_managed() => format!(
                         "which is not closed; check out {base}, and close that run from the desktop app once you are \
                          done with it"
                     ),

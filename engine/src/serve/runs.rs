@@ -28,7 +28,7 @@ use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
 use crate::runs::{local_host, pid_alive, ThisMachine};
 use crate::serve::FINISHED_RUN_WRITES;
-use crate::state::{run_dir, Backend, SavedRun};
+use crate::state::{run_dir, SavedRun};
 use serde_json::Value;
 
 /// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
@@ -343,7 +343,7 @@ impl ProjectRuns {
         self.start_detached(&request.argv(program, run_id, &target), &dir, wait, stopping, saved)
     }
 
-    /// Resume run_id, a desktop app's run (crate::state::Backend::Acp) that a resume would take up and find something
+    /// Resume run_id, a desktop app's run (RunState::app_managed) that a resume would take up and find something
     /// left to do in (crate::cli::resume_check::resumable), the way start starts a detached run: its leftover agents
     /// ended first (crate::acp::end_leftovers), then `program resume --cwd DIR --acp -- RUN_ID` started detached, and
     /// waited for (StartWait::until) until it saves the run's state.json anew, which it does once it has taken the run
@@ -368,7 +368,7 @@ impl ProjectRuns {
         let Some(run) = runs.iter().find(|run| run.shown().run_id == run_id) else {
             return Err(RunReadError::Missing(format!("no run {run_id}")));
         };
-        if run.shown().backend != Backend::Acp {
+        if !run.shown().app_managed() {
             return Err(RunReadError::Conflict(format!("run {run_id} runs in herdr; resume it with its command")));
         }
         let here = local_host();

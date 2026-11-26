@@ -691,6 +691,14 @@ impl RunState {
         self.closed.as_deref().filter(|c| !c.is_empty())
     }
 
+    /// Whether the desktop app manages the run: an ACP run (Backend::Acp), which only the app starts. The app drives
+    /// it through serve, so the CLI closes, forgets, refreshes or resumes it only for serve (--acp;
+    /// crate::cli::refuse_app_run), and a message about it sends the human to the app; only such a run can be stopped
+    /// from outside, through its socket.
+    pub fn app_managed(&self) -> bool {
+        self.backend == Backend::Acp
+    }
+
     /// Whether the run is closed, as closed_line says.
     pub fn is_closed(&self) -> bool {
         self.closed_line().is_some()

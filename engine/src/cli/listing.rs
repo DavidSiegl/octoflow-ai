@@ -14,8 +14,7 @@ use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{Health, ThisMachine, STALE};
 use crate::state::{
-    find_run, judged_by_several, run_dir, AgentRecord, Backend, RunState, SavedRun, StepVerdict, TurnRecord,
-    NOTHING_TO_PUBLISH,
+    find_run, judged_by_several, run_dir, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord, NOTHING_TO_PUBLISH,
 };
 use crate::summary::turn_lines;
 use serde_json::Value;
@@ -76,10 +75,9 @@ pub fn run_record(run: &SavedRun, machine: ThisMachine, target: &[String]) -> Ob
     let health = run.health(machine);
     let stale = matches!(health, Some(Health::Stale(_)));
     let running = matches!(health, Some(Health::Running(_)));
-    // resume refuses a run whose state.json it cannot read. A stale run of the desktop app's is resumed from the app,
-    // and the CLI refuses it (crate::cli::refuse_app_run), so it has no command.
+    // resume refuses a run whose state.json it cannot read, and the CLI an app-managed one (RunState::app_managed).
     let resumable_stale = stale && !s.is_closed() && unreadable.is_none();
-    let resume = (resumable_stale && s.backend != Backend::Acp).then(|| resume_command(&s.run_id, target));
+    let resume = (resumable_stale && !s.app_managed()).then(|| resume_command(&s.run_id, target));
     let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {

@@ -33,6 +33,7 @@ use crate::agents::{AgentError, AgentLaunch, Agents, LaunchedModel, RunPlaces, S
 use crate::env::without_withheld;
 use crate::error::OrchestratorError;
 use crate::harness::{harness, AcpLaunch, AcpProgram, Harness, ModeSetting, Tokens, Usage};
+use crate::host::Host;
 use crate::human::Human;
 use crate::interrupt::Interrupt;
 use crate::state::{AgentRecord, Backend, RunState, UnofferedModel};
@@ -367,6 +368,22 @@ impl Agents for AcpAgents<'_> {
             connection.stop();
         }
         answer_cancels(&connections);
+    }
+
+    fn session_usage(
+        &self,
+        run: &RunState,
+        host: &dyn Host,
+        _kind: &str,
+        session: &str,
+    ) -> Result<Option<Vec<Usage>>, OrchestratorError> {
+        let Some(log) = host.read(&usage_file(run))? else { return Ok(None) };
+        let usage = session_usage(&log, session);
+        Ok((!usage.is_empty()).then_some(usage))
+    }
+
+    fn waited_seconds(&self, run: &RunState, role: &str, from: i64, to: i64) -> Result<Option<i64>, OrchestratorError> {
+        waited_seconds(run, role, from, to).map(Some)
     }
 }
 
