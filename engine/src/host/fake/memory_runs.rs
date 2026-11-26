@@ -12,9 +12,10 @@ use crate::state::SavedRun;
 use serde_json::Value;
 
 /// The runs of the project at cwd that files, (path, text) pairs, hold a state.json for, as Host::run_states gives them
-/// (scope Every) or Host::run_states_inside does (scope Inside), in the order of their directories' names. only, when
-/// given, is the one run directory's name to read, as Host::run_state and run_state_inside read one. age gives the
-/// seconds since a run's state.json was written, by its directory's name.
+/// (scope Every) or Host::run_states_inside does (scope Inside), in the byte order of their state.json paths, as sh's
+/// glob gives them: "runs/a-1/state.json" before "runs/a/state.json". only, when given, is the one run directory's
+/// name to read, as Host::run_state and run_state_inside read one. age gives the seconds since a run's state.json was
+/// written, by its directory's name.
 pub(crate) fn run_states<'a>(
     files: impl IntoIterator<Item = (&'a String, &'a String)>,
     age: impl Fn(&str) -> u64,
@@ -36,12 +37,10 @@ pub(crate) fn run_states<'a>(
         let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !files.contains_key(format!("{run_dir}/{f}").as_str()));
         let run = SavedRun::read(age(dir), &run_dir, text.as_bytes()).lacking_ending_file(lacks);
         if scope == RunScope::Every || run.shown().run_id == dir {
-            states.push((dir, run));
+            states.push(run);
         }
     }
-    // By path, "runs/a-1/state.json" comes before "runs/a/state.json"; the real Host's glob gives a before a-1.
-    states.sort_by_key(|(dir, _)| *dir);
-    states.into_iter().map(|(_, run)| run).collect()
+    states
 }
 
 /// The metrics.json of each run of the project at cwd among files, (path, text) pairs, as Host::run_metrics reads

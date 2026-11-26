@@ -283,7 +283,7 @@ pub(crate) struct FakeState {
     /// Run before each git command, given its directory and arguments, when set, before the fake plays it: a test's
     /// own step, such as failing remove_worktree's command.
     pub before_git: Option<BeforeGit>,
-    /// What run_states answers instead, when set and it gives Some.
+    /// What run_states answers instead, when set and it gives Some; run_state then finds its run among those.
     pub run_states_with: Option<RunStatesWith>,
     /// The real host a command the host runs other than git (Host::exec, so run, check and run_files) runs on, a
     /// process on this machine, when set: a ProcessHost,
