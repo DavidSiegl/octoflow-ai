@@ -90,12 +90,15 @@ fn runs_start_by_the_appimage_file_only_while_the_app_runs_from_its_mount() {
     // The .deb and macOS: no AppImage.
     assert_eq!(run_program(None, Path::new("/usr/bin/octoflow-desktop"), |_: &Path| false), None);
     assert_eq!(run_program(Some(OsString::new()), exe, mounted), None);
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStringExt;
-        let latin1 = OsString::from_vec(b"/home/u/T\xe9l\xe9chargements/Octoflow.AppImage".to_vec());
-        assert_eq!(run_program(Some(latin1), exe, mounted), None);
-    }
+}
+
+#[test]
+#[cfg(unix)]
+fn an_appimage_path_that_is_not_utf_8_is_not_passed_on() {
+    use std::os::unix::ffi::OsStringExt;
+    let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
+    let latin1 = OsString::from_vec(b"/home/u/T\xe9l\xe9chargements/Octoflow.AppImage".to_vec());
+    assert_eq!(run_program(Some(latin1), exe, |_: &Path| true), None);
 }
 
 #[test]
