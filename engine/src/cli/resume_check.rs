@@ -11,7 +11,8 @@ use crate::state::{RunState, SavedRun};
 /// from machine (RunState::health); acp is resume's --acp and force its --force.
 ///
 /// Errors: its state cannot be read (SavedRun::problem), or its saved workflow or prompts; it is the desktop app's and
-/// acp is false (refuse_app_run); it was closed; or it looks alive and force is false.
+/// acp is false (refuse_app_run), or its agents run in herdr and acp is true; it was closed; or it looks alive and
+/// force is false.
 pub(crate) fn resume_gate<'r>(
     run: &'r SavedRun,
     acp: bool,
@@ -20,6 +21,14 @@ pub(crate) fn resume_gate<'r>(
 ) -> Result<(&'r RunState, Pipeline), OrchestratorError> {
     let state = run.state()?;
     refuse_app_run(state, "resume", acp)?;
+    // The resume's agents are the ones --acp picks, so they must be the run's backend's even where none starts: a done
+    // run's ending counts its tokens through them (Workflow::count_tokens), past the check Agents::open makes.
+    if acp && !state.app_managed() {
+        return Err(OrchestratorError(format!(
+            "run {} runs its agents in herdr, not over ACP; resume it without --acp",
+            state.run_id
+        )));
+    }
     // Not even with --force: close may have deleted its worktree and branch.
     if state.is_closed() {
         return Err(OrchestratorError(format!("run {} was closed; start a new run", state.run_id)));

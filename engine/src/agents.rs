@@ -219,7 +219,9 @@ pub trait Agents: RunPlaces {
     /// The token usage the run recorded for session, a non-empty session id of harness kind, oldest first, read
     /// through host: herdr's from the harness's session log (Host::session_log), ACP's from the usage its agents
     /// answered prompts with. None where none is recorded: a harness without a session log, no such log, an ACP session
-    /// no answer of carried a usage. Errors: the record cannot be read, or kind is no harness.
+    /// no answer of carried a usage. A herdr session log that holds no usage gives an empty list, whose turns count
+    /// zero tokens rather than unknown (crate::summary::turn_tokens). Errors: the record cannot be read; herdr: kind
+    /// is no harness (ACP reads one record for every harness and ignores kind).
     fn session_usage(
         &self,
         run: &RunState,

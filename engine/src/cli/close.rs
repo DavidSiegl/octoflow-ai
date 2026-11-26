@@ -287,12 +287,12 @@ pub struct RunStopped {
 }
 
 /// Stop every desktop app run (RunState::app_managed) of the project at cwd that world's scope reads as RUNNING, as
-/// the app's "Stop all" does, or with dry_run only say which: each is told to stop in turn (tell_stop), then each is waited for
-/// until it is released as interrupted (await_release), for at most STOP_WAIT from when it was told, so that the waits
-/// overlap rather than add up, and a run told late, after others' sockets were slow to answer, still gets all of it.
-/// A run of herdr's is left running: its human stops it in its pane. Returns the runs, in run id order, each with its
-/// failure, if any: one run that fails does not keep the others from stopping. Errors: the project's runs cannot be
-/// read.
+/// the app's "Stop all" does, or with dry_run only say which: each is told to stop in turn (tell_stop), then each is
+/// waited for until it is released as interrupted (await_release), for at most STOP_WAIT from when it was told, so
+/// that the waits overlap rather than add up, and a run told late, after others' sockets were slow to answer, still
+/// gets all of it. A run of herdr's is left running: its human stops it in its pane. Returns the runs, in run id
+/// order, each with its failure, if any: one run that fails does not keep the others from stopping. Errors: the
+/// project's runs cannot be read.
 pub fn stop_all(world: &Closer, cwd: &str, dry_run: bool) -> Result<Vec<RunStopped>, OrchestratorError> {
     let runs = world.scope.states(world.host, cwd)?;
     let mut running: Vec<&RunState> = runs
