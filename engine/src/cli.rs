@@ -446,7 +446,7 @@ fn runs_command(runs: &RunsCommand, world: &Connected, cwd: &str, target: &[Stri
             }
         }
         RunsCommand::Prune { dry_run } => {
-            prune::print_pruned(world, &prune::prune_branches(world, cwd, *dry_run, true)?)
+            prune::print_pruned(world, &prune::prune_branches(world, cwd, *dry_run, true, false)?)
         }
     }
     Ok(())

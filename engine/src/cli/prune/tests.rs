@@ -164,7 +164,7 @@ impl Prune {
 
     /// prune_branches by run id, ordered as returned.
     fn prune(&self, dry_run: bool, revisit: bool) -> Vec<(String, PrunedRun)> {
-        let pruned = self.cli.with(|w| prune_branches(w, "/proj", dry_run, revisit)).expect("prune_branches");
+        let pruned = self.cli.with(|w| prune_branches(w, "/proj", dry_run, revisit, false)).expect("prune_branches");
         pruned.into_iter().map(|r| (r.run_id.clone(), r)).collect()
     }
 
@@ -847,12 +847,29 @@ fn single_branches() {
 fn nothing_when_there_was_nothing_to_do() {
     let p = Prune::new();
     assert!(p.sweep().is_empty());
+    // No candidate, no git: not even for the branch the starting run takes (review 338, F1).
+    assert!(p.host().git_calls.is_empty());
     p.add(run("aaaaaa", open()));
     p.add(run("bbbbbb", merged()).n(8).with("branch_cleanup", "kept: checked out in /proj"));
     // Both sides already gone: recorded, but nothing deleted.
     let gone = p.add(run("cccccc", merged()).n(9).local(None).remote(None));
     assert!(p.sweep().is_empty());
     assert_eq!(p.cleanup(&gone), Value::from("deleted"));
+}
+
+#[test]
+fn the_sweep_spares_the_checked_out_branch_and_prune_does_not() {
+    let p = Prune::new();
+    let branch = "orchestrator/task-aaaaaa";
+    let run_id = p.add(run("aaaaaa", merged()));
+    p.host().branch = branch.to_string();
+    assert!(p.sweep().is_empty());
+    assert_eq!(p.cleanup(&run_id), Value::Null);
+    assert!(p.deleting_calls().is_empty());
+    // prune itself deletes origin's, and keeps the local branch only while it is checked out.
+    assert_eq!(p.cli.main(&["prune", "--cwd", "/proj"]), 0, "{:?}", p.log());
+    assert!(!p.host().remote.contains_key(branch));
+    assert_eq!(p.cleanup(&run_id), Value::from("kept: checked out in /proj"));
 }
 
 #[test]
@@ -871,7 +888,7 @@ fn a_failure_during_a_ctrl_c_stops_prune_and_the_sweep() {
     p.add(run("aaaaaa", failing(1, "interrupted")));
     p.add(run("bbbbbb", merged()).n(8));
     p.cli.f.interrupt.raise();
-    let e = p.cli.with(|w| prune_branches(w, "/proj", false, false)).unwrap_err();
+    let e = p.cli.with(|w| prune_branches(w, "/proj", false, false, false)).unwrap_err();
     assert!(e.0.contains("interrupted"), "{e}");
     // Nothing logged, and the second run not looked at.
     assert!(p.log().is_empty());
@@ -1022,6 +1039,23 @@ fn deletes_merged_branches_before_the_interview() {
 }
 
 #[test]
+fn spares_the_checked_out_branch_the_run_takes_as_its_base() {
+    let t = SweepOnRun::new();
+    let base = "orchestrator/task-aaaaaa";
+    let earlier = t.p.add(run("aaaaaa", merged()).with("closed", "workspace closed"));
+    t.p.host().branch = base.to_string();
+    assert_eq!(t.p.cli.main(&["run", "--cwd", "/proj", "task"]), 0, "{:?}", t.p.log());
+    let (branches, remote) = t.seen.borrow().clone().expect("the interview ran");
+    assert_eq!((branches.get(base), remote.get(base)), (Some(&PR_HEAD.to_string()), Some(&PR_HEAD.to_string())));
+    // Nothing recorded: the earlier run waits for prune until the new run is closed.
+    assert_eq!(t.p.cleanup(&earlier), Value::Null);
+    let host = t.p.host();
+    let new_run = host.files.iter().find(|(path, _)| path.ends_with("/state.json") && *path != &state_path(&earlier));
+    let new_run = RunState::from_text(new_run.expect("the new run's state").1).expect("a state");
+    assert_eq!(new_run.base_branch.as_deref(), Some(base));
+}
+
+#[test]
 fn a_failing_sweep_leaves_the_run_as_it_was() {
     let t = SweepOnRun::new();
     t.p.add(run("aaaaaa", merged()));
@@ -1121,7 +1155,7 @@ fn prune_on_real_git_with_worktree(in_worktree: bool) -> PrunedRun {
         .with(|world| {
             let mut world = *world;
             world.with.host = &repo.host;
-            prune_branches(&world, &repo.path, false, false)
+            prune_branches(&world, &repo.path, false, false, false)
         })
         .unwrap();
     let [r] = &pruned[..] else { panic!("{pruned:?}") };

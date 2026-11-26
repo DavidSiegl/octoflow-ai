@@ -140,7 +140,18 @@ fn commit_titles() {
     assert_eq!(commit_title(&ends_at_limit), "word ".repeat(14) + "a…");
     // Characters, not bytes; and one word longer than the limit is cut inside it.
     assert_eq!(commit_title(&"ü".repeat(80)), "ü".repeat(71) + "…");
-    for title in [task.to_string(), ends_at_limit, "ü".repeat(80)] {
+    // A word cut that would keep under half the limit is cut inside the long word instead (todo 121): "Fix…" is no
+    // title. Kept words of exactly half the limit stay the cut.
+    let url = format!("Fix https://example.com/{}", "p".repeat(80));
+    assert_eq!(commit_title(&url), url.chars().take(71).collect::<String>() + "…");
+    let short_words = "a".repeat(35) + " " + &"b".repeat(80);
+    assert_eq!(commit_title(&short_words), "a".repeat(35) + " " + &"b".repeat(35) + "…");
+    // The blanks before an in-word cut's "…" are dropped too (review 338, F2).
+    let blanks = "a".repeat(10) + &" ".repeat(70) + &"b".repeat(10);
+    assert_eq!(commit_title(&blanks), "a".repeat(10) + "…");
+    let half_words = "a".repeat(36) + " " + &"b".repeat(80);
+    assert_eq!(commit_title(&half_words), "a".repeat(36) + "…");
+    for title in [task.to_string(), ends_at_limit, "ü".repeat(80), url, short_words, half_words] {
         assert!(commit_title(&title).chars().count() <= 72, "{title}");
     }
 }

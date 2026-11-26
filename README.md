@@ -422,7 +422,8 @@ ticket needs you (its blockers cannot be read, or one is `wontfix`), or `5`.
    diverged, the run stops before the interview. A fetch that could not reach `origin`, or that `origin` refused to
    let in, is tried three more times, 5, 20 and 60 s apart, each wait shown in the log, before the run stops. A
    `--worktree` run checks `origin`'s version of the branch out in its own worktree instead. A run that will open a
-   pull request first deletes the branches of earlier runs whose pull request is done, as `prune` does.
+   pull request first deletes the branches of earlier runs whose pull request is done, as `prune` does, but for
+   the branch checked out, which it takes as its base.
 2. **Spec Collector.** A notification tells you it is waiting. Answer its questions in its pane; once you approve
    the spec, it writes `spec.md`. With `--spec`, there is no interview.
 3. **Builder.** The base branch is fast-forwarded again, and the branch `orchestrator/<spec title>-<id>` is
