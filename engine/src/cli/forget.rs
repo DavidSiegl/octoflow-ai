@@ -7,6 +7,7 @@ use crate::error::OrchestratorError;
 use crate::host::{Host, RunScope};
 use crate::interrupt::Interrupt;
 use crate::json::object;
+use crate::runs::ThisMachine;
 use crate::state::{find_run, run_dir, SavedRun};
 use serde_json::Value;
 
@@ -22,11 +23,9 @@ pub struct Forgetter<'a> {
     pub scope: RunScope,
     /// True when forget may forget the desktop app's runs (refuse_app_run): serve's, and the CLI's given --acp.
     pub acp: bool,
-    /// Whether a process of an id runs on this machine: crate::runs::pid_alive, but in tests. Tells a forget lock
-    /// this machine's process left when it died (ForgetLock::take).
-    pub pid_alive: &'a dyn Fn(i64) -> bool,
-    /// This machine's name, as crate::runs::local_host gives it, which a forget lock names its holder's machine by.
-    pub local_host: &'a str,
+    /// The machine forget runs on, whose name a forget lock names its holder's machine by, and which tells a lock
+    /// one of its processes left when it died (ForgetLock::take).
+    pub machine: ThisMachine<'a>,
 }
 
 /// Which runs forget_all looks at, and whether it deletes.
@@ -91,8 +90,7 @@ impl<'a> Forgetter<'a> {
             stdout: world.stdout,
             scope: RunScope::Every,
             acp: world.acp,
-            pid_alive: world.with.pid_alive,
-            local_host: world.local_host,
+            machine: world.with.machine,
         }
     }
 
@@ -283,7 +281,7 @@ impl<'w, 'a> ForgetLock<'w, 'a> {
             .map_err(|e| OrchestratorError(format!("cannot read /dev/urandom for a forget lock: {e}")))?;
         let nonce: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         let holder = object([
-            ("host", Value::from(world.local_host)),
+            ("host", Value::from(world.machine.name())),
             ("pid", Value::from(std::process::id())),
             ("nonce", Value::from(nonce.as_str())),
         ]);
@@ -371,7 +369,7 @@ fn holder_of(held: &str) -> Option<(String, i64)> {
 /// lock's age cannot be read, as when it is gone since.
 fn left_by_the_dead(world: &Forgetter, path: &str, held: &str) -> Result<bool, OrchestratorError> {
     let age = world.host.now()? - world.host.mtime(path)?;
-    let gone = |(host, pid): (String, i64)| host == world.local_host && !(world.pid_alive)(pid);
+    let gone = |(host, pid): (String, i64)| world.machine.has_exited(&host, pid);
     Ok(age >= LOCK_SILENCE || age > HEARTBEAT_SECONDS as i64 && holder_of(held).is_some_and(gone))
 }
 

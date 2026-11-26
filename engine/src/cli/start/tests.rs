@@ -16,7 +16,6 @@ use crate::host::Host;
 use crate::json::object;
 use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
-use crate::runs::local_host;
 use crate::state::Backend;
 use crate::test_support::{herdr_server, quick, read_saved, resumable, solo, TempDir};
 use crate::workflow::fixture::{quality_state, review_turn, saved_run, Fixture};
@@ -126,13 +125,23 @@ fn live_run_needs_force() {
     let me = [("host", Value::from("here")), ("pid", Value::from(42)), ("started_at", Value::from("x"))];
     let saved = Value::Object(saved_settings(&[("owner", Value::Object(object(me)))]));
     let alive = |_: i64| true;
-    let e = resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(
+        &[read_saved(30, &saved)],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        ThisMachine::new("here", &alive),
+    )
+    .unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
     );
-    let forced =
-        resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3", "--force"]), "/proj", "here", &alive);
+    let forced = resumable_state(
+        &[read_saved(30, &saved)],
+        &resume_args(&["a1b2c3", "--force"]),
+        "/proj",
+        ThisMachine::new("here", &alive),
+    );
     assert_eq!(forced.unwrap().0.run_id, "20260929-120000-a1b2c3");
 }
 
@@ -142,7 +151,13 @@ fn a_done_run_still_ending_needs_force() {
     let done = [("phase", Value::from("done")), ("owner", Value::Object(object(me)))];
     let saved = Value::Object(saved_settings(&done));
     let alive = |_: i64| true;
-    let e = resumable_state(&[read_saved(30, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &alive).unwrap_err();
+    let e = resumable_state(
+        &[read_saved(30, &saved)],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        ThisMachine::new("here", &alive),
+    )
+    .unwrap_err();
     assert_eq!(
         e.0,
         "run 20260929-120000-a1b2c3 looks alive (pid 42 on here, beat 30s ago); pass --force to take it over"
@@ -150,7 +165,13 @@ fn a_done_run_still_ending_needs_force() {
     // Once its orchestrator is gone, it is resumed so that its ending is finished.
     let dead = |_: i64| false;
     let late = HEARTBEAT_SECONDS + 1;
-    assert!(resumable_state(&[read_saved(late, &saved)], &resume_args(&["a1b2c3"]), "/proj", "here", &dead).is_ok());
+    assert!(resumable_state(
+        &[read_saved(late, &saved)],
+        &resume_args(&["a1b2c3"]),
+        "/proj",
+        ThisMachine::new("here", &dead)
+    )
+    .is_ok());
 }
 
 #[test]
@@ -189,17 +210,19 @@ fn a_run_whose_closed_is_empty_is_resumed() {
 
 // -- resume --force against another run of the checkout ------------------------------------------------------------
 
-/// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this host. The fixture of
+/// resume --force of run a1b2c3 on host, which looks alive: saved 30 s ago by a live pid on this machine ("here", the
+/// Fixture's). The fixture of
 /// the state resumable_state gives, its pid_alive taking every pid for alive.
 fn force_resume(host: Rc<FakeHost>) -> Fixture {
     let mut saved = saved_run("review", 1, &["spec", "build", "review"]);
-    let owner = [("host", Value::from(local_host())), ("pid", Value::from(4242)), ("started_at", Value::from("x"))];
+    let owner = [("host", Value::from("here")), ("pid", Value::from(4242)), ("started_at", Value::from("x"))];
     saved.owner = Some(object(owner));
     host.state().files.insert(format!("{}/state.json", saved.dir()), saved.to_text());
     host.state().ages.insert(saved.run_id.clone(), 30);
     let runs = host.run_states("/proj").unwrap();
-    let (state, _) = resumable_state(&runs, &resume_args(&["a1b2c3", "--force"]), "/proj", &local_host(), &|_| true)
-        .expect("--force resumes a run that looks alive");
+    let (state, _) =
+        resumable_state(&runs, &resume_args(&["a1b2c3", "--force"]), "/proj", ThisMachine::new("here", &|_| true))
+            .expect("--force resumes a run that looks alive");
     let mut f = Fixture::resume(host, state, vec![("review", vec![review_turn(1, APPROVE)])], &[], &[]);
     f.pid_alive = Box::new(|_| true);
     f
@@ -213,14 +236,14 @@ fn force_takes_over_the_run_itself() {
 
 #[test]
 fn force_does_not_override_another_live_run() {
-    // The checkout's other run, saved 16 s ago by a live orchestrator of this host.
+    // The checkout's other run, saved 16 s ago by a live orchestrator of this machine ("here", the Fixture's).
     let other_id = "20261009-220151-537935";
     let host = Rc::new(FakeHost::default());
     let mut other = RunState::new(other_id, "another task", "/proj");
     other.phase = "build".into();
     other.round = 1;
     let owner = [
-        ("host", Value::from(local_host())),
+        ("host", Value::from("here")),
         ("pid", Value::from(3_354_482)),
         ("started_at", Value::from("2026-10-09T22:01:51+00:00")),
     ];
@@ -231,9 +254,8 @@ fn force_does_not_override_another_live_run() {
     let f = force_resume(host);
     let e = f.workflow(f.as_saved()).run().unwrap_err();
     let expected = format!(
-        "run {other_id} is running in /proj (pid 3354482 on {}, beat 16s ago); one run at a time per checkout: wait \
-         for it, stop it, or use another clone",
-        local_host()
+        "run {other_id} is running in /proj (pid 3354482 on here, beat 16s ago); one run at a time per checkout: \
+         wait for it, stop it, or use another clone"
     );
     assert_eq!(e.to_string(), expected);
     let saved = f.saved();
@@ -319,7 +341,6 @@ fn connected<'a>(f: &'a Fixture, config: &'a ConfigDir) -> Connected<'a> {
         with: f.collaborators(),
         places: &*f.herdr,
         config,
-        local_host: "here",
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &crate::cli::run_workflow,
@@ -598,10 +619,15 @@ fn a_run_is_resumable_exactly_when_resume_takes_it_and_has_something_left_to_do(
     for (what, saved, age, alive, lacking, expected) in cases {
         let run = read_saved(age, &Value::Object(saved)).lacking_ending_file(lacking);
         let pid_alive = move |_: i64| alive;
-        assert_eq!(resume_check::resumable(&run, "here", &pid_alive).is_ok(), expected, "{what}");
+        assert_eq!(resume_check::resumable(&run, ThisMachine::new("here", &pid_alive)).is_ok(), expected, "{what}");
         let backend = run.shown().backend;
         let argv: &[&str] = if backend == Backend::Acp { &["a1b2c3", "--acp"] } else { &["a1b2c3"] };
-        let taken = resumable_state(std::slice::from_ref(&run), &resume_args(argv), "/proj", "here", &pid_alive);
+        let taken = resumable_state(
+            std::slice::from_ref(&run),
+            &resume_args(argv),
+            "/proj",
+            ThisMachine::new("here", &pid_alive),
+        );
         // resume also takes a finished run, which it leaves as it is (Workflow::run).
         assert_eq!(taken.is_ok(), expected || what == "finished", "{what}: {:?}", taken.err());
     }

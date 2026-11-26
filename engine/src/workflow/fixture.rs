@@ -17,7 +17,7 @@ use crate::json::object;
 use crate::json::Object;
 use crate::package_index::PackageIndexes;
 use crate::pypi::fake::FakePyPI;
-use crate::runs::pid_alive;
+use crate::runs::{pid_alive, ThisMachine};
 use crate::state::{AgentRecord, RunState, TurnRecord};
 use serde_json::Value;
 
@@ -81,8 +81,11 @@ pub(crate) struct Fixture {
     pub clock: Rc<FakeClock>,
     pub told: Told,
     pub interrupt: Interrupt,
-    /// The Workflow's pid_alive: crate::runs::pid_alive unless a test sets its own before making the Workflow.
+    /// Whether a process of an id exists on the Workflow's machine: crate::runs::pid_alive unless a test sets its own
+    /// before making the Workflow.
     pub pid_alive: Box<dyn Fn(i64) -> bool>,
+    /// The name of the Workflow's machine (Collaborators::machine), which its owner record names: "here".
+    pub machine_name: String,
     /// The state the Workflow starts from.
     pub state: RunState,
     /// Whether the Workflow's settings turn the quality gate on, whatever a test's say: false until gated turns it on.
@@ -133,6 +136,7 @@ impl Fixture {
             told: Told::default(),
             interrupt,
             pid_alive: Box::new(pid_alive),
+            machine_name: "here".to_string(),
             state,
             quality_gate_on: false,
             gate: Rc::default(),
@@ -212,7 +216,7 @@ impl Fixture {
             clocks: &*self.clock,
             human: &self.told,
             interrupt: &self.interrupt,
-            pid_alive: &*self.pid_alive,
+            machine: ThisMachine::new(&self.machine_name, &*self.pid_alive),
             indexes: &self.indexes,
         }
     }

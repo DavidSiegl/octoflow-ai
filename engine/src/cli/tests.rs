@@ -45,7 +45,6 @@ fn run_on(f: &Fixture, argv: &[&str]) -> Result<Ran, Stop> {
         with: f.collaborators(),
         places: &*f.herdr,
         config: &config,
-        local_host: "here",
         stdout: &|_| {},
         stderr: &|_| {},
         workflow: &run_workflow,

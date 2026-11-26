@@ -13,6 +13,7 @@ use crate::json::Object;
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{load_prompts, Prompts};
+use crate::runs::ThisMachine;
 use crate::spec_file::SpecFile;
 use crate::state::{find_run, run_dir, RunState, SavedRun};
 use crate::workflow::{check_gate_mid_run, turn_quality_gate_off, turn_quality_gate_on};
@@ -130,7 +131,7 @@ pub fn resumed_state(
 ) -> Result<(RunState, Pipeline), OrchestratorError> {
     let w = &world.with;
     let runs = w.host.run_states(cwd)?;
-    let (mut state, pipeline) = resumable_state(&runs, args, cwd, world.local_host, w.pid_alive)?;
+    let (mut state, pipeline) = resumable_state(&runs, args, cwd, w.machine)?;
     if state.phase == DONE {
         return Ok((state, pipeline));
     }
@@ -166,11 +167,10 @@ pub fn resumable_state(
     runs: &[SavedRun],
     args: &ResumeArgs,
     cwd: &str,
-    local_host: &str,
-    pid_alive: &dyn Fn(i64) -> bool,
+    machine: ThisMachine,
 ) -> Result<(RunState, Pipeline), OrchestratorError> {
     let run = find_run(runs, &args.run_ref, cwd)?;
-    let (state, pipeline) = resume_gate(run, args.target.acp, args.force, local_host, pid_alive)?;
+    let (state, pipeline) = resume_gate(run, args.target.acp, args.force, machine)?;
     let mut state = state.clone();
     // A done run's record keeps what it ran with: its resume only finishes its ending (Workflow::run).
     if state.phase == DONE {

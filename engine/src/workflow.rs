@@ -35,7 +35,7 @@ use crate::pull_request::{
 };
 use crate::quality::parse_gate;
 use crate::run_commands::RunCommands;
-use crate::runs::{local_host, RUNNING};
+use crate::runs::{Health, ThisMachine};
 use crate::spec_file::SpecFile;
 use crate::state::{AgentStart, Backend, RunState, SavedRun};
 use crate::summary::{run_metrics, run_summary, turn_tokens};
@@ -88,9 +88,9 @@ pub struct Collaborators<'a> {
     /// The Ctrl-C: once raised, the run stops at its next pause, or at the failure of what was running when it was
     /// raised, as interrupted.
     pub interrupt: &'a Interrupt,
-    /// Whether a process of a pid exists on this machine, for judging the checkout's other runs (RunState::health):
-    /// crate::runs::pid_alive, which a test replaces.
-    pub pid_alive: &'a dyn Fn(i64) -> bool,
+    /// The machine the run is driven from, which its owner record names, and from which the checkout's other runs
+    /// are judged (RunState::health).
+    pub machine: ThisMachine<'a>,
     /// The indexes the quality rounds' new-dependencies check asks about each package the change adds
     /// (crate::checks); a run without the quality gate never asks them.
     pub indexes: &'a PackageIndexes,
@@ -211,7 +211,8 @@ pub struct Workflow<'a> {
     clocks: &'a dyn Clocks,
     human: &'a dyn Human,
     interrupt: &'a Interrupt,
-    pid_alive: &'a dyn Fn(i64) -> bool,
+    /// Collaborators::machine.
+    machine: ThisMachine<'a>,
     /// RunSettings::quality_gate_on.
     quality_gate_on: bool,
     /// Collaborators::indexes.
@@ -289,7 +290,7 @@ impl<'a> Workflow<'a> {
         state.quality_job = settings.quality_gate_on.then(|| LOCAL_GATE.to_string());
         state.max_quality_rounds = settings.max_quality_rounds;
         let me = object([
-            ("host", Value::from(local_host())),
+            ("host", Value::from(with.machine.name())),
             ("pid", Value::from(std::process::id())),
             ("started_at", Value::from(iso_utc(with.clocks.wall().floor() as i64))),
         ]);
@@ -299,7 +300,7 @@ impl<'a> Workflow<'a> {
             clocks: with.clocks,
             human: with.human,
             interrupt: with.interrupt,
-            pid_alive: with.pid_alive,
+            machine: with.machine,
             quality_gate_on: settings.quality_gate_on,
             indexes: with.indexes,
             state,
@@ -606,12 +607,6 @@ impl<'a> Workflow<'a> {
         Ok(runs)
     }
 
-    /// The health of run as this orchestrator's host sees it: SavedRun::health, with this host as the local one.
-    fn health_of(&self, run: &SavedRun) -> Option<(&'static str, String)> {
-        let me = self.me.get("host").and_then(Value::as_str).unwrap_or_default();
-        run.health(me, self.pid_alive)
-    }
-
     /// Fail if another run in this checkout is live: the two would share one working tree.
     ///
     /// A worktree run shares no working tree, neither with another worktree run nor with the run in the checkout.
@@ -628,7 +623,7 @@ impl<'a> Workflow<'a> {
             if other.worktree.as_deref().is_some_and(|w| !w.is_empty()) {
                 continue;
             }
-            if let Some((RUNNING, why)) = self.health_of(&run) {
+            if let Some(Health::Running(why)) = run.health(self.machine) {
                 return Err(OrchestratorError(format!(
                     "run {} is running in {} ({why}); one run at a time per checkout: wait for it, stop it, or \
                      use another clone",
@@ -893,8 +888,8 @@ impl<'a> Workflow<'a> {
                 }
                 format!("which origin does not have; check out {base}")
             } else {
-                match self.health_of(&run) {
-                    Some((RUNNING, why)) => {
+                match run.health(self.machine) {
+                    Some(Health::Running(why)) => {
                         format!("which is running ({why}); wait for it to end, then check out {base}")
                     }
                     // The CLI refuses to close the desktop app's runs (cli::refuse_app_run).
