@@ -297,12 +297,17 @@ struct Sidecar {
 
 impl Sidecar {
     /// The app itself as its sidecar: `Sidecar::start` with this process's executable, which is the CLI when given
-    /// arguments (`cli`), and with the checkout the app was built in as the project of a development build
-    /// (`tauri dev`), none otherwise. When the executable cannot be told, that is the connection's reason.
+    /// arguments (`cli`), with the checkout the app was built in as the project of a development build
+    /// (`tauri dev`), none otherwise, and its runs started by `run_program`'s choice. When the executable cannot be
+    /// told, that is the connection's reason.
     fn of_app(origin: &str) -> Sidecar {
         let project = tauri::is_dev().then(|| checkout().display().to_string());
         match std::env::current_exe() {
-            Ok(app) => Sidecar::start(&app, origin, project),
+            Ok(app) => {
+                // Read here, in the window's process: the sidecar takes the user's shell, which has no APPIMAGE.
+                let runs_by = run_program(std::env::var_os("APPIMAGE"), &app, on_fuse);
+                Sidecar::start(&app, origin, project, runs_by.as_deref())
+            }
             Err(e) => {
                 let reason = format!("cannot tell the app's own program: {e}");
                 Sidecar { child: Mutex::new(None), connection: Err(reason) }
@@ -310,12 +315,12 @@ impl Sidecar {
         }
     }
 
-    /// Start program's `serve`, answering requests from origin, and read the server's first line; project is the
-    /// one the window opens first. The sidecar inherits the app's environment and directory, and takes the user's
-    /// shell itself, as the CLI does (`Cli::run`). A sidecar that cannot be started, or prints no such line, keeps
-    /// the reason as its connection.
-    fn start(program: &Path, origin: &str, project: Option<String>) -> Sidecar {
-        match spawn(program, origin) {
+    /// Start program's `serve`, answering requests from origin and starting its runs by runs_by (None: by program),
+    /// and read the server's first line; project is the one the window opens first. The sidecar inherits the app's
+    /// environment and directory, and takes the user's shell itself, as the CLI does (`Cli::run`). A sidecar that
+    /// cannot be started, or prints no such line, keeps the reason as its connection.
+    fn start(program: &Path, origin: &str, project: Option<String>, runs_by: Option<&Path>) -> Sidecar {
+        match spawn(program, origin, runs_by) {
             Ok((child, served)) => {
                 let version = octoflow_engine::VERSION;
                 let connection = Connection { url: served.url, token: served.token, project, version };
@@ -336,12 +341,17 @@ impl Sidecar {
     }
 }
 
-/// The started sidecar and its first line; Err with why, the sidecar killed, when it cannot be started or that line
-/// is not `serve`'s: what the sidecar wrote to its standard error, as `serve` and the CLI say why they refuse
-/// (`Cli::run`), else what it printed instead. A started sidecar's standard error goes on to the app's.
-fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
-    let mut child = Command::new(program)
-        .args(["serve", "--origin", origin])
+/// The started sidecar, program's `serve` answering origin and starting its runs by runs_by when given, and its
+/// first line; Err with why, the sidecar killed, when it cannot be started or that line is not `serve`'s: what the
+/// sidecar wrote to its standard error, as `serve` and the CLI say why they refuse (`Cli::run`), else what it
+/// printed instead. A started sidecar's standard error goes on to the app's.
+fn spawn(program: &Path, origin: &str, runs_by: Option<&Path>) -> Result<(Child, Served), String> {
+    let mut command = Command::new(program);
+    command.args(["serve", "--origin", origin]);
+    if let Some(runs_by) = runs_by {
+        command.arg("--run-program").arg(runs_by);
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -377,6 +387,32 @@ fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
             let said = said.trim();
             Err(if said.is_empty() { printed } else { said.to_string() })
         }
+    }
+}
+
+/// The program the sidecar starts its runs and resumes by, the app's being exe: the AppImage file, appimage
+/// (`$APPIMAGE`, None or empty when unset), while exe is on the AppImage's mount, by mounted (`on_fuse`). That mount
+/// ends when the app quits, and a run still to page in some of its program would then die by SIGBUS; the AppImage
+/// file starts the same program in a mount of the run's own. None, for the sidecar's own program, otherwise: the
+/// .deb, macOS, and an AppImage extracted, by the user or by its runtime (`APPIMAGE_EXTRACT_AND_RUN`), whose files
+/// stay readable to the processes that run them; and an AppImage whose path is not UTF-8, which serve, whose paths
+/// are strings, would refuse along with the whole sidecar.
+fn run_program(appimage: Option<OsString>, exe: &Path, mounted: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    appimage.filter(|path| !path.is_empty() && path.to_str().is_some() && mounted(exe)).map(PathBuf::from)
+}
+
+/// Whether path is on a FUSE file system, as a mounted AppImage's files are. False when that cannot be told, as for a
+/// path that is not there, and off Linux, where there are no AppImages.
+fn on_fuse(path: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use nix::sys::statfs::{statfs, FUSE_SUPER_MAGIC};
+        statfs(path).is_ok_and(|fs| fs.filesystem_type() == FUSE_SUPER_MAGIC)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
     }
 }
 

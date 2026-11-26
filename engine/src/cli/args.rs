@@ -56,9 +56,10 @@ pub enum Command {
     /// project when None (--all), keeping their metrics, but not of one whose branch prune has yet to delete; with
     /// dry_run, only say what would go.
     Forget { target: Target, run_ref: Option<String>, dry_run: bool },
-    /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering the origins
-    /// given with --origin, in their order.
-    Serve(Vec<String>),
+    /// `serve`: serve the runs of any project, and start new ones, over HTTP on 127.0.0.1, also answering origins,
+    /// given with --origin, in their order; its runs start by run_program, the hidden --run-program, when given
+    /// (crate::serve::RunServer::start).
+    Serve { origins: Vec<String>, run_program: Option<String> },
 }
 
 /// A command about a project's runs.
@@ -187,7 +188,7 @@ impl Command {
             | Command::Close { target, .. }
             | Command::Forget { target, .. }
             | Command::Doctor { target, .. } => Some(target),
-            Command::Workflows(_) | Command::Serve(_) => None,
+            Command::Workflows(_) | Command::Serve { .. } => None,
         }
     }
 
@@ -287,7 +288,10 @@ pub fn parse_args(argv: impl IntoIterator<Item = OsString>, config: &ConfigDir) 
             Command::Forget { target: target(m), run_ref: string(m, "run_ref"), dry_run: m.get_flag("dry-run") }
         }
         Some(("workflows", m)) => Command::Workflows(string(m, "workflow")),
-        Some(("serve", m)) => Command::Serve(m.get_many::<String>("origin").into_iter().flatten().cloned().collect()),
+        Some(("serve", m)) => Command::Serve {
+            origins: m.get_many::<String>("origin").into_iter().flatten().cloned().collect(),
+            run_program: string(m, "run-program"),
+        },
         _ => unreachable!("clap requires one of the subcommands parser defines"),
     };
     check_spec_args(&matches, &mut p)?;
@@ -529,7 +533,15 @@ pub fn parser(config: &ConfigDir) -> clap::Command {
         )
         .arg(Arg::new("origin").long("origin").value_name("ORIGIN").action(ArgAction::Append).help(
             "Also answer requests from this origin, such as the desktop app's webview, tauri://localhost; repeatable",
-        ));
+        ))
+        // The desktop app's: its AppImage file, while the app runs from the AppImage's mount.
+        .arg(
+            Arg::new("run-program")
+                .long("run-program")
+                .value_name("PATH")
+                .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                .hide(true),
+        );
     clap::Command::new(PROGRAM)
         .about(
             "Role-based handoff between agent sessions in herdr, each role in the harness of its choice; by default \
