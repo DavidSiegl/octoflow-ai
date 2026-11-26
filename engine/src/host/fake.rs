@@ -9,15 +9,17 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use super::{
-    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, RunFileText, Scanned, GIT_STATUS_ARGS,
-    ORIGIN_READ,
+    ChangedFile, Completed, Exec, ExecError, Host, PutBack, RestoreError, RunFileText, RunScope, Scanned,
+    GIT_STATUS_ARGS, ORIGIN_READ,
 };
-use crate::constants::{METRICS_FILE, SUMMARY_FILE, WORKTREES_DIR};
+use crate::constants::WORKTREES_DIR;
 use crate::error::OrchestratorError;
 use crate::host::tests::FAKE_TOKEN;
 use crate::quality::Leak;
 use crate::state::SavedRun;
 use serde_json::Value;
+
+pub(crate) mod saved_runs;
 
 /// What a FakeHost's clock reads when the workflow's clock reads 0: far from it, so a time taken from the wrong clock
 /// shows.
@@ -765,11 +767,8 @@ impl Host for FakeHost {
         Ok(self.state().files.get(path).cloned())
     }
 
-    /// read of the file in `files`: FakeHost has no links, so nothing leads out.
     fn read_inside(&self, run_dir: &str, name: &str) -> Result<RunFileText, OrchestratorError> {
-        Ok(self
-            .read(&format!("{run_dir}/{name}"))?
-            .map_or(RunFileText::Missing, |text| RunFileText::Text(text.into_bytes())))
+        saved_runs::read_inside(self, run_dir, name)
     }
 
     /// write of the file's text in `files` with text at its end, as one write.
@@ -1124,20 +1123,7 @@ impl Host for FakeHost {
             }
         }
         let s = self.state();
-        let runs = format!("{cwd}/{}/", crate::constants::RUNS_DIR);
-        let mut states = vec![];
-        for (path, text) in s.files.iter() {
-            let Some((run_id, name)) = path.strip_prefix(&runs).and_then(|rest| rest.split_once('/')) else {
-                continue;
-            };
-            if name == "state.json" {
-                let age = s.ages.get(run_id).copied().unwrap_or(0);
-                let dir = format!("{runs}{run_id}");
-                let lacks = [SUMMARY_FILE, METRICS_FILE].iter().any(|f| !s.files.contains_key(&format!("{dir}/{f}")));
-                states.push(SavedRun::read(age, &dir, text.as_bytes()).lacking_ending_file(lacks));
-            }
-        }
-        Ok(states)
+        Ok(saved_runs::run_states(&s.files, |dir| s.ages.get(dir).copied().unwrap_or(0), cwd, RunScope::Every, None))
     }
 
     /// The real host's records when FakeState::processes is set; else the run directories' metrics.json in `files`,
@@ -1161,7 +1147,7 @@ impl Host for FakeHost {
                 serde_json::from_str::<Value>(text).map_err(|e| OrchestratorError(format!("corrupt {path}: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        super::with_archived_metrics(self, cwd, live)
+        super::saved_runs::with_archived_metrics(self, cwd, live)
     }
 
     /// The real host's deletion when FakeState::processes is set; else drops the files under the run directory from
@@ -1190,28 +1176,13 @@ impl Host for FakeHost {
     }
 
     /// The real host's listing when FakeState::processes is set; else the files of run_dir in `files`, as the real
-    /// one lists them (no state.json, no temporary file), by their mtimes, those of one time, and those put straight
-    /// into files (time 0), in the order first written.
+    /// one lists them, by their `mtimes`, a file put straight into files at time 0.
     fn run_files(&self, run_dir: &str) -> Result<Vec<super::RunFile>, OrchestratorError> {
         let s = self.state();
         if let Some(real) = &s.processes {
             return real.run_files(run_dir);
         }
-        let mut files: Vec<super::RunFile> = s
-            .files
-            .iter()
-            .filter_map(|(path, text)| {
-                let name = path.strip_prefix(run_dir)?.strip_prefix('/')?;
-                let listed = !name.contains('/') && name != "state.json" && !name.contains(".tmp.");
-                listed.then(|| super::RunFile {
-                    path: path.to_string(),
-                    mtime: s.mtimes.get(path).copied().unwrap_or(0),
-                    size: text.len() as u64,
-                })
-            })
-            .collect();
-        files.sort_by_key(|f| f.mtime);
-        Ok(files)
+        Ok(saved_runs::run_files(&s.files, |path| s.mtimes.get(path).copied().unwrap_or(0), run_dir))
     }
 
     fn session_log(&self, name: &str, session: &str) -> Result<Option<Vec<u8>>, OrchestratorError> {

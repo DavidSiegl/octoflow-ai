@@ -4,8 +4,9 @@
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 
+use super::saved_runs::parsed_run_states;
 use super::*;
-use crate::constants::{PROOF_COPIES_DIR, SUMMARY_FILE};
+use crate::constants::{METRICS_FILE, PROOF_COPIES_DIR, SUMMARY_FILE};
 use crate::interrupt::Interrupt;
 use crate::state::RunState;
 use crate::test_support::{ended, oracle, raise_once_written, TempDir, HEARS_SIGINT};
