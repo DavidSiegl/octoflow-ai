@@ -14,9 +14,9 @@
 
 # Octoflow AI
 
-Coding agents in relay, no role judging its own work: a handoff workflow running in [herdr](https://herdr.dev),
-each role in the agent of your choice: [Antigravity CLI, Claude Code, Codex, opencode or pi](#five-coding-agents-in-any-mix).
-The default workflow:
+A coding agent that reviews its own change shares the blind spots that wrote it, so its mistakes reach you.
+Octoflow AI splits the work into a relay of separate agent sessions: one pins down the spec, one builds, another
+reviews and sends the change back until it holds up, and you get a pull request. The default workflow:
 
 ```text
 Spec Collector ──spec.md──▶ Builder ──build-N.md──▶ Reviewer ──review-N.md──▶ APPROVE ──▶ pull request
@@ -24,12 +24,18 @@ Spec Collector ──spec.md──▶ Builder ──build-N.md──▶ Reviewer
                                └──────── CHANGES_REQUESTED ────────┘
 ```
 
-Each role is a separate interactive agent session in its own herdr pane, so you can watch or step into any of
-them. The agents run on this machine or on another one saved in herdr. The [desktop app](#desktop-app) runs
-them without herdr, on this machine, and shows each one's conversation. Each feature is built on its own branch
-and ends as a pull request on GitHub, where you review it. With `--quality-gate local`, a quality gate run on the
-project's own machine judges the Builder's change (linters, tests, coverage of new code) before the Reviewer sees it
-([quality gate](docs/quality-gate.md)).
+- **Any agent for any role.** [Antigravity CLI, Claude Code, Codex, opencode or pi](#five-coding-agents-in-any-mix),
+  in any mix, so a change can be reviewed by a different model from the one that wrote it.
+- **Every role in view.** Each role is an interactive session in its own [herdr](https://herdr.dev) pane, on this
+  machine or another one saved in herdr, so you can watch or step into any of them. The
+  [desktop app](#desktop-app) runs them without herdr and shows each one's conversation.
+- **A pull request at the end.** Each feature is built on its own branch and ends as a pull request on GitHub,
+  where you review it.
+- **Tests before review.** With `--quality-gate local`, the project's linters, tests and coverage of new code judge
+  the Builder's change on the project's own machine before the Reviewer sees it ([quality gate](docs/quality-gate.md)).
+- **Your own workflows, and a queue of specs.** Built-in [workflows](#your-own-workflows) cover design work and
+  refereed research too, or you write your own; [`drain`](#draining-specs) works through a directory of specs, one
+  pull request each.
 
 ## Five coding agents, in any mix
 
