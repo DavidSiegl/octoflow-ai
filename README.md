@@ -14,9 +14,10 @@
 
 # Octoflow AI
 
-A coding agent that reviews its own change shares the blind spots that wrote it, so its mistakes reach you.
-Octoflow AI splits the work into a relay of separate agent sessions: one pins down the spec, one builds, another
-reviews and sends the change back until it holds up, and you get a pull request. The default workflow:
+A coding agent that reviews its own change reviews it with the reasoning that wrote it, so its mistakes reach you.
+Octoflow AI splits the work into a relay of separate agent sessions: one pins down the spec, one builds, and another
+reviews the change from a fresh context and sends it back, for up to a set number of rounds. You get a pull request
+either way, as a draft if the Reviewer still wants changes. The default workflow:
 
 ```text
 Spec Collector ──spec.md──▶ Builder ──build-N.md──▶ Reviewer ──review-N.md──▶ APPROVE ──▶ pull request
@@ -28,11 +29,12 @@ Spec Collector ──spec.md──▶ Builder ──build-N.md──▶ Reviewer
   in any mix, so a change can be reviewed by a different model from the one that wrote it.
 - **Every role in view.** Each role is an interactive session in its own [herdr](https://herdr.dev) pane, on this
   machine or another one saved in herdr, so you can watch or step into any of them. The
-  [desktop app](#desktop-app) runs them without herdr and shows each one's conversation.
+  [desktop app](#desktop-app) runs them without herdr, on this machine, and shows each one's conversation.
 - **A pull request at the end.** Each feature is built on its own branch and ends as a pull request on GitHub,
   where you review it.
-- **Tests before review.** With `--quality-gate local`, the project's linters, tests and coverage of new code judge
-  the Builder's change on the project's own machine before the Reviewer sees it ([quality gate](docs/quality-gate.md)).
+- **A quality gate before review.** With `--quality-gate local`, the project's linters, tests and coverage of new
+  code judge the Builder's change on the project's own machine, and the Builder answers their findings for up to a set
+  number of rounds before the Reviewer gets the change ([quality gate](docs/quality-gate.md)).
 - **Your own workflows, and a queue of specs.** Built-in [workflows](#your-own-workflows) cover design work and
   refereed research too, or you write your own; [`drain`](#draining-specs) works through a directory of specs, one
   pull request each.
