@@ -47,30 +47,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   names the last step. A change to one passes every test of the other. Left when the run record became typed
   (`RunRecord`): a worded verdict in the record would not retire the copy while the app still reads servers that
   do not send it. What would close it: a record key with the worded verdict, and the app using it once every server
-  it supports sends it.
-- **No test pins where the app reads `APPIMAGE` for its runs.** Raised by cross-review 339 (F4): `Sidecar::of_app`
-  (`ui/src-tauri/src/lib.rs`) reads it in the window's process, before anything enters `UserShell`, which clears it;
-  moving that read into the sidecar would pass every test, and only a by-hand check (ticket 122's Comments) caught
-  the original bug. What would close it: a test that drives `of_app`'s choice, or a function it delegates to, with
-  `APPIMAGE` set and then cleared by `UserShell`.
-- **The app trusts any `APPIMAGE` while its program is on some FUSE file system.** Raised by cross-review 339 (F7):
-  an extracted Octoflow on a FUSE home (sshfs, gocryptfs), started from inside another AppImage that leaks its own
-  `APPIMAGE`, would start every run by that other AppImage. Requiring the app's executable to lie under `$APPDIR`
-  in `run_program` (`ui/src-tauri/src/lib.rs`) would close it.
-- **`<AppImage> serve` from a terminal still starts its runs from the AppImage's mount.** Raised by cross-review 339
-  (F6): only the app's window passes `--run-program` (`run_program` in `ui/src-tauri/src/lib.rs`), and `Cli::run`
-  clears `APPIMAGE` before serve starts, so a run outlives that serve's mount and can die by SIGBUS once it ends.
-  Choosing the program in `Cli::run`, where `stop_with_appimage_runtime` already reads `APPIMAGE`, would cover the
-  sidecar and the terminal alike.
-- **A pull request's new head waits for its superseded build.** Raised by cross-review 341 (nit 2):
-  `disableConcurrentBuilds()` (Jenkinsfile, `options`) serializes every branch and pull request job, so a push onto a
-  pull request whose build is running waits for that stale build before its own starts, delaying the green status
-  and auto-merge. `disableConcurrentBuilds(abortPrevious: env.BRANCH_NAME != 'main')` would abort a pull request's
-  stale build and keep main queueing; closed by that, once a Jenkins build shows `env` is set when `options` is read.
-- **A re-run of an older main build makes its lower release Latest.** Raised by cross-review 341: serializing main's
-  builds (todo 120) keeps releases in merge order, but a failed main build re-run after a later merge released still
-  makes its lower version Latest, since `gh release create` (Jenkinsfile, Release) passes no `--latest`. Closed by
-  passing `--latest=false` when a higher release exists, or by never re-running an old main build.
+  it supports sends it. Kept by choice (the user's ruling, 2026-11-27, todo-tickets): not worth it while the two rules
+  rarely change.
 - **The desktop app as the terminal client too: what was decided against.** The app, started with arguments, is the CLI
   (`cli` in `ui/src-tauri/src/lib.rs`), and the plain CLI binaries stay released: 13 MB against the AppImage's 120 MB of
   WebKit, and they start without FUSE on headless machines and in CI. Decided against
@@ -350,7 +328,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   path the repository tracks. Restoring 2000 paths took 0.11 s of CPU in a repository of 2000 files and 4.85 s in one
   of 40000 (cross-review 348, 2026-11-27, idle machine), and it all runs under Host's `DEFAULT_TIMEOUT` of 60 s: so,
   extrapolated and not tried, a repository of some hundreds of thousands of files cannot have a few thousand changed
-  paths put back by `restore_tree`, the more so on a loaded machine. Found by GitHub #684
-  (`.scratch/restore-tree-argv-flake/issues/01`), whose test was shrunk instead. What would close it: writing the
-  kept paths from a temporary index of ref (`read-tree`, then `checkout-index --stdin`), which looks each path up
-  once, or a timeout that scales with the paths.
+  paths put back by `restore_tree`, the more so on a loaded machine. Found by GitHub #684, whose test was shrunk
+  instead. What would close it: writing the kept paths from a temporary index of ref (`read-tree`, then
+  `checkout-index --stdin`), which looks each path up once, or a timeout that scales with the paths. Decided against
+  for now (the user's ruling, 2026-11-27, todo-tickets): no run has hit it; reopen when one does.
