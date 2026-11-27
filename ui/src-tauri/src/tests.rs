@@ -63,11 +63,17 @@ fn argv(args: &[&str]) -> Vec<OsString> {
     std::iter::once("octoflow-desktop").chain(args.iter().copied()).map(OsString::from).collect()
 }
 
+/// The bundle `APPDIR=dir` names.
+fn bundle(dir: &str) -> Option<Bundle> {
+    Bundle::of(Some(OsStr::new(dir)))
+}
+
 #[test]
 fn serve_from_a_mounted_appimage_starts_its_runs_by_the_appimage_file() {
     // `<AppImage> serve`, from the window or a terminal, the app's program on the AppImage's mount.
     let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
-    let runs_by = run_program(Some("/home/u/Octoflow.AppImage".into()), exe, |_: &Path| true);
+    let runs_by =
+        run_program(Some("/home/u/Octoflow.AppImage".into()), bundle("/tmp/.mount_Octofl"), exe, |_: &Path| true);
     let given = with_run_program(argv(&["serve", "--origin", "tauri://localhost"]), runs_by);
     let expected = argv(&["serve", "--run-program", "/home/u/Octoflow.AppImage", "--origin", "tauri://localhost"]);
     assert_eq!(given, expected);
@@ -104,13 +110,27 @@ fn runs_start_by_the_appimage_file_only_while_the_app_runs_from_its_mount() {
     let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
     let appimage = || Some(OsString::from("/home/u/Octoflow.AppImage"));
     let mounted = |path: &Path| path.starts_with("/tmp/.mount_Octofl");
-    assert_eq!(run_program(appimage(), exe, mounted), Some(PathBuf::from("/home/u/Octoflow.AppImage")));
+    let its_mount = || bundle("/tmp/.mount_Octofl");
+    assert_eq!(run_program(appimage(), its_mount(), exe, mounted), Some(PathBuf::from("/home/u/Octoflow.AppImage")));
     // Extracted by the runtime (APPIMAGE_EXTRACT_AND_RUN), which still sets APPIMAGE.
     let extracted = Path::new("/tmp/appimage_extracted_0123/usr/bin/octoflow-desktop");
-    assert_eq!(run_program(appimage(), extracted, mounted), None);
+    assert_eq!(run_program(appimage(), bundle("/tmp/appimage_extracted_0123"), extracted, mounted), None);
     // The .deb and macOS: no AppImage.
-    assert_eq!(run_program(None, Path::new("/usr/bin/octoflow-desktop"), |_: &Path| false), None);
-    assert_eq!(run_program(Some(OsString::new()), exe, mounted), None);
+    assert_eq!(run_program(None, None, Path::new("/usr/bin/octoflow-desktop"), |_: &Path| false), None);
+    assert_eq!(run_program(Some(OsString::new()), its_mount(), exe, mounted), None);
+}
+
+#[test]
+fn an_appimage_leaked_to_a_program_on_another_fuse_mount_is_not_trusted() {
+    // An Octoflow on a FUSE home (sshfs, gocryptfs), started by another AppImage that passed on its variables.
+    let exe = Path::new("/home/u/apps/octoflow/usr/bin/octoflow-desktop");
+    let other = || Some(OsString::from("/home/u/Other.AppImage"));
+    let fuse = |_: &Path| true;
+    assert_eq!(run_program(other(), bundle("/tmp/.mount_Other1"), exe, fuse), None);
+    assert_eq!(run_program(other(), None, exe, fuse), None);
+    // An APPDIR of `/` or a relative one is no bundle, rather than one holding every path.
+    assert_eq!(run_program(other(), bundle("/"), exe, fuse), None);
+    assert_eq!(run_program(other(), bundle("home/u/apps/octoflow"), exe, fuse), None);
 }
 
 #[test]
@@ -119,7 +139,7 @@ fn an_appimage_path_that_is_not_utf_8_is_not_passed_on() {
     use std::os::unix::ffi::OsStringExt;
     let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
     let latin1 = OsString::from_vec(b"/home/u/T\xe9l\xe9chargements/Octoflow.AppImage".to_vec());
-    assert_eq!(run_program(Some(latin1), exe, |_: &Path| true), None);
+    assert_eq!(run_program(Some(latin1), bundle("/tmp/.mount_Octofl"), exe, |_: &Path| true), None);
 }
 
 #[test]
