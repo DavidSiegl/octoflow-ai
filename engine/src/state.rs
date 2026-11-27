@@ -10,7 +10,7 @@ use crate::herdr::HerdrServer;
 use crate::json::Object;
 use crate::pipeline::{Pipeline, DONE, QUALITY};
 use crate::prompts::{saved_prompts, Prompts};
-use crate::timestamp::epoch_seconds;
+use crate::timestamp::{epoch_seconds, iso_utc};
 use crate::workflow_file::run_pipeline;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -156,7 +156,7 @@ pub struct RunState {
     pub closed: Option<String>,
     /// One record per handoff file, in the order the turns started (Workflow::turn_record). A turn's record opens
     /// when its prompt is delivered, or a quality analysis starts, and closes when its file is found.
-    pub turns: Vec<TurnRecord>,
+    pub turns: Turns,
     /// One record per quality round judged, in order: {"round", "quality_round", "gate", "conditions",
     /// "fingerprints_by_check"}, the last two the round's GateFailures, as read_report reads them from its build's
     /// quality.json, or gate_failures from its quality file where there is none (Workflow::quality), with the
@@ -408,11 +408,119 @@ pub struct StandingWait {
     pub since: String,
 }
 
+/// The run's ledger of turns (RunState::turns): its records in the order the turns started, at most one under way
+/// per handoff file. Read as a slice; records are added, moved, ended and dropped only through the ledger's
+/// operations, so that a file never has two turns under way. Saved as the list of its records.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Turns(Vec<TurnRecord>);
+
+impl Turns {
+    /// The record of the turn under way that writes file, a handoff file's basename; None when there is none.
+    pub fn under_way(&self, file: &str) -> Option<&TurnRecord> {
+        self.0.iter().find(|t| t.file == file && t.under_way())
+    }
+
+    /// under_way's record, to change.
+    pub fn under_way_mut(&mut self, file: &str) -> Option<&mut TurnRecord> {
+        self.0.iter_mut().find(|t| t.file == file && t.under_way())
+    }
+
+    /// Add record as the latest turn, unless a turn writing its file is under way already, which goes on instead.
+    pub fn open(&mut self, record: TurnRecord) {
+        if self.under_way(&record.file).is_none() {
+            self.0.push(record);
+        }
+    }
+
+    /// Have the latest record of file, under way or not, name to instead: the file was moved aside to to (rejected,
+    /// or blocked), and the record of the turn that wrote it goes with it. Nothing when file has no record.
+    pub fn moved(&mut self, file: &str, to: &str) {
+        if let Some(t) = self.0.iter_mut().rev().find(|t| t.file == file) {
+            to.clone_into(&mut t.file);
+        }
+    }
+
+    /// Give each record, in order, the next of tokens (TurnRecord::tokens); records past the last of tokens keep
+    /// theirs.
+    pub fn set_tokens(&mut self, tokens: impl IntoIterator<Item = Value>) {
+        for (turn, tokens) in self.0.iter_mut().zip(tokens) {
+            turn.tokens = tokens;
+        }
+    }
+
+    /// Drop the records of step's turns still under way, as of an analysis no file will ever close.
+    pub fn drop_under_way(&mut self, step: &str) {
+        self.0.retain(|t| t.step != step || !t.under_way());
+    }
+}
+
+impl From<Vec<TurnRecord>> for Turns {
+    fn from(records: Vec<TurnRecord>) -> Turns {
+        Turns(records)
+    }
+}
+
+impl std::ops::Deref for Turns {
+    type Target = [TurnRecord];
+
+    fn deref(&self) -> &[TurnRecord] {
+        &self.0
+    }
+}
+
 impl TurnRecord {
+    /// When the turn started, in seconds since the epoch; None when not known. Errors: started_at is not a time.
+    pub fn start(&self) -> Result<Option<i64>, OrchestratorError> {
+        let Some(at) = self.started_at.as_deref() else { return Ok(None) };
+        epoch_seconds(at)
+            .map(Some)
+            .map_err(|e| OrchestratorError(format!("the turn that wrote {} started at no time: {e}", self.file)))
+    }
+
+    /// Have the turn wait on on, what its role reports it waits on outside the run, or on nothing for None: a new
+    /// wait starts now, a rewritten one takes on and keeps its start, and a withdrawn one ends now (end_wait). now
+    /// gives the time, in seconds since the epoch, and is asked only by a new or withdrawn wait. Asking again for the
+    /// wait that stands changes nothing. Errors: now's, which leave the record as it was, or end_wait's.
+    pub fn wait(
+        &mut self,
+        on: Option<&str>,
+        now: impl FnOnce() -> Result<i64, OrchestratorError>,
+    ) -> Result<(), OrchestratorError> {
+        match (on, &mut self.waiting_on) {
+            (Some(on), Some(standing)) => {
+                on.clone_into(&mut standing.on);
+                Ok(())
+            }
+            (Some(on), None) => {
+                self.waiting_on = Some(StandingWait { on: on.to_string(), since: iso_utc(now()?) });
+                Ok(())
+            }
+            (None, Some(_)) => self.end_wait(now()?),
+            (None, None) => Ok(()),
+        }
+    }
+
+    /// Close the turn at ended (seconds since the epoch, not before its start): its standing wait ends then, it
+    /// lasted from its start, and waited, the agent's waits for permission answers (waited_seconds). session is the
+    /// role's agent's session now; one that is not the turn's record leaves its session unknown. Errors: start's, or
+    /// end_wait's; the record is then left as it was, but for a wait already ended.
+    pub fn end(&mut self, ended: i64, session: Option<&str>, waited: Option<i64>) -> Result<(), OrchestratorError> {
+        let started = self.start()?;
+        self.end_wait(ended)?;
+        if self.session.as_deref() != session {
+            self.session = None;
+        }
+        self.ended_at = Some(iso_utc(ended));
+        self.seconds = started.map(|started| ended - started);
+        self.waited_seconds = waited;
+        Ok(())
+    }
+
     /// End the turn's standing wait at `at`, in seconds since the epoch, adding the seconds since it started (none
     /// for an `at` before then) to outside_wait_seconds; nothing while none stands. Errors: its start is not a time,
     /// which leaves the wait standing.
-    pub fn end_wait(&mut self, at: i64) -> Result<(), OrchestratorError> {
+    fn end_wait(&mut self, at: i64) -> Result<(), OrchestratorError> {
         let Some(wait) = &self.waiting_on else {
             return Ok(());
         };
@@ -536,7 +644,7 @@ impl RunState {
             branch_cleanup: None,
             worktree: None,
             closed: None,
-            turns: Vec::new(),
+            turns: Turns::default(),
             quality_rounds: Vec::new(),
             blocked: None,
             locked: IndexMap::new(),

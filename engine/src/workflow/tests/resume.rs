@@ -677,14 +677,14 @@ fn stopped_after_saving_done() -> RunState {
     state.verdict = Some(APPROVE.into());
     state.pull_request = true;
     state.owner = Some(object([("pid", Value::from(4242)), ("host", Value::from("gone"))]));
-    state.turns = vec![record("build", "build-1.md", Some(-100), Some(-50)).map()];
+    state.turns = vec![record("build", "build-1.md", Some(-100), Some(-50)).map()].into();
     state
 }
 
 /// stopped_after_saving_done with its tokens counted, as its ending leaves it from then until its release.
 fn counted() -> RunState {
     let mut state = stopped_after_saving_done();
-    state.turns[0].tokens = Value::from(7);
+    state.turns.set_tokens([Value::from(7)]);
     state
 }
 

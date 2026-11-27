@@ -757,9 +757,12 @@ impl<'a> Workflow<'a> {
     /// the orchestrator can read (session_usage). A record that cannot be read costs only its turns' counts.
     fn count_tokens(&mut self) {
         let mut usage = std::collections::HashMap::new();
-        for i in 0..self.state.turns.len() {
-            let t = &self.state.turns[i];
-            let Some(kind) = t.harness.clone() else { continue };
+        let mut tokens = vec![];
+        for t in self.state.turns.iter() {
+            let Some(kind) = t.harness.clone() else {
+                tokens.push(t.tokens.clone());
+                continue;
+            };
             let key = (kind, t.session.clone().unwrap_or_default());
             if !usage.contains_key(&key) {
                 let counted = self.session_usage(&key.0, &key.1).unwrap_or_else(|e| {
@@ -768,9 +771,9 @@ impl<'a> Workflow<'a> {
                 });
                 usage.insert(key.clone(), counted);
             }
-            let tokens = turn_tokens(t, usage[&key].as_deref());
-            self.state.turns[i].tokens = tokens;
+            tokens.push(turn_tokens(t, usage[&key].as_deref()));
         }
+        self.state.turns.set_tokens(tokens);
     }
 
     /// The token usage recorded for session, of harness kind, oldest first, as Agents::session_usage reads it; None
