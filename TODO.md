@@ -345,10 +345,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `parse_args` on the built argv and returning clap's error. The desktop app shows serve's `error` text verbatim
   (`ui/src/api.ts`), and clap's is several lines with `Usage:` and "try '--help'"; `serve/start/tests.rs`'s round
   trip through `parse_args` already catches the two checks drifting apart.
-- **Restoring many paths takes time quadratic in their number.** `Host::restore` (`engine/src/host.rs`) hands the
-  paths it keeps to one `git restore --pathspec-from-file`, which matches every pathspec against every path: on an
-  idle machine 4000 paths took 0.6 s and 8000 took 2.2 s (measured 2026-11-27). It runs under Host's
-  `DEFAULT_TIMEOUT` of 60 s, so, by extrapolation and not tried, a run that changed some 40000 tracked files cannot
-  be undone by `restore_tree`. Found by ticket `restore-tree-argv-flake/01`, whose test was shrunk instead. What
-  would close it: writing the kept paths from a temporary index of ref (`read-tree`, then `checkout-index --stdin`),
-  which looks each path up once, or a timeout that scales with the number of paths.
+- **Restoring takes time of the paths restored times the paths tracked.** `Host::restore` (`engine/src/host.rs`)
+  hands the paths it keeps to one `git restore --pathspec-from-file`, which matches every pathspec against every
+  path the repository tracks. Restoring 2000 paths took 0.11 s of CPU in a repository of 2000 files and 4.85 s in one
+  of 40000 (cross-review 348, 2026-11-27, idle machine), and it all runs under Host's `DEFAULT_TIMEOUT` of 60 s: so,
+  extrapolated and not tried, a repository of some hundreds of thousands of files cannot have a few thousand changed
+  paths put back by `restore_tree`, the more so on a loaded machine. Found by GitHub #684
+  (`.scratch/restore-tree-argv-flake/issues/01`), whose test was shrunk instead. What would close it: writing the
+  kept paths from a temporary index of ref (`read-tree`, then `checkout-index --stdin`), which looks each path up
+  once, or a timeout that scales with the paths.
