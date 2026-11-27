@@ -211,9 +211,9 @@ impl Cli {
     /// caller started is the AppImage's runtime, which stays this one's parent and passes on no signal sent to it:
     /// the CLI gets SIGTERM when the runtime dies, whatever signal stopped it (`stop_with_appimage_runtime`). A
     /// `serve`, the app's sidecar or one the user started, starts its runs by `run_program`'s choice
-    /// (`with_run_program`). Returns never: when the user's directory is gone, prints why on standard error and exits 1. Call it on the
-    /// main thread before anything else starts a thread or opens a window: it changes the process's environment and
-    /// starts its signal handling.
+    /// (`with_run_program`). Returns never: when the user's directory is gone, prints why on standard error and
+    /// exits 1. Call it on the main thread before anything else starts a thread or opens a window: it changes the
+    /// process's environment and starts its signal handling.
     #[cfg(unix)]
     pub fn run(self) -> ! {
         // Read before the user's shell is entered, which has no APPIMAGE.
@@ -223,9 +223,15 @@ impl Cli {
         if let Err(e) = stop_with_appimage_runtime(appimage.as_deref().map(Path::new)) {
             eprintln!("octoflow: the CLI will not stop when the AppImage that started it does: {e}");
         }
-        // An app that cannot tell its own program leaves serve to start its runs by its own, as before there was a
-        // choice.
-        let runs_by = std::env::current_exe().ok().and_then(|exe| run_program(appimage, &exe, on_fuse));
+        // An app that cannot tell its own program leaves serve to start its runs by its own: say so, as those runs may
+        // die with the AppImage's mount.
+        let runs_by = match std::env::current_exe() {
+            Ok(exe) => run_program(appimage, &exe, on_fuse),
+            Err(e) => {
+                eprintln!("octoflow: cannot tell the app's own program, so runs start by serve's: {e}");
+                None
+            }
+        };
         let argv = with_run_program(self.argv, runs_by);
         if let Err(why) = UserShell::current().enter() {
             eprintln!("octoflow: {why}");
@@ -404,8 +410,9 @@ fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
 
 /// The program `serve` starts its runs and resumes by, the app's being exe: the AppImage file, appimage
 /// (`$APPIMAGE`, None or empty when unset), while exe is on the AppImage's mount, by mounted (`on_fuse`). That mount
-/// ends when the app quits, and a run still to page in some of its program would then die by SIGBUS; the AppImage
-/// file starts the same program in a mount of the run's own. None, for serve's own program, otherwise: the
+/// ends with the process the AppImage's runtime started, the app's window or a `serve` started from a terminal, and a
+/// run still to page in some of its program would then die by SIGBUS; the AppImage file starts the same program in a
+/// mount of the run's own. None, for serve's own program, otherwise: the
 /// .deb, macOS, and an AppImage extracted, by the user or by its runtime (`APPIMAGE_EXTRACT_AND_RUN`), whose files
 /// stay readable to the processes that run them; and an AppImage whose path is not UTF-8, which serve, whose paths
 /// are strings, would refuse along with the whole sidecar.

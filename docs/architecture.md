@@ -264,14 +264,14 @@ started, as the human would start one from a terminal.
   a pipe and exiting, so serve neither parents nor reaps the run, which outlives it, whose stdin is `/dev/null` and
   whose output goes to `run.log` in the run directory, which serve makes for it first (`run` takes a `--run-id`
   whose directory holds only that log). The program is the one serve was given with the hidden `--run-program`,
-  while it is there, else serve's own. The desktop app's CLI gives its AppImage file to every `serve`, its
-  window's sidecar and one started from a terminal alike, while it runs from the AppImage's FUSE mount
-  (`run_program` and `with_run_program` in `ui/src-tauri/src/lib.rs`), which ends with that serve; `Cli::run`
-  chooses before it enters the user's shell, which has no `APPIMAGE` to tell it. The hidden `--run-id` lets serve then wait for exactly that run:
-  its `state.json` saved answers 201; its pid gone without one answers 422 with the log's last lines; neither within 30
-  seconds (`START_WAIT`) answers 202. The run's agents are its own children over ACP, and it listens on its socket
-  (`acp/socket.rs`) for the app's answers and `stop`. `POST /resume` starts an app run's `resume` the same way and waits
-  for it alike; a run in herdr resumes from the CLI.
+  while it is there, else serve's own. The desktop app's CLI gives its AppImage file to every `serve`, its window's
+  sidecar and one started from a terminal alike, while it runs from the AppImage's FUSE mount (`run_program` and
+  `with_run_program` in `ui/src-tauri/src/lib.rs`, whose doc says when that mount ends); `Cli::run` chooses before it
+  enters the user's shell, which has no `APPIMAGE` to tell it. The hidden `--run-id` lets serve then wait for exactly
+  that run: its `state.json` saved answers 201; its pid gone without one answers 422 with the log's last lines; neither
+  within 30 seconds (`START_WAIT`) answers 202. The run's agents are its own children over ACP, and it listens on its
+  socket (`acp/socket.rs`) for the app's answers and `stop`. `POST /resume` starts an app run's `resume` the same way
+  and waits for it alike; a run in herdr resumes from the CLI.
 - **Endpoints.** Every request needs the token, and every one but `/setup/checked` and the workflow ones names the
   project by `?cwd=`:
 
