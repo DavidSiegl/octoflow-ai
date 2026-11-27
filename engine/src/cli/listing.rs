@@ -315,32 +315,19 @@ pub fn run_rows(runs: &[SavedRun], machine: ThisMachine, target: &[String]) -> V
         .collect()
 }
 
-/// A run record's outcome as `list` words it: its error, verdict (as outcome_verdict words it), waiting reason or
-/// health, then what it has besides, its closing, pull request and a workflow other than the default.
+/// A run record's outcome as `list` words it: its error, verdict (as outcome_verdict words it) or, for a run something
+/// drives or drove, what driven_outcome says; then what it has besides, its closing, pull request and a workflow other
+/// than the default.
 pub fn run_outcome(record: &RunRecord) -> String {
-    // A field saved as "" reads as absent.
-    let set = |text: &Option<String>| text.clone().filter(|t| !t.is_empty());
     let closed = set(&record.closed);
     let mut outcome = if let Some(error) = set(&record.error) {
         format!("error: {error}")
     } else if let Some(health) = &record.health {
-        match &record.waiting {
-            // Stale by its heartbeat, but resume refuses it, so neither its staleness nor the command is worth showing.
-            _ if closed.is_some() => String::new(),
-            Some(Waiting { reason: WaitReason::Blocked, detail }) => {
-                let mut blocked = format!("{}: {}", WaitReason::Blocked.name(), detail.as_deref().unwrap_or_default());
-                if let Some(pane) = set(&record.pane) {
-                    blocked += &format!(" (pane {pane})");
-                }
-                blocked
-            }
-            _ => {
-                let mut line = format!("{}: {}", health.name(), health.why());
-                if let Some(command) = &record.resume_command {
-                    line += &format!("; resume: {command}");
-                }
-                line
-            }
+        // Stale by its heartbeat, but resume refuses it, so neither its staleness nor the command is worth showing.
+        if closed.is_some() {
+            String::new()
+        } else {
+            driven_outcome(record, health)
         }
     } else {
         outcome_verdict(record)
@@ -356,6 +343,28 @@ pub fn run_outcome(record: &RunRecord) -> String {
         outcome += &format!("  [{} workflow]", record.workflow);
     }
     outcome
+}
+
+/// text, unless it is None or "": a field saved as "" reads as absent.
+fn set(text: &Option<String>) -> Option<String> {
+    text.clone().filter(|t| !t.is_empty())
+}
+
+/// The outcome of a record whose run has health, and is not closed: the question it is blocked on and its pane when
+/// known, else its health and why, with the command that resumes it when it has one.
+fn driven_outcome(record: &RunRecord, health: &Health) -> String {
+    if let Some(Waiting { reason: WaitReason::Blocked, detail }) = &record.waiting {
+        let mut blocked = format!("{}: {}", WaitReason::Blocked.name(), detail.as_deref().unwrap_or_default());
+        if let Some(pane) = set(&record.pane) {
+            blocked += &format!(" (pane {pane})");
+        }
+        return blocked;
+    }
+    let mut line = format!("{}: {}", health.name(), health.why());
+    if let Some(command) = &record.resume_command {
+        line += &format!("; resume: {command}");
+    }
+    line
 }
 
 /// A run record's verdict as its outcome words it: "" without one. A verdict other than APPROVE, of a run whose
