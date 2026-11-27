@@ -11,7 +11,7 @@ use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
-use crate::runs::{Health, ThisMachine};
+use crate::runs::{Health, ThisMachine, STALE};
 use crate::state::{
     find_run, judged_by_several, run_dir, AgentRecord, Backend, RunState, SavedRun, StepVerdict, TurnRecord, Turns,
     NOTHING_TO_PUBLISH,
@@ -22,9 +22,6 @@ use serde_json::Value;
 
 /// The version of the run records `list --json` prints, raised when a key is removed or changes its meaning.
 pub const RUN_RECORD_VERSION: i64 = 1;
-
-/// The waiting reason, and outcome, of a running run whose turn waits on a BLOCKED report (WaitReason::Blocked).
-pub const BLOCKED_STATUS: &str = "blocked";
 
 /// A run's saved state as `list --json` prints it and serve gives it, and as the run list and `show` word it
 /// (run_rows). Built by run_record. It serializes to an object with one key per field, in field order; None is null,
@@ -98,7 +95,9 @@ pub struct RunRecord {
 /// One step of a run record's workflow.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct StepRef {
+    /// The step's id, as the workflow names it and the run's phase does while it is at the step.
     pub id: String,
+    /// The role that takes the step's turns.
     pub role: String,
     /// The workflow's label for the role.
     pub role_label: String,
@@ -113,6 +112,7 @@ pub struct StepRef {
 /// One agent a run has started.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AgentRef {
+    /// The role the agent was started for.
     pub role: String,
     /// Its herdr name.
     pub name: String,
@@ -123,26 +123,45 @@ pub struct AgentRef {
 /// What a run waits on the human for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Waiting {
+    /// Why it waits, serialized as WaitReason::name.
     pub reason: WaitReason,
     /// Blocked: the BLOCKED report's question. Interview: the role. Stale: the resume command, None for an "acp" run.
     pub detail: Option<String>,
 }
 
-/// Why a run waits on the human, serialized lowercase. When several hold, the first listed is the run's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+/// Why a run waits on the human. When several hold, the first listed is the run's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitReason {
-    /// A running run's turn waits on a BLOCKED report (BLOCKED_STATUS).
+    /// A running run's turn waits on a BLOCKED report.
     Blocked,
     /// A running run's current step is human-paced and its last turn has not ended.
     Interview,
-    /// A stale run that is not closed (crate::runs::STALE).
+    /// A stale run that is not closed.
     Stale,
+}
+
+impl WaitReason {
+    /// The reason's word, in the record's waiting.reason and in `list`'s outcome: "blocked", "interview", or STALE,
+    /// the stale health's word.
+    pub fn name(self) -> &'static str {
+        match self {
+            WaitReason::Blocked => "blocked",
+            WaitReason::Interview => "interview",
+            WaitReason::Stale => STALE,
+        }
+    }
+}
+
+impl Serialize for WaitReason {
+    fn serialize<S: serde::Serializer>(&self, to: S) -> Result<S::Ok, S::Error> {
+        to.serialize_str(self.name())
+    }
 }
 
 /// A run record's pull request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PrRecord {
+    /// The pull request's URL, as the run saved it; never empty.
     pub url: String,
     /// gh's OPEN, CLOSED or MERGED; None until fill_pr_states sets it or error.
     pub state: Option<String>,
@@ -157,16 +176,21 @@ impl RunRecord {
         serde_json::to_value(self).expect("a run record serializes")
     }
 
-    /// The record as it is compared to tell whether the run changed: with what grows on every read while nothing
-    /// happens cleared, heartbeat_age to 0 and the health's reason to "". Not for printing.
-    pub fn settled(&self) -> RunRecord {
+    /// The record as it is compared to tell whether the run changed: equal for two reads of a run that differ only
+    /// in what grows on every read while nothing happens, heartbeat_age and the health's reason.
+    pub fn settled(&self) -> Settled {
         let health = self.health.as_ref().map(|h| match h {
             Health::Running(_) => Health::Running(String::new()),
             Health::Stale(_) => Health::Stale(String::new()),
         });
-        RunRecord { heartbeat_age: 0, health, ..self.clone() }
+        Settled(RunRecord { heartbeat_age: 0, health, ..self.clone() })
     }
 }
+
+/// A run record as RunRecord::settled gives it: only to compare, never shown, as its cleared fields would show a stale
+/// run as freshly beating.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settled(RunRecord);
 
 /// RunRecord::health as its two keys.
 fn health_keys<S: serde::Serializer>(health: &Option<Health>, to: S) -> Result<S::Ok, S::Error> {
@@ -195,7 +219,8 @@ pub fn run_record(run: &SavedRun, machine: ThisMachine, target: &[String]) -> Ru
     let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {
-        // The Workflow saves the question as a string; anything else reads as none.
+        // The Workflow saves the question as a string. Anything else, which only a hand-edited state.json holds, reads
+        // as none: `list` shows "blocked: " for it, where it showed the value as JSON before 0.104.11.
         let question = blocked.and_then(|b| b.get("question")).and_then(Value::as_str).map(String::from);
         Some(Waiting { reason: WaitReason::Blocked, detail: question })
     } else if running && step.is_some_and(|st| st.human_paced) && last_turn.is_some_and(TurnRecord::under_way) {
@@ -303,7 +328,7 @@ pub fn run_outcome(record: &RunRecord) -> String {
             // Stale by its heartbeat, but resume refuses it, so neither its staleness nor the command is worth showing.
             _ if closed.is_some() => String::new(),
             Some(Waiting { reason: WaitReason::Blocked, detail }) => {
-                let mut blocked = format!("{BLOCKED_STATUS}: {}", detail.as_deref().unwrap_or_default());
+                let mut blocked = format!("{}: {}", WaitReason::Blocked.name(), detail.as_deref().unwrap_or_default());
                 if let Some(pane) = set(&record.pane) {
                     blocked += &format!(" (pane {pane})");
                 }

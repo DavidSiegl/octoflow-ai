@@ -424,6 +424,13 @@ fn blocked_waits_for_the_answer() {
 }
 
 #[test]
+fn a_blocked_question_that_is_no_string_reads_as_none() {
+    let state = with(mine(), &[("blocked", json(r#"{"file": "build-1.md", "question": 42, "k": 1}"#))]);
+    assert_eq!(key(&record(&state, 40, true, &[]), "waiting"), json(r#"{"reason": "blocked", "detail": null}"#));
+    assert_eq!(listed(&[(40, state)], &[]), ["20260930-070000-c0ffee  build    round 1  blocked: "]);
+}
+
+#[test]
 fn an_interview_waits_while_the_human_paced_turn_is_open() {
     let waiting = |state: &Value| key(&record(state, 40, true, &[]), "waiting");
     let spec = with(run("spec"), &[("owner", me())]);

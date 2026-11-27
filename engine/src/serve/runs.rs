@@ -15,7 +15,7 @@ use crate::acp::LeftoverGroups;
 use crate::agents::{EitherBackend, RunPlaces};
 use crate::cli::close::{close_all, stop_all, Closer, RunClosed, RunStopped, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
-use crate::cli::listing::{run_record, RunRecord};
+use crate::cli::listing::{run_record, RunRecord, Settled};
 use crate::cli::resume_check::resumable;
 use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
@@ -481,7 +481,7 @@ pub struct RunWatch<'p> {
 /// What an event stream last told of one run.
 struct Sent {
     /// The run's record, settled (RunRecord::settled).
-    key: RunRecord,
+    key: Settled,
     /// The run's files, as last listed.
     files: Value,
     /// True means the run is finished and files is taken to be all it has under its record key, so they are not listed
