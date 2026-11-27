@@ -326,8 +326,8 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   fake's seam up to repository operations (fetch, fast-forward, merge, push). At command level `Host`'s own steps run
   in every Workflow test, and since a command the fake has no arm for fails the test, a flag changed in one file and
   not the other is caught.
-- **`Host` is one trait over every concern.** `Host` (`engine/src/host.rs`, 78 methods) covers processes, files,
-  git, gitleaks, gh and the run store, and `FakeHost` fakes them at mixed levels. Decided against (the user's ruling,
+- **`Host` is one trait over every concern.** `Host` (`engine/src/host.rs`) covers what its doc comment lists, from
+  processes and files to gh and the run store, and `FakeHost` fakes them at mixed levels. Decided against (the user's ruling,
   2026-11-27, from the architecture review): splitting it into run store, pull requests and git repository traits.
   No caller would take a narrower one: `Workflow` (`engine/src/workflow.rs`) calls git, files, gitleaks, gh and the
   run store, and `cli/prune.rs`, `cli/close.rs`, `cli/forget.rs` and `local_gate.rs` each call two concerns or
