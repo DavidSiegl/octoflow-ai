@@ -2427,9 +2427,11 @@ fn a_gitignore_of_the_tree_before_in_one_made_since_keeps_what_it_ignores() {
 
 #[test]
 fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
-    // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
-    let long = "p".repeat(200);
-    let names: Vec<String> = (0..12000).map(|i| format!("d/{long}{i}")).collect();
+    // 2 x 5000 paths of some 500 bytes each, each half alone some 2.5 MB, where Linux takes 2 MB of arguments. Few
+    // long paths rather than many short ones: git restore matches every pathspec against every path, so its time
+    // grows with the square of their number, and 12000 of them ran past Host's 60 s timeout on a loaded machine.
+    let long = "p".repeat(245);
+    let names: Vec<String> = (0..5000).map(|i| format!("d/{long}/{i}{long}")).collect();
     let committed: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "committed\n")).collect();
     let r = Repo::new(&committed);
     let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
