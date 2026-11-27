@@ -16,7 +16,7 @@ use crate::acp;
 use crate::agents::RunPlaces;
 use crate::cli::close::{Outcome, RunClosed, RunStopped, Sweep};
 use crate::cli::forget::{self, Left, RunForgotten};
-use crate::cli::listing::RUN_RECORD_VERSION;
+use crate::cli::listing::{RunRecord, RUN_RECORD_VERSION};
 use crate::constants::EXIT_ERROR;
 use crate::env::ConfigDir;
 use crate::error::{os_error, OrchestratorError};
@@ -680,7 +680,7 @@ fn read_project(endpoint: Endpoint, project: &ProjectRuns, query: &HashMap<Strin
     let (run, name, role) = (param("run"), param("name"), param("role"));
     let answered = match endpoint {
         Endpoint::Runs => project.records().map_err(RunReadError::from).map(|records| {
-            let runs = Value::Array(records.into_iter().map(Value::Object).collect());
+            let runs = Value::Array(records.iter().map(RunRecord::to_json).collect());
             (200, object([("version", Value::from(RUN_RECORD_VERSION)), ("runs", runs)]))
         }),
         Endpoint::Files => project.files(run).map(|files| (200, object([("run", Value::from(run)), ("files", files)]))),

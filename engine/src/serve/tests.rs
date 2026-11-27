@@ -15,7 +15,7 @@ use crate::constants::{APPROVE, METRICS_FILE, RUNS_DIR, SUMMARY_FILE, WORKTREES_
 use crate::harness::Adapter;
 use crate::host::tests::Repo;
 use crate::http::quote;
-use crate::json::{Object, ValueExt};
+use crate::json::ValueExt;
 use crate::serve::fake::{reached, FakeConsole, ServeHost};
 use crate::state::{Backend, RunState};
 use crate::test_support::TempDir;
@@ -274,9 +274,10 @@ impl Project {
     }
 }
 
-/// record without the keys that age with every read.
-fn without_aging(mut record: Object) -> Value {
-    for key in runs::AGING_RECORD_KEYS {
+/// record, a run record as JSON, without the keys that age with every read: those RunRecord::settled clears.
+fn without_aging(record: &Value) -> Value {
+    let mut record = record.as_object().expect("a record is an object").clone();
+    for key in ["heartbeat_age", "health_reason"] {
         record.remove(key);
     }
     Value::Object(record)
@@ -299,22 +300,20 @@ fn runs_are_list_json_records_locally() {
         .unwrap()
         .iter()
         .map(|s| {
-            without_aging(run_record(
-                s,
-                crate::runs::ThisMachine::new(&crate::runs::local_host(), &crate::runs::pid_alive),
-                &target,
-            ))
+            without_aging(
+                &run_record(
+                    s,
+                    crate::runs::ThisMachine::new(&crate::runs::local_host(), &crate::runs::pid_alive),
+                    &target,
+                )
+                .to_json(),
+            )
         })
         .collect();
     let doc = reply.json();
     assert_eq!(doc.get("version"), Some(&Value::from(1)));
-    let served_runs: Vec<Value> = doc
-        .get("runs")
-        .and_then(Value::as_array)
-        .unwrap()
-        .iter()
-        .map(|r| without_aging(r.as_object().unwrap().clone()))
-        .collect();
+    let served_runs: Vec<Value> =
+        doc.get("runs").and_then(Value::as_array).unwrap().iter().map(without_aging).collect();
     assert_eq!(served_runs.len(), 2);
     assert_eq!(served_runs, listed);
 }

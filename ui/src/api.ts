@@ -1,5 +1,6 @@
 // The protocol of `octoflow serve`: its run records, file lists, events and agents, and the setup checks. The engine's RunServer
-// (engine/src/serve.rs) and RunWatch document the endpoints and the events, and run_record every key of a record.
+// (engine/src/serve.rs) and RunWatch document the endpoints and the events, and RunRecord (engine/src/cli/listing.rs) every
+// key of a record.
 
 /** What the Tauri shell's `server` command gives: where the sidecar's server listens and its token, from `serve`'s
  * first line, the project to show first, and the release version. */
@@ -139,7 +140,7 @@ export interface StepVerdict {
   verdict: string;
 }
 
-/** One run as `list --json` prints it (run_record in the engine's cli/listing.rs, which says what each key holds);
+/** One run as `list --json` prints it (RunRecord in the engine's cli/listing.rs, whose fields say what each key holds);
  * null means the key does not apply. `recording.test.ts` holds the keys to what the server sends. */
 export interface RunRecord {
   id: string;

@@ -9,64 +9,202 @@ use super::{resume_command, Connected};
 use crate::constants::APPROVE;
 use crate::error::OrchestratorError;
 use crate::handoff::parse_verdict;
-use crate::json::{object, Object, ValueExt};
 use crate::local_gate::LOCAL_GATE;
 use crate::pipeline::{workflow_shape, Pipeline, Step, QUALITY};
 use crate::runs::{Health, ThisMachine, STALE};
 use crate::state::{
-    find_run, judged_by_several, run_dir, AgentRecord, RunState, SavedRun, StepVerdict, TurnRecord, NOTHING_TO_PUBLISH,
+    find_run, judged_by_several, run_dir, AgentRecord, Backend, RunState, SavedRun, StepVerdict, TurnRecord, Turns,
+    NOTHING_TO_PUBLISH,
 };
 use crate::summary::turn_lines;
+use serde::Serialize;
 use serde_json::Value;
 
 /// The version of the run records `list --json` prints, raised when a key is removed or changes its meaning.
 pub const RUN_RECORD_VERSION: i64 = 1;
 
-/// The waiting reason, and outcome, of a running run whose turn waits on a BLOCKED report (run_record).
-pub const BLOCKED_STATUS: &str = "blocked";
+/// A run's saved state as `list --json` prints it and serve gives it, and as the run list and `show` word it
+/// (run_rows). Built by run_record. It serializes to an object with one key per field, in field order; None is null,
+/// meaning the key does not apply to the run.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RunRecord {
+    /// The run's id.
+    pub id: String,
+    /// The run's key, as resume takes it.
+    pub key: String,
+    /// The whole task.
+    pub task: String,
+    /// The workflow's name.
+    pub workflow: String,
+    /// The workflow's steps, in order; None when the workflow cannot be loaded.
+    pub steps: Option<Vec<StepRef>>,
+    /// Whether the run opens a pull request; false for a --no-pr run.
+    pub pull_request: bool,
+    /// As saved.
+    pub phase: String,
+    /// As saved.
+    pub round: u32,
+    /// The quality round while the run is in the quality loop or its gated step, once it has one (never 0).
+    pub quality_round: Option<u32>,
+    /// The current step's role; None in quality, publish or done, or when the workflow cannot be loaded.
+    pub role: Option<String>,
+    /// role's pane; None where role is, and before the role's agent is started.
+    pub pane: Option<String>,
+    /// Each role's agent the run has started, in the order they were started; empty before the first.
+    pub agents: Vec<AgentRef>,
+    /// Where its agents run: an "acp" run's agents are read from their journals and answered through its socket
+    /// (crate::acp), not through herdr.
+    pub backend: Backend,
+    /// RunState::health's: None for a run nothing drives. Serialized as two keys, health (Health::name) and
+    /// health_reason (Health::why).
+    #[serde(flatten, serialize_with = "health_keys")]
+    pub health: Option<Health>,
+    /// Whole seconds since state.json was written.
+    pub heartbeat_age: u64,
+    /// What the run waits on the human for, else None.
+    pub waiting: Option<Waiting>,
+    /// The run's, as saved.
+    pub verdict: Option<String>,
+    /// Each verdict a verdict step gave, as saved (RunState::verdicts); empty for a run saved before them.
+    pub verdicts: Vec<StepVerdict>,
+    /// As saved; but for a state.json this engine does not read, why not (SavedRun::problem), which tells what to do
+    /// with the run.
+    pub error: Option<String>,
+    /// As saved.
+    pub closed: Option<String>,
+    /// As saved.
+    pub branch: Option<String>,
+    /// As saved.
+    pub worktree: Option<String>,
+    /// The run's pull request; None without one.
+    pub pr: Option<PrRecord>,
+    /// Whether the run succeeded with nothing tracked changed since its base, and so opened no pull request
+    /// (RunState::nothing_to_publish).
+    pub nothing_to_publish: bool,
+    /// The turn records as saved; empty for a run saved before them.
+    pub turns: Turns,
+    /// The command that resumes a stale run that is not closed; None otherwise, and for an "acp" run, which the app
+    /// resumes and the CLI refuses.
+    pub resume_command: Option<String>,
+    /// Whether a resume would take the run up and have something left to do (crate::cli::resume_check::resumable): a
+    /// stale run, one released as interrupted or with a failure, or a done one its orchestrator did not release or that
+    /// lacks its summary or metrics; an "acp" run is resumed with serve's POST /resume.
+    pub resumable: bool,
+}
 
-/// A run's saved state as `list --json` prints it, and as the run list and `show` word it (run_rows).
-///
-/// run is the run as Host::run_states read it, shown as far as it reads (SavedRun::shown); machine is
-/// RunState::health's, and target the --machine and --cwd flags resume_command repeats. Reads nothing beyond
-/// run. The record has every key below, in this order; null means the key does not apply to the run:
-/// - id, key, task (the whole task), workflow: the run's id, its key (as resume takes it), task and workflow.
-/// - steps: the workflow's steps, each {"id", "role", "role_label", "loop_to", "quality_gated"}, in order; null when
-///   the workflow cannot be loaded. role_label is the workflow's label for the role; loop_to the step a
-///   CHANGES_REQUESTED sends the run back to, null for a step that gives no verdict; quality_gated whether the quality
-///   loop follows, or followed, the step's turns in this run: the step is gated, and the run has the gate (from
-///   start or from resume) or has a quality turn saved, so false for a gate resume turned off before its first check.
-/// - pull_request: whether the run opens a pull request; false for a --no-pr run.
-/// - phase, round: as saved. quality_round: the quality round while the run is in the quality loop or its gated
-///   step, once it has one; null otherwise.
-/// - role, pane: the current step's role and that role's pane; null in quality, publish or done, or when the
-///   workflow cannot be loaded, and pane also before the role's agent is started.
-/// - agents: each role's agent the run has started, {"role", "name", "kind"}, in the order they were started: its
-///   herdr name and harness; [] before the first.
-/// - backend: where its agents run, "herdr" or "acp" (crate::state::Backend): an "acp" run's agents are read from
-///   their journals and answered through its socket (crate::acp), not through herdr.
-/// - health, health_reason: RUNNING or STALE and why, as RunState::health has them; null for a run nothing drives.
-///   heartbeat_age is the run's age.
-/// - waiting: what the run waits on the human for, {"reason", "detail"}, else null. Reasons, first match wins:
-///   "blocked" (detail: the question) while a running run's turn waits on a BLOCKED report; "interview" (detail: the
-///   role) while a running run's current step is human-paced and its last turn has not ended; "stale" (detail: the
-///   resume command, null for an "acp" run) for a stale run that is not closed.
-/// - verdict: the run's, as saved. verdicts: each verdict a verdict step gave, {"round", "step", "verdict"}, as
-///   saved (RunState::verdicts); [] for a run saved before them.
-/// - error, closed, branch, worktree: as saved, but error, for a state.json this engine does not read, why not
-///   (SavedRun::problem), which tells what to do with the run.
-/// - pr: null without a pull request, else {"url", "state", "error"}; state and error are null here, and
-///   fill_pr_states sets one of them.
-/// - nothing_to_publish: whether the run succeeded with nothing tracked changed since its base, and so opened no pull
-///   request (RunState::nothing_to_publish).
-/// - turns: the turn records as saved, [] for a run saved before them.
-/// - resume_command: the command that resumes a stale run that is not closed; null otherwise, and for an "acp" run,
-///   which the app resumes and the CLI refuses.
-/// - resumable: whether a resume would take the run up and have something left to do
-///   (crate::cli::resume_check::resumable): a stale run, one released as interrupted or with a failure, or a done one
-///   its orchestrator did not release or that lacks its summary or metrics; an "acp" run is resumed with serve's POST
-///   /resume.
-pub fn run_record(run: &SavedRun, machine: ThisMachine, target: &[String]) -> Object {
+/// One step of a run record's workflow.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct StepRef {
+    /// The step's id, as the workflow names it and the run's phase does while it is at the step.
+    pub id: String,
+    /// The role that takes the step's turns.
+    pub role: String,
+    /// The workflow's label for the role.
+    pub role_label: String,
+    /// The step a CHANGES_REQUESTED sends the run back to; None for a step that gives no verdict.
+    pub loop_to: Option<String>,
+    /// Whether the quality loop follows, or followed, the step's turns in this run: the step is gated, and the run has
+    /// the gate (from start or from resume) or has a quality turn saved, so false for a gate resume turned off before
+    /// its first check.
+    pub quality_gated: bool,
+}
+
+/// One agent a run has started.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct AgentRef {
+    /// The role the agent was started for.
+    pub role: String,
+    /// Its herdr name.
+    pub name: String,
+    /// Its harness.
+    pub kind: String,
+}
+
+/// What a run waits on the human for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Waiting {
+    /// Why it waits, serialized as WaitReason::name.
+    pub reason: WaitReason,
+    /// Blocked: the BLOCKED report's question. Interview: the role. Stale: the resume command, None for an "acp" run.
+    pub detail: Option<String>,
+}
+
+/// Why a run waits on the human. When several hold, the first listed is the run's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitReason {
+    /// A running run's turn waits on a BLOCKED report.
+    Blocked,
+    /// A running run's current step is human-paced and its last turn has not ended.
+    Interview,
+    /// A stale run that is not closed.
+    Stale,
+}
+
+impl WaitReason {
+    /// The reason's word, in the record's waiting.reason and in `list`'s outcome: "blocked", "interview", or STALE,
+    /// the stale health's word.
+    pub fn name(self) -> &'static str {
+        match self {
+            WaitReason::Blocked => "blocked",
+            WaitReason::Interview => "interview",
+            WaitReason::Stale => STALE,
+        }
+    }
+}
+
+impl Serialize for WaitReason {
+    fn serialize<S: serde::Serializer>(&self, to: S) -> Result<S::Ok, S::Error> {
+        to.serialize_str(self.name())
+    }
+}
+
+/// A run record's pull request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PrRecord {
+    /// The pull request's URL, as the run saved it; never empty.
+    pub url: String,
+    /// gh's OPEN, CLOSED or MERGED; None until fill_pr_states sets it or error.
+    pub state: Option<String>,
+    /// Why fill_pr_states could not look the state up; None otherwise.
+    pub error: Option<String>,
+}
+
+impl RunRecord {
+    /// The record as the object `list --json` prints and serve sends, its keys in field order.
+    pub fn to_json(&self) -> Value {
+        // Strings, numbers, booleans and records of them serialize without fail.
+        serde_json::to_value(self).expect("a run record serializes")
+    }
+
+    /// The record as it is compared to tell whether the run changed: equal for two reads of a run that differ only
+    /// in what grows on every read while nothing happens, heartbeat_age and the health's reason.
+    pub fn settled(&self) -> Settled {
+        let health = self.health.as_ref().map(|h| match h {
+            Health::Running(_) => Health::Running(String::new()),
+            Health::Stale(_) => Health::Stale(String::new()),
+        });
+        Settled(RunRecord { heartbeat_age: 0, health, ..self.clone() })
+    }
+}
+
+/// A run record as RunRecord::settled gives it: only to compare, never shown, as its cleared fields would show a stale
+/// run as freshly beating.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settled(RunRecord);
+
+/// RunRecord::health as its two keys.
+fn health_keys<S: serde::Serializer>(health: &Option<Health>, to: S) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Keys<'h> {
+        health: Option<&'static str>,
+        health_reason: Option<&'h str>,
+    }
+    Keys { health: health.as_ref().map(Health::name), health_reason: health.as_ref().map(Health::why) }.serialize(to)
+}
+
+/// The record of run, as Host::run_states read it, shown as far as it reads (SavedRun::shown). machine is
+/// RunState::health's, and target the --machine and --cwd flags resume_command repeats. Reads nothing beyond run.
+pub fn run_record(run: &SavedRun, machine: ThisMachine, target: &[String]) -> RunRecord {
     let s = run.shown();
     let unreadable = run.problem();
     let pipeline = s.pipeline().ok();
@@ -77,117 +215,88 @@ pub fn run_record(run: &SavedRun, machine: ThisMachine, target: &[String]) -> Ob
     let running = matches!(health, Some(Health::Running(_)));
     // resume refuses a run whose state.json it cannot read, and the CLI an app-managed one (RunState::app_managed).
     let resumable_stale = stale && !s.is_closed() && unreadable.is_none();
-    let resume = (resumable_stale && !s.app_managed()).then(|| resume_command(&s.run_id, target));
+    let resume_command = (resumable_stale && !s.app_managed()).then(|| resume_command(&s.run_id, target));
     let last_turn = s.turns.iter().rev().find(|t| t.step == s.phase);
     let blocked = s.blocked.as_ref().filter(|b| !b.is_empty());
     let waiting = if running && blocked.is_some() {
-        let question = blocked.and_then(|b| b.get("question")).cloned().unwrap_or(Value::Null);
-        Some((BLOCKED_STATUS, question))
+        // The Workflow saves the question as a string. Anything else, which only a hand-edited state.json holds, reads
+        // as none: `list` shows "blocked: " for it, where it showed the value as JSON before 0.104.11.
+        let question = blocked.and_then(|b| b.get("question")).and_then(Value::as_str).map(String::from);
+        Some(Waiting { reason: WaitReason::Blocked, detail: question })
     } else if running && step.is_some_and(|st| st.human_paced) && last_turn.is_some_and(TurnRecord::under_way) {
-        Some(("interview", role.clone().map_or(Value::Null, Value::from)))
+        Some(Waiting { reason: WaitReason::Interview, detail: role.clone() })
     } else {
-        resumable_stale.then(|| (STALE, resume.clone().map_or(Value::Null, Value::from)))
+        resumable_stale.then(|| Waiting { reason: WaitReason::Stale, detail: resume_command.clone() })
     };
     // A workflow this orchestrator lacks has no gated step known, so only phase quality has a quality round then.
     let in_quality = pipeline.as_ref().map_or(s.phase == QUALITY, |p| s.in_quality(p));
     let pane = role.as_deref().and_then(|role| Some(s.agents.get(role)?.pane.clone()));
-    let optional = |text: Option<String>| text.map_or(Value::Null, Value::from);
-    let mut record = Object::new();
-    record.insert("id".into(), Value::from(s.run_id.as_str()));
-    record.insert("key".into(), Value::from(s.key()));
-    record.insert("task".into(), Value::from(s.task.as_str()));
-    record.insert("workflow".into(), Value::from(s.workflow.as_str()));
-    record.insert("steps".into(), pipeline.as_ref().map_or(Value::Null, |p| step_refs(p, s)));
-    record.insert("pull_request".into(), Value::from(s.pull_request));
-    record.insert("phase".into(), Value::from(s.phase.as_str()));
-    record.insert("round".into(), Value::from(s.round));
-    record.insert(
-        "quality_round".into(),
-        (in_quality && s.quality_round != 0).then_some(s.quality_round).map_or(Value::Null, Value::from),
-    );
-    record.insert("role".into(), optional(role));
-    record.insert("pane".into(), optional(pane));
-    record.insert("agents".into(), agent_refs(&s.agents));
-    // A unit variant serializes to its name without fail.
-    record.insert("backend".into(), serde_json::to_value(s.backend).expect("a backend serializes"));
-    record.insert("health".into(), optional(health.as_ref().map(|h| h.name().to_string())));
-    record.insert("health_reason".into(), optional(health.as_ref().map(|h| h.why().to_string())));
-    record.insert("heartbeat_age".into(), Value::from(run.age() as i64));
-    record.insert(
-        "waiting".into(),
-        waiting.map_or(Value::Null, |(reason, detail)| {
-            Value::Object(object([("reason", Value::from(reason)), ("detail", detail)]))
-        }),
-    );
-    record.insert("verdict".into(), optional(s.verdict.clone()));
-    // A list of records of strings and numbers serializes without fail.
-    record.insert("verdicts".into(), serde_json::to_value(&s.verdicts).expect("verdicts serialize"));
-    record.insert("error".into(), optional(unreadable.map(String::from).or_else(|| s.error.clone())));
-    record.insert("closed".into(), optional(s.closed.clone()));
-    record.insert("branch".into(), optional(s.branch.clone()));
-    record.insert("worktree".into(), optional(s.worktree.clone()));
-    record.insert(
-        "pr".into(),
-        s.pr_url.as_deref().filter(|url| !url.is_empty()).map_or(Value::Null, |url| {
-            Value::Object(object([("url", Value::from(url)), ("state", Value::Null), ("error", Value::Null)]))
-        }),
-    );
-    record.insert("nothing_to_publish".into(), Value::from(s.nothing_to_publish));
-    // Records of strings, numbers and JSON values serialize without fail.
-    record.insert("turns".into(), serde_json::to_value(&s.turns).expect("turns serialize"));
-    record.insert("resume_command".into(), optional(resume));
-    record.insert("resumable".into(), Value::from(resumable(run, machine).is_ok()));
-    record
+    let pr = s.pr_url.as_deref().filter(|url| !url.is_empty());
+    RunRecord {
+        id: s.run_id.clone(),
+        key: s.key().to_string(),
+        task: s.task.clone(),
+        workflow: s.workflow.clone(),
+        steps: pipeline.as_ref().map(|p| step_refs(p, s)),
+        pull_request: s.pull_request,
+        phase: s.phase.clone(),
+        round: s.round,
+        quality_round: (in_quality && s.quality_round != 0).then_some(s.quality_round),
+        role,
+        pane,
+        agents: agent_refs(&s.agents),
+        backend: s.backend,
+        health,
+        heartbeat_age: run.age(),
+        waiting,
+        verdict: s.verdict.clone(),
+        verdicts: s.verdicts.clone(),
+        error: unreadable.map(String::from).or_else(|| s.error.clone()),
+        closed: s.closed.clone(),
+        branch: s.branch.clone(),
+        worktree: s.worktree.clone(),
+        pr: pr.map(|url| PrRecord { url: url.to_string(), state: None, error: None }),
+        nothing_to_publish: s.nothing_to_publish,
+        turns: s.turns.clone(),
+        resume_command,
+        resumable: resumable(run, machine).is_ok(),
+    }
 }
 
 /// run_record's steps, of s's workflow p.
-fn step_refs(p: &Pipeline, s: &RunState) -> Value {
+fn step_refs(p: &Pipeline, s: &RunState) -> Vec<StepRef> {
     // A workflow has one gated step at most (Pipeline::uniqueness_problem), so any quality turn checked that step.
     let gate_checks = s.has_quality_gate() || s.turns.iter().any(|t| t.step == QUALITY);
-    let step = |st: &Step| {
-        let label = p.roles().get(&st.role).expect("Pipeline::new refuses a step whose role has no label");
-        Value::Object(object([
-            ("id", Value::from(st.id.as_str())),
-            ("role", Value::from(st.role.as_str())),
-            ("role_label", Value::from(label.as_str())),
-            ("loop_to", st.loop_to.as_deref().map_or(Value::Null, Value::from)),
-            ("quality_gated", Value::from(st.quality_gated && gate_checks)),
-        ]))
+    let step = |st: &Step| StepRef {
+        id: st.id.clone(),
+        role: st.role.clone(),
+        role_label: p.roles().get(&st.role).expect("Pipeline::new refuses a step whose role has no label").clone(),
+        loop_to: st.loop_to.clone(),
+        quality_gated: st.quality_gated && gate_checks,
     };
-    Value::Array(p.steps().iter().map(step).collect())
+    p.steps().iter().map(step).collect()
 }
 
 /// run_record's agents, of a state's agents, by role.
-fn agent_refs(agents: &IndexMap<String, AgentRecord>) -> Value {
-    let started = agents.iter().filter(|(_, agent)| !agent.name.is_empty()).map(|(role, agent)| {
-        let (name, kind) = (agent.name.as_str(), agent.harness.as_str());
-        Value::Object(object([
-            ("role", Value::from(role.as_str())),
-            ("name", Value::from(name)),
-            ("kind", Value::from(kind)),
-        ]))
-    });
-    Value::Array(started.collect())
+fn agent_refs(agents: &IndexMap<String, AgentRecord>) -> Vec<AgentRef> {
+    let started = agents.iter().filter(|(_, agent)| !agent.name.is_empty());
+    started.map(|(role, a)| AgentRef { role: role.clone(), name: a.name.clone(), kind: a.harness.clone() }).collect()
 }
 
 /// Set pr.state of each run record with a pull request to gh's OPEN, CLOSED or MERGED, one gh pr view each, run in
 /// the project directory cwd on world's host; a run whose lookup fails gets the failure's message in pr.error
 /// instead. Errors: a lookup failed while world's interrupt is raised, which stops the listing.
-pub fn fill_pr_states(world: &Connected, cwd: &str, records: &mut [Object]) -> Result<(), OrchestratorError> {
-    for record in records {
-        let Some(Value::Object(pr)) = record.get_mut("pr") else { continue };
-        let url = pr.get("url").map(Value::text).unwrap_or_default();
+pub fn fill_pr_states(world: &Connected, cwd: &str, records: &mut [RunRecord]) -> Result<(), OrchestratorError> {
+    for pr in records.iter_mut().filter_map(|record| record.pr.as_mut()) {
         // GhError::Unusable too: each run says why its state is missing.
-        match world.with.host.pull_request(cwd, &url) {
-            Ok(found) => {
-                pr.insert("state".into(), Value::from(found.state));
-            }
+        match world.with.host.pull_request(cwd, &pr.url) {
+            Ok(found) => pr.state = Some(found.state),
             Err(e) => {
                 let e = OrchestratorError::from(e);
                 if world.with.interrupt.is_raised() {
                     return Err(e);
                 }
-                pr.insert("error".into(), Value::from(e.0));
+                pr.error = Some(e.0);
             }
         }
     }
@@ -200,64 +309,71 @@ pub fn run_rows(runs: &[SavedRun], machine: ThisMachine, target: &[String]) -> V
     runs.iter()
         .map(|run| {
             let record = run_record(run, machine, target);
-            let text = |key: &str| record.get(key).expect("run_record sets a run's id, phase and task").text();
-            let task: String = text("task").chars().take(100).collect();
-            [text("id"), text("phase"), run_round(&record), run_outcome(&record), task]
+            let task: String = record.task.chars().take(100).collect();
+            [record.id.clone(), record.phase.clone(), run_round(&record), run_outcome(&record), task]
         })
         .collect()
 }
 
-/// A run record's outcome as `list` words it: its error, verdict (as outcome_verdict words it), waiting reason or
-/// health, then what it has besides, its closing, pull request and a workflow other than the default.
-pub fn run_outcome(record: &Object) -> String {
-    let truthy = |key: &str| record.get(key).filter(|v| v.is_set());
-    let text = |value: Option<&Value>| value.expect("run_record sets each key an outcome reads").text();
-    let waiting = truthy("waiting");
-    let reason = waiting.and_then(|w| w.get("reason")).and_then(Value::as_str);
-    let mut outcome = if let Some(error) = truthy("error") {
-        format!("error: {}", error.text())
-    } else if record.get("health").is_none_or(Value::is_null) {
-        outcome_verdict(record)
-    } else if truthy("closed").is_some() {
+/// A run record's outcome as `list` words it: its error, verdict (as outcome_verdict words it) or, for a run something
+/// drives or drove, what driven_outcome says; then what it has besides, its closing, pull request and a workflow other
+/// than the default.
+pub fn run_outcome(record: &RunRecord) -> String {
+    let closed = set(&record.closed);
+    let mut outcome = if let Some(error) = set(&record.error) {
+        format!("error: {error}")
+    } else if let Some(health) = &record.health {
         // Stale by its heartbeat, but resume refuses it, so neither its staleness nor the command is worth showing.
-        String::new()
-    } else if reason == Some(BLOCKED_STATUS) {
-        let mut blocked = format!("{BLOCKED_STATUS}: {}", text(waiting.and_then(|w| w.get("detail"))));
-        if let Some(pane) = truthy("pane") {
-            blocked += &format!(" (pane {})", pane.text());
+        if closed.is_some() {
+            String::new()
+        } else {
+            driven_outcome(record, health)
         }
-        blocked
     } else {
-        let mut health = format!("{}: {}", text(record.get("health")), text(record.get("health_reason")));
-        if let Some(command) = truthy("resume_command") {
-            health += &format!("; resume: {}", command.text());
-        }
-        health
+        outcome_verdict(record)
     };
-    if let Some(closed) = truthy("closed") {
-        let closed = format!("closed: {}", closed.text());
+    if let Some(closed) = closed {
+        let closed = format!("closed: {closed}");
         outcome = if outcome.is_empty() { closed } else { format!("{outcome}; {closed}") };
     }
-    if let Some(pr) = truthy("pr") {
-        outcome += &format!("  {}", text(pr.get("url")));
+    if let Some(pr) = &record.pr {
+        outcome += &format!("  {}", pr.url);
     }
-    if record.get("workflow").and_then(Value::as_str) != Some("default") {
-        outcome += &format!("  [{} workflow]", text(record.get("workflow")));
+    if record.workflow != "default" {
+        outcome += &format!("  [{} workflow]", record.workflow);
     }
     outcome
+}
+
+/// text, unless it is None or "": a field saved as "" reads as absent.
+fn set(text: &Option<String>) -> Option<String> {
+    text.clone().filter(|t| !t.is_empty())
+}
+
+/// The outcome of a record whose run has health, and is not closed: the question it is blocked on and its pane when
+/// known, else its health and why, with the command that resumes it when it has one.
+fn driven_outcome(record: &RunRecord, health: &Health) -> String {
+    if let Some(Waiting { reason: WaitReason::Blocked, detail }) = &record.waiting {
+        let mut blocked = format!("{}: {}", WaitReason::Blocked.name(), detail.as_deref().unwrap_or_default());
+        if let Some(pane) = set(&record.pane) {
+            blocked += &format!(" (pane {pane})");
+        }
+        return blocked;
+    }
+    let mut line = format!("{}: {}", health.name(), health.why());
+    if let Some(command) = &record.resume_command {
+        line += &format!("; resume: {command}");
+    }
+    line
 }
 
 /// A run record's verdict as its outcome words it: "" without one. A verdict other than APPROVE, of a run whose
 /// verdicts came from several verdict steps (judged_by_several), names the step that gave it last, as in
 /// "CHANGES_REQUESTED by accept".
-fn outcome_verdict(record: &Object) -> String {
-    let truthy = |key: &str| record.get(key).filter(|v| v.is_set());
-    let verdict = truthy("verdict").map_or(String::new(), Value::text);
-    // A record that is not a list of verdicts reads as none, as a run saved before them.
-    let verdicts: Vec<StepVerdict> =
-        truthy("verdicts").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-    match verdicts.last() {
-        Some(judge) if !verdict.is_empty() && verdict != APPROVE && judged_by_several(&verdicts) => {
+fn outcome_verdict(record: &RunRecord) -> String {
+    let verdict = record.verdict.clone().unwrap_or_default();
+    match record.verdicts.last() {
+        Some(judge) if !verdict.is_empty() && verdict != APPROVE && judged_by_several(&record.verdicts) => {
             format!("{verdict} by {}", judge.step)
         }
         _ => verdict,
@@ -265,10 +381,10 @@ fn outcome_verdict(record: &Object) -> String {
 }
 
 /// A run record's round, and its quality round when it has one.
-pub fn run_round(record: &Object) -> String {
-    let mut round = format!("round {}", record.get("round").expect("run_record sets a run's round").text());
-    if let Some(q) = record.get("quality_round").filter(|q| q.is_set()) {
-        round += &format!(" q{}", q.text());
+pub fn run_round(record: &RunRecord) -> String {
+    let mut round = format!("round {}", record.round);
+    if let Some(q) = record.quality_round {
+        round += &format!(" q{q}");
     }
     round
 }

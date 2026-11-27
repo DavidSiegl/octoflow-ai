@@ -15,7 +15,7 @@ use crate::acp::LeftoverGroups;
 use crate::agents::{EitherBackend, RunPlaces};
 use crate::cli::close::{close_all, stop_all, Closer, RunClosed, RunStopped, Sweep};
 use crate::cli::forget::{self, forget_all, Forgetter, RunForgotten};
-use crate::cli::listing::run_record;
+use crate::cli::listing::{run_record, RunRecord, Settled};
 use crate::cli::resume_check::resumable;
 use crate::cli::START_LOG;
 use crate::error::OrchestratorError;
@@ -23,17 +23,13 @@ use crate::herdr::{AgentAddress, AgentConsole, HerdrError};
 use crate::host::spawn_detached;
 use crate::host::{Host, RunFile, RunFileText, RunScope};
 use crate::interrupt::Interrupt;
-use crate::json::{object, Object, ValueExt};
+use crate::json::{object, Object};
 use crate::local_gate::SetUpFile;
 use crate::paths::file_name;
 use crate::runs::{local_host, pid_alive, ThisMachine};
 use crate::serve::FINISHED_RUN_WRITES;
 use crate::state::{run_dir, SavedRun};
 use serde_json::Value;
-
-/// The keys of a run record that grow with every read of it while nothing happens; a change in them alone is no
-/// event. The client ages heartbeat_age itself from when it got the record.
-pub const AGING_RECORD_KEYS: [&str; 2] = ["heartbeat_age", "health_reason"];
 
 /// Why serve did not give what a client asked of a run: the variants say which.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -195,7 +191,7 @@ impl ProjectRuns {
     /// Each run's record, as `list --json` prints them (run_record, this machine being the one serve runs on), of the
     /// runs whose state.json stays inside their run directory, and that inside the runs directory
     /// (Host::run_states_inside): another is no run to serve. Errors: the runs cannot be read.
-    pub fn records(&self) -> Result<Vec<Object>, OrchestratorError> {
+    pub fn records(&self) -> Result<Vec<RunRecord>, OrchestratorError> {
         let here = local_host();
         let machine = ThisMachine::new(&here, &*self.pid_alive);
         Ok(self.saved_runs()?.iter().map(|run| self.record(run, machine)).collect())
@@ -207,7 +203,7 @@ impl ProjectRuns {
     }
 
     /// run's record, as records gives it, judged from machine, this one.
-    fn record(&self, run: &SavedRun, machine: ThisMachine) -> Object {
+    fn record(&self, run: &SavedRun, machine: ThisMachine) -> RunRecord {
         run_record(run, machine, &self.target)
     }
 
@@ -484,8 +480,8 @@ pub struct RunWatch<'p> {
 
 /// What an event stream last told of one run.
 struct Sent {
-    /// The run's record without AGING_RECORD_KEYS.
-    key: Object,
+    /// The run's record, settled (RunRecord::settled).
+    key: Settled,
     /// The run's files, as last listed.
     files: Value,
     /// True means the run is finished and files is taken to be all it has under its record key, so they are not listed
@@ -506,7 +502,8 @@ impl<'p> RunWatch<'p> {
     /// The events since the last poll, in order:
     ///
     /// - record, {"run", "record"}: the run's run_record, for a run that appeared or whose record changed other than
-    ///   in AGING_RECORD_KEYS; record is null for a run whose state.json is gone, these last, by run id.
+    ///   in what grows on every read (RunRecord::settled), which the client ages itself from when it got the record;
+    ///   record is null for a run whose state.json is gone, these last, by run id.
     /// - files, {"run", "files"}: the run's files, as ProjectRuns::files lists them, when they changed; after the
     ///   run's record event, if it has one.
     /// - problem, {"error"}: the project could not be read, and why; error is null once it can be again. First.
@@ -535,20 +532,14 @@ impl<'p> RunWatch<'p> {
         for run in self.project.saved_runs()? {
             let record = self.project.record(&run, machine);
             let saved_at = run.shown().heartbeat_at.clone();
-            // Always a string: the run's id, or its directory's name for a state.json that names no run
-            // (SavedRun::read).
-            let id = record.get("id").cloned().unwrap_or(Value::Null);
-            let run_id = id.text();
-            let mut key = record.clone();
-            for aging in AGING_RECORD_KEYS {
-                key.remove(aging);
-            }
+            // The run's id, or its directory's name for a state.json that names no run (SavedRun::read).
+            let run_id = record.id.clone();
+            let id = Value::from(run_id.as_str());
+            let key = record.settled();
             let old = self.sent.get(&run_id);
             let same_record = old.is_some_and(|old| old.key == key);
-            let finished = record.get("health").is_none_or(Value::is_null);
-            // heartbeat_age: whole seconds since state.json was written.
-            let age = record.get("heartbeat_age").and_then(Value::as_u64);
-            let written = age.is_none_or(|age| age >= FINISHED_RUN_WRITES.as_secs());
+            let finished = record.health.is_none();
+            let written = record.heartbeat_age >= FINISHED_RUN_WRITES.as_secs();
             let (files, files_settled) = match old {
                 Some(old) if same_record && old.saved_at == saved_at && finished && old.files_settled => {
                     (old.files.clone(), true)
@@ -560,7 +551,7 @@ impl<'p> RunWatch<'p> {
                 }
             };
             if !same_record {
-                events.push(Event::new("record", [("run", id.clone()), ("record", Value::Object(record))]));
+                events.push(Event::new("record", [("run", id.clone()), ("record", record.to_json())]));
             }
             if old.is_none_or(|old| old.files != files) {
                 events.push(Event::new("files", [("run", id), ("files", files.clone())]));

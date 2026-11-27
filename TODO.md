@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **The app words a finished run's verdict by a copy of the engine's rule.** `finishedVerdict` (`ui/src/runs.ts`)
+  repeats `outcome_verdict` (`engine/src/cli/listing.rs`): a non-APPROVE verdict from a run judged by several steps
+  names the last step. A change to one passes every test of the other. Left when the run record became typed
+  (`RunRecord`): a worded verdict in the record would not retire the copy while the app still reads servers that
+  do not send it. What would close it: a record key with the worded verdict, and the app using it once every server
+  it supports sends it.
 - **No test pins where the app reads `APPIMAGE` for its runs.** Raised by cross-review 339 (F4): `Sidecar::of_app`
   (`ui/src-tauri/src/lib.rs`) reads it in the window's process, before anything enters `UserShell`, which clears it;
   moving that read into the sidecar would pass every test, and only a by-hand check (ticket 122's Comments) caught
