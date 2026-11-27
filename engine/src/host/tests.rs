@@ -2427,9 +2427,18 @@ fn a_gitignore_of_the_tree_before_in_one_made_since_keeps_what_it_ignores() {
 
 #[test]
 fn a_tree_is_restored_over_more_paths_than_an_argv_holds() {
-    // 2 x 12000 paths of over 200 bytes each: some 5 MB, where Linux takes 2 MB of arguments.
-    let long = "p".repeat(200);
-    let names: Vec<String> = (0..12000).map(|i| format!("d/{long}{i}")).collect();
+    // 2 x 5000 paths of some 500 bytes each, the committed ones edited and as many added, each half alone past what
+    // an argv holds. Few long paths rather than many short ones: git restore matches every pathspec against every
+    // path it tracks, all of them here, so its time grows with the square of their number, and 12000 of them ran
+    // past Host's 60 s timeout on a loaded machine.
+    let long = "p".repeat(245);
+    let names: Vec<String> = (0..5000).map(|i| format!("d/{long}/{i}{long}")).collect();
+    // Linux's ARG_MAX is a quarter of the stack limit: 2 MB under the usual `ulimit -s 8192`, and past what the
+    // halves hold under a larger one, where the test would pass without proving anything.
+    let getconf = std::process::Command::new("getconf").arg("ARG_MAX").output().expect("getconf");
+    let arg_max: usize = String::from_utf8(getconf.stdout).expect("UTF-8").trim().parse().expect("ARG_MAX");
+    let half: usize = names.iter().map(|n| n.len() + 1).sum();
+    assert!(half > arg_max, "{half} bytes of paths fit in ARG_MAX {arg_max}; run with ulimit -s 8192");
     let committed: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "committed\n")).collect();
     let r = Repo::new(&committed);
     let tree = r.host.tree_snapshot(&r.path).unwrap().unwrap();
