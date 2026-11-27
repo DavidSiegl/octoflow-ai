@@ -13,6 +13,7 @@ use crate::constants::{APPROVE, CHANGES_REQUESTED, EXIT_ERROR, STALE_SECONDS};
 use crate::host::fake::{FakeHost, FakePr, HOST_EPOCH};
 use crate::host::{Completed, ProcessHost};
 use crate::interrupt::Interrupt;
+use crate::json::{Object, ValueExt};
 use crate::test_support::{accepting, impl_, read_saved, solo, TempDir};
 use crate::timestamp::iso_utc;
 use crate::workflow_file::workflow_definition;
@@ -107,9 +108,15 @@ fn block() -> Value {
 
 /// run_record of the state.json state, saved age seconds ago, on this machine "here" where every pid is alive or none
 /// is.
-fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
+fn typed(state: &Value, age: u64, alive: bool, target: &[&str]) -> RunRecord {
     let target: Vec<String> = target.iter().map(|s| s.to_string()).collect();
     run_record(&read_saved(age, state), ThisMachine::new("here", &move |_| alive), &target)
+}
+
+/// typed's record as `list --json` prints it.
+fn record(state: &Value, age: u64, alive: bool, target: &[&str]) -> Object {
+    let Value::Object(record) = typed(state, age, alive, target).to_json() else { panic!("a record is an object") };
+    record
 }
 
 /// record's value of key.
@@ -216,6 +223,15 @@ fn every_key_is_present() {
 }
 
 #[test]
+fn a_record_settles_to_the_same_while_only_its_heartbeat_ages() {
+    let (younger, older) = (typed(&mine(), 40, true, &[]), typed(&mine(), 50, true, &[]));
+    assert_ne!(younger, older);
+    assert_eq!(younger.settled(), older.settled());
+    let stale = typed(&mine(), STALE_SECONDS + 1, true, &[]);
+    assert_ne!(older.settled(), stale.settled());
+}
+
+#[test]
 fn each_step_has_its_role_label_loop_and_quality_gate() {
     // A workflow file's own labels; its review step loops to impl, whose turns the quality loop follows only while the
     // run has the gate, or once a quality turn followed them.
@@ -296,7 +312,7 @@ fn a_run_sent_back_by_one_of_several_verdict_steps_lists_which() {
             &[("verdict", Value::from(verdict)), ("verdicts", verdicts), ("workflow", Value::from("default"))],
         )
     };
-    let outcome = |state: &Value| run_outcome(&record(state, 1_000_000, true, &[]));
+    let outcome = |state: &Value| run_outcome(&typed(state, 1_000_000, true, &[]));
     let sent_back = given(&[(1, "review", APPROVE), (1, "accept", CHANGES_REQUESTED)]);
     let state = done(CHANGES_REQUESTED, sent_back.clone());
     assert_eq!(key(&record(&state, 1_000_000, true, &[]), "verdicts"), sent_back);
@@ -518,19 +534,19 @@ fn pr_states_are_filled_per_run() {
         host.pull_requests.insert(unusable.clone(), FakePr::Fails(Completed::new(4, "", "gh: not logged in")));
         host.pull_requests.insert(broken.clone(), FakePr::Fails(Completed::new(0, "nonsense", "")));
     }
-    let mut records: Vec<Object> = [PR_URL, &unusable, &broken]
+    let mut records: Vec<RunRecord> = [PR_URL, &unusable, &broken]
         .iter()
-        .map(|url| record(&with(run("done"), &[("pr_url", Value::from(*url))]), 40, true, &[]))
+        .map(|url| typed(&with(run("done"), &[("pr_url", Value::from(*url))]), 40, true, &[]))
         .collect();
-    records.push(record(&run("done"), 40, true, &[]));
+    records.push(typed(&run("done"), 40, true, &[]));
     cli.with(|world| fill_pr_states(world, "/proj", &mut records)).unwrap();
-    let pr = |i: usize, field: &str| records[i].get("pr").unwrap().get(field).cloned().unwrap_or(Value::Null);
-    assert_eq!(key(&records[0], "pr"), json(&format!(r#"{{"url": "{PR_URL}", "state": "MERGED", "error": null}}"#)));
-    assert_eq!(pr(1, "state"), Value::Null);
-    assert!(pr(1, "error").text().contains("not logged in"), "{:?}", pr(1, "error"));
-    assert_eq!(pr(2, "state"), Value::Null);
-    assert!(pr(2, "error").text().contains("nonsense"), "{:?}", pr(2, "error"));
-    assert_eq!(key(&records[3], "pr"), Value::Null);
+    let pr = |i: usize| records[i].pr.clone().unwrap();
+    assert_eq!(pr(0), PrRecord { url: PR_URL.into(), state: Some("MERGED".into()), error: None });
+    assert_eq!(pr(1).state, None);
+    assert!(pr(1).error.unwrap().contains("not logged in"));
+    assert_eq!(pr(2).state, None);
+    assert!(pr(2).error.unwrap().contains("nonsense"));
+    assert_eq!(records[3].pr, None);
     assert_eq!(cli.f.host.state().gh_calls.len(), 3);
 }
 
@@ -539,10 +555,10 @@ fn a_lookup_the_interrupt_failed_stops_the_listing() {
     let cli = Cli::new();
     let failing = FakePr::Fails(Completed::new(1, "", "killed"));
     cli.f.host.state().pull_requests.insert(PR_URL.into(), failing);
-    let mut records = vec![record(&with(run("done"), &[("pr_url", Value::from(PR_URL))]), 40, true, &[])];
+    let mut records = vec![typed(&with(run("done"), &[("pr_url", Value::from(PR_URL))]), 40, true, &[])];
     cli.f.interrupt.raise();
     assert!(cli.with(|world| fill_pr_states(world, "/proj", &mut records)).is_err());
-    assert_eq!(records[0].get("pr").unwrap().get("error"), Some(&Value::Null));
+    assert_eq!(records[0].pr.as_ref().unwrap().error, None);
 }
 
 // -- list --json, and list on a machine ------------------------------------------------------------------------------
@@ -579,7 +595,7 @@ fn one_record_per_run_in_order() {
     assert_eq!(records.iter().map(|r| r.get("key").unwrap().text()).collect::<Vec<_>>(), ["c0ffee", "beef00"]);
     assert_eq!(
         records[0],
-        Value::Object(run_record(&saved_runs(&runs)[0], ThisMachine::new("here", &crate::runs::pid_alive), &[]))
+        run_record(&saved_runs(&runs)[0], ThisMachine::new("here", &crate::runs::pid_alive), &[]).to_json()
     );
     // Written pretty-printed.
     assert_eq!(serde_json::to_string_pretty(&doc).unwrap(), {
