@@ -8,11 +8,13 @@ pipeline {
         // Per branch or pull request; a discarded build takes its archived quality.md with it. Jenkins never discards
         // the last successful build, which GIT_PREVIOUS_SUCCESSFUL_COMMIT names for the Gate stage.
         buildDiscarder(logRotator(numToKeepStr: '30'))
-        // One build at a time per branch or pull request, so main releases in merge order and the highest version is
-        // the one GitHub marks Latest; a build waits rather than aborting the one before (no abortPrevious), which
-        // would skip that merge's release. Jenkins merges builds queued meanwhile into one, of the newest commit, whose
-        // notes still carry the versions it skipped (ci/release-notes.sh).
-        disableConcurrentBuilds()
+        // One build at a time per branch or pull request. On main a build waits for the one before rather than
+        // aborting it, which would skip that merge's release, so main releases in merge order and the highest version
+        // is the one GitHub marks Latest; Jenkins merges builds queued meanwhile into one, of the newest commit, whose
+        // notes still carry the versions it skipped (ci/release-notes.sh). Anywhere else a new build aborts the
+        // running one: a pull request's superseded head releases nothing, and waiting for it would hold back the new
+        // head's status and its auto-merge. BRANCH_NAME is the multibranch job's, set before options are read.
+        disableConcurrentBuilds(abortPrevious: env.BRANCH_NAME != 'main')
     }
 
     environment {
