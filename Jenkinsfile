@@ -349,9 +349,10 @@ pipeline {
         }
     }
 
-    // Mail on a failure and on the first green build after one, never on a run that merely succeeded again. An
-    // aborted build, as a pull request's superseded one is (disableConcurrentBuilds above), neither fails nor
-    // recovers: the build before it decides whether a green one is a recovery.
+    // Mail on a failure and on the first green build after one, never on a run that merely succeeded again. A build
+    // that was stopped, aborted by hand or superseded on a pull request (disableConcurrentBuilds above, which ends it
+    // NOT_BUILT: PR-697 #1, "Superseded by #2"), neither fails nor recovers: the build before it decides whether a
+    // green one is a recovery.
     post {
         always {
             cleanWs()
@@ -372,7 +373,7 @@ ${env.BUILD_URL}console""",
         success {
             script {
                 def before = currentBuild.previousBuild
-                while (before != null && before.result == 'ABORTED') {
+                while (before != null && before.result in ['ABORTED', 'NOT_BUILT']) {
                     before = before.previousBuild
                 }
                 if (before != null && before.result in ['FAILURE', 'UNSTABLE']) {
