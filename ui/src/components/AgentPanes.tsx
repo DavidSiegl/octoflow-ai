@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { type AgentInput, type AgentRef, type Api, HttpError, type Project, type RunRecord } from "../api";
 import { useHeldWhileScrolledUp } from "../hooks";
+import { readsAgain } from "../runs";
 import { Conversation } from "./Conversation";
 
 /** How often the shown agent's terminal is read again, in milliseconds. */
@@ -24,13 +25,11 @@ interface Props {
   record: RunRecord;
 }
 
-/** The run's agents, a tab each: for a run in herdr, what the chosen one's pane shows, read again every AGENT_POLL_MS
- * while it is shown and the run is driven, and a box and keys to type into it, as into its herdr pane, until it has
- * exited; for a run over ACP, its conversation (Conversation). The current role's agent is chosen until another is. */
+/** The run's agents, a tab each: for a run in herdr, what the chosen one's pane shows, read again as readsAgain says
+ * while it is shown, and a box and keys to type into it, as into its herdr pane, while it has not exited; for a run
+ * over ACP, its conversation (Conversation). The current role's agent is chosen until another is. */
 export function AgentPanes({ api, project, record }: Props) {
   const agents = record.agents ?? [];
-  // A run nothing drives (health null) is finished or cut short: what its agents show no longer changes.
-  const driven = record.health !== null;
   const [chosen, setChosen] = useState<string | null>(null);
   const shown = agents.find((a) => a.role === chosen) ?? agents.find((a) => a.role === record.role) ?? agents[0];
   if (!shown) {
@@ -58,29 +57,17 @@ export function AgentPanes({ api, project, record }: Props) {
       </div>
       {/* Keyed by the agent, so another one starts from nothing read and nothing typed. */}
       {record.backend === "acp" ? (
-        <Conversation key={shown.name} api={api} project={project} run={record.id} role={shown.role} driven={driven} />
+        <Conversation key={shown.name} api={api} project={project} record={record} role={shown.role} />
       ) : (
-        <AgentPane key={shown.name} api={api} project={project} run={record.id} agent={shown} driven={driven} />
+        <AgentPane key={shown.name} api={api} project={project} record={record} agent={shown} />
       )}
     </section>
   );
 }
 
-/** What one agent's pane shows, and the input to it while it has not exited. driven is useAgentText's. */
-function AgentPane({
-  api,
-  project,
-  run,
-  agent,
-  driven,
-}: {
-  api: Api;
-  project: Project;
-  run: string;
-  agent: AgentRef;
-  driven: boolean;
-}) {
-  const { text, problem, exited, refresh } = useAgentText(api, project, run, agent.role, driven);
+/** What record's run's agent shows in its pane, and the input to it while it has not exited. */
+function AgentPane({ api, project, record, agent }: { api: Api; project: Project; record: RunRecord; agent: AgentRef }) {
+  const { text, problem, exited, refresh } = useAgentText(api, project, record, agent.role);
   const [draft, setDraft] = useState("");
   // True while the draft is being sent: it can be neither sent again nor changed until the send settles, so that one
   // Enter sends it once and success clears what was sent.
@@ -90,7 +77,7 @@ function AgentPane({
   const { ref: screen, shown: screenText, held, toEnd } = useHeldWhileScrolledUp<HTMLPreElement, string | null>(text);
 
   const type = (input: AgentInput) =>
-    api.typeInto(project, run, agent.role, input).then(
+    api.typeInto(project, record.id, agent.role, input).then(
       () => {
         setSendProblem(null);
         // As a terminal does on input: the reader is to see what it brings, also if they had scrolled up.
@@ -155,12 +142,11 @@ function AgentPane({
   );
 }
 
-/** The last AGENT_LINES lines of what the agent shows, read now and, while driven (something drives the run), every
- * AGENT_POLL_MS while mounted, one read at a time, until a read answers 404: the agent has exited, or never was, and
- * the server would only spawn herdr to say so again. Reading starts over whenever driven changes, so a resumed run is
- * read again. text keeps the last read that succeeded, and problem says why the last one failed, null once one
- * succeeds; exited is true while the last read answered 404. refresh reads again at once, also after a 404. */
-function useAgentText(api: Api, project: Project, run: string, role: string, driven: boolean) {
+/** The last AGENT_LINES lines of what record's run's agent of role shows, read now and again as readsAgain says while
+ * mounted, one read at a time. A 404 means the agent has exited, or never was; reading on would only have the server
+ * spawn herdr to say so again. text keeps the last read that succeeded, and problem says why the last one failed, null
+ * once one succeeds; exited is true while the last read answered 404. refresh reads again at once. */
+function useAgentText(api: Api, project: Project, record: RunRecord, role: string) {
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [exited, setExited] = useState(false);
@@ -169,13 +155,13 @@ function useAgentText(api: Api, project: Project, run: string, role: string, dri
     let current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
-      api.agentText(project, run, role, AGENT_LINES).then(
+      api.agentText(project, record.id, role, AGENT_LINES).then(
         (next) => {
           if (current) {
             setText(next);
             setProblem(null);
             setExited(false);
-            if (driven) {
+            if (readsAgain(record, null)) {
               timer = setTimeout(read, AGENT_POLL_MS);
             }
           }
@@ -183,9 +169,8 @@ function useAgentText(api: Api, project: Project, run: string, role: string, dri
         (error: Error) => {
           if (current) {
             setProblem(error.message);
-            const gone = error instanceof HttpError && error.status === 404;
-            setExited(gone);
-            if (driven && !gone) {
+            setExited(error instanceof HttpError && error.status === 404);
+            if (readsAgain(record, error)) {
               timer = setTimeout(read, AGENT_POLL_MS);
             }
           }
@@ -197,6 +182,6 @@ function useAgentText(api: Api, project: Project, run: string, role: string, dri
       current = false;
       clearTimeout(timer);
     };
-  }, [api, project, run, role, driven, reads]);
+  }, [api, project, record, role, reads]);
   return { text, problem, exited, refresh: () => setReads((n) => n + 1) };
 }

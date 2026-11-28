@@ -173,12 +173,38 @@ describe("the herdr pane of an agent that has exited", () => {
       expect(screen.getByRole("button", { name: `press ${key}` })).toBeDisabled();
     }
   });
+
+  it("reads again once the run's record changes, as when the engine starts the agent again", async () => {
+    vi.useFakeTimers();
+    const agentText = vi.fn().mockRejectedValueOnce(new HttpError(404, "the build agent has exited")).mockResolvedValue("again");
+    const api = { agentText } as unknown as Api;
+    const record = {
+      id: "20261122-120000-c0ffee",
+      role: "build",
+      backend: "herdr",
+      health: "running",
+      agents: [{ role: "build", name: "build-1", kind: "claude" }],
+    } as unknown as RunRecord;
+    const { rerender } = render(<AgentPanes api={api} project={PROJECT} record={record} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("button", { name: "press esc" })).toBeDisabled();
+
+    rerender(<AgentPanes api={api} project={PROJECT} record={{ ...record, pane: "w1:p2" }} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(agentText).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("what the build agent shows")).toHaveTextContent("again");
+    expect(screen.getByRole("button", { name: "press esc" })).toBeEnabled();
+  });
 });
 
 describe("the herdr pane of an agent of a run nothing drives", () => {
-  it("is read once", async () => {
+  it("is read until a read answers", async () => {
     vi.useFakeTimers();
-    const agentText = vi.fn(async () => "done");
+    const agentText = vi.fn().mockRejectedValueOnce(new HttpError(502, "herdr did not answer")).mockResolvedValue("done");
     const record = {
       id: "20261122-120000-c0ffee",
       role: "build",
@@ -191,7 +217,7 @@ describe("the herdr pane of an agent of a run nothing drives", () => {
       await vi.advanceTimersByTimeAsync(3 * AGENT_POLL_MS);
     });
 
-    expect(agentText).toHaveBeenCalledTimes(1);
+    expect(agentText).toHaveBeenCalledTimes(2);
     expect(screen.getByLabelText("what the build agent shows")).toHaveTextContent("done");
   });
 });

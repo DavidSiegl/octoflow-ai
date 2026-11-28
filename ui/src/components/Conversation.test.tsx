@@ -1,11 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type AgentEvent, type Api, HttpError, type Conversation as Session } from "../api";
+import { type AgentEvent, type Api, HttpError, type RunRecord, type Conversation as Session } from "../api";
 import { AGENT_POLL_MS } from "./AgentPanes";
 import { Conversation } from "./Conversation";
 
 const PROJECT = { cwd: "/home/me/proj" };
 const RUN = "20261024-140000-c0ffee";
+/** A record of RUN, driven. */
+const RECORD = { id: RUN, health: "running" } as RunRecord;
 
 /** An event of kind with its fields, numbered seq. */
 function event(seq: number, fields: Record<string, unknown>): AgentEvent {
@@ -54,9 +56,9 @@ function fakeApi(sessions: Session[], refused?: string) {
   return { api, agentEvents, settle };
 }
 
-/** Render the spec agent's conversation of a run that is driven unless said otherwise; returns its list. */
-function show(api: Api, driven = true) {
-  render(<Conversation api={api} project={PROJECT} run={RUN} role="spec" driven={driven} />);
+/** Render the spec agent's conversation of RECORD's run; returns its list. */
+function show(api: Api) {
+  render(<Conversation api={api} project={PROJECT} record={RECORD} role="spec" />);
   return screen.getByRole("list", { name: "what the spec agent did" });
 }
 
@@ -166,40 +168,55 @@ describe("the conversation of an agent over ACP", () => {
     expect(within(list).getByText("The agent failed: not logged in")).toBeInTheDocument();
   });
 
-  it("stops reading at a 404, and shows what it last had", async () => {
+  it("stops reading at a 404, shows what it last had, and reads again once the run's record changes", async () => {
     vi.useFakeTimers();
     const agentEvents = vi
       .fn()
       .mockResolvedValueOnce({ session_start: 1, events: session(null), answerable: true })
-      .mockRejectedValueOnce(new HttpError(404, "no journal of the spec agent"));
-    const list = show({ agentEvents } as unknown as Api);
+      .mockRejectedValueOnce(new HttpError(404, "no journal of the spec agent"))
+      .mockResolvedValue({ session_start: 1, events: [], answerable: true });
+    const api = { agentEvents } as unknown as Api;
+    const { rerender } = render(<Conversation api={api} project={PROJECT} record={RECORD} role="spec" />);
+    const list = screen.getByRole("list", { name: "what the spec agent did" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3 * AGENT_POLL_MS);
     });
-
     expect(agentEvents).toHaveBeenCalledTimes(2);
     expect(within(list).getByText("Which limit?")).toBeInTheDocument();
     expect(screen.getByText("no journal of the spec agent")).toBeInTheDocument();
+
+    // The engine started the agent again: the run's record changed.
+    rerender(<Conversation api={api} project={PROJECT} record={{ ...RECORD }} role="spec" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(agentEvents.mock.calls.map((c) => c[3])).toEqual([0, 10, 10]);
+    expect(screen.queryByText("no journal of the spec agent")).not.toBeInTheDocument();
   });
 
-  it("reads a run nothing drives once, and reads again once it is driven", async () => {
+  it("reads a run nothing drives until a read answers, and again when its record changes", async () => {
     vi.useFakeTimers();
-    const { api, agentEvents } = fakeApi([{ session_start: 1, events: session(null), answerable: false }]);
-    const { rerender } = render(<Conversation api={api} project={PROJECT} run={RUN} role="spec" driven={false} />);
+    const finished = { ...RECORD, health: null } as RunRecord;
+    const agentEvents = vi
+      .fn()
+      .mockRejectedValueOnce(new HttpError(502, "the project cannot be reached"))
+      .mockResolvedValue({ session_start: 1, events: session(null), answerable: false });
+    const api = { agentEvents } as unknown as Api;
+    const { rerender } = render(<Conversation api={api} project={PROJECT} record={finished} role="spec" />);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3 * AGENT_POLL_MS);
+      await vi.advanceTimersByTimeAsync(5 * AGENT_POLL_MS);
     });
-    expect(agentEvents).toHaveBeenCalledTimes(1);
+    expect(agentEvents).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Which limit?")).toBeInTheDocument();
 
-    rerender(<Conversation api={api} project={PROJECT} run={RUN} role="spec" driven />);
+    rerender(<Conversation api={api} project={PROJECT} record={{ ...finished, health: "running" }} role="spec" />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
     });
-    expect(agentEvents.mock.calls.map((c) => c[3])).toEqual([0, 10, 10]);
+    expect(agentEvents.mock.calls.map((c) => c[3])).toEqual([0, 0, 10, 10]);
   });
 
   it("follows its end while the reader is there, stays where they scrolled up to, and leaves the page where it is", async () => {
