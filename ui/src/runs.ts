@@ -9,27 +9,53 @@ export interface RunEntry {
   files: RunFile[] | null;
 }
 
-/** What a project's event stream has told the app. */
+/** What a project's event streams have told the app. */
 export interface RunsState {
   runs: Record<string, RunEntry>;
   /** Why the server could not read the project, as its last problem event said; null once it can. */
   problem: string | null;
+  /** The runs the stream now open has sent a record of, until it has told of all it will for now: its listed event,
+   * or a problem; null once one of those came, or before a stream opened. The runs from an earlier stream stay shown
+   * meanwhile, and those this one did not tell of go at that event. */
+  relisted: ReadonlySet<string> | null;
 }
 
-export const NO_RUNS: RunsState = { runs: {}, problem: null };
+export const NO_RUNS: RunsState = { runs: {}, problem: null, relisted: null };
+
+/** The state once a stream (re)opens, which tells of every run again: the runs stay until it has told of them all (see
+ * RunsState.relisted), and the problem of the stream before it is cleared. */
+export function relisting(state: RunsState): RunsState {
+  return { ...state, problem: null, relisted: new Set() };
+}
+
+/** state with only the runs the stream now open told of, once it has told of all it will for now: at its listed
+ * event, or at a problem, after which it tells of none until the project can be read again. */
+function relisted(state: RunsState): RunsState {
+  const told = state.relisted;
+  if (told === null) {
+    return state;
+  }
+  const runs = Object.fromEntries(Object.entries(state.runs).filter(([run]) => told.has(run)));
+  return { ...state, runs, relisted: null };
+}
 
 /** The state after an event that arrived at the time `at`, in milliseconds since the epoch. */
 export function applyEvent(state: RunsState, event: RunEvent, at: number): RunsState {
   switch (event.kind) {
-    case "problem":
-      return { ...state, problem: event.error };
+    case "problem": {
+      const shown = event.error === null ? state : relisted(state);
+      return { ...shown, problem: event.error };
+    }
+    case "listed":
+      return relisted(state);
     case "record": {
       const { [event.run]: old, ...others } = state.runs;
+      const relisted = state.relisted && new Set(state.relisted).add(event.run);
       if (event.record === null) {
-        return { ...state, runs: others };
+        return { ...state, runs: others, relisted };
       }
       const entry = { record: event.record, receivedAt: at, files: old?.files ?? null };
-      return { ...state, runs: { ...others, [event.run]: entry } };
+      return { ...state, runs: { ...others, [event.run]: entry }, relisted };
     }
     case "files": {
       const old = state.runs[event.run];

@@ -1,19 +1,28 @@
 import { type RefObject, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { EVENT_KINDS, type Api, type Project, type RunEvent } from "./api";
-import { applyEvent, NO_RUNS, type RunsState } from "./runs";
+import { applyEvent, NO_RUNS, relisting, type RunsState } from "./runs";
 
-type Action = { type: "reset" } | { type: "event"; event: RunEvent; at: number };
+type Action = { type: "reset" } | { type: "open" } | { type: "event"; event: RunEvent; at: number };
 
 function reduce(state: RunsState, action: Action): RunsState {
-  return action.type === "reset" ? NO_RUNS : applyEvent(state, action.event, action.at);
+  switch (action.type) {
+    case "reset":
+      return NO_RUNS;
+    case "open":
+      return relisting(state);
+    case "event":
+      return applyEvent(state, action.event, action.at);
+  }
 }
 
 /** The project's runs, kept up to date by the server's event stream for as long as the component is mounted.
  *
- * The stream starts with every run's record and files, also after the EventSource reconnects, so each opening
- * starts from no runs. A dropped stream, which the EventSource reconnects, shows as the state's problem until it
- * does. A stream the server refused, as for a project folder it cannot open, is closed for good: its problem is then
- * the server's reason (Api.runsProblem), and nothing reconnects it but opening the project again.
+ * The stream starts with every run's record and files, then `listed`, also after the EventSource reconnects. A
+ * project starts from no runs; a reconnect keeps the runs shown, so that an open run's detail stays mounted, until
+ * listed drops those the new stream did not tell of (RunsState.relisted), or a problem does. A dropped stream, which
+ * the EventSource reconnects, shows as the state's problem until it does. A stream the server refused, as for a
+ * project folder it cannot open, is closed for good: its problem is then the server's reason (Api.runsProblem), and
+ * nothing reconnects it but opening the project again.
  */
 export function useRunStream(api: Api, project: Project): RunsState {
   const [state, dispatch] = useReducer(reduce, NO_RUNS);
@@ -24,7 +33,7 @@ export function useRunStream(api: Api, project: Project): RunsState {
       current && dispatch({ type: "event", event: { kind: "problem", error }, at: Date.now() });
     dispatch({ type: "reset" });
     const source = new EventSource(api.eventsUrl(project));
-    source.addEventListener("open", () => dispatch({ type: "reset" }));
+    source.addEventListener("open", () => dispatch({ type: "open" }));
     source.addEventListener("error", () => {
       if (source.readyState !== EventSource.CLOSED) {
         problem("lost the connection to the orchestrator; retrying");

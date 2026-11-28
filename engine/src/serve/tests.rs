@@ -2144,6 +2144,8 @@ fn the_stream() {
         files.get("files").and_then(Value::as_array).unwrap().iter().map(|f| f.get("name").unwrap().text()).collect()
     };
     assert_eq!(names(&files), ["spec.md"]);
+    let (kind, listed) = stream.next(Duration::from_secs(2));
+    assert_eq!((kind.as_str(), listed.to_string()), ("listed", "{}".to_string()));
 
     // A change is told by the first poll that starts after it, which is counted here in polls, not seconds, as a busy
     // host stretches each poll (one took 1.4 s beside the other tests, so that an event came 2.4 s after its change;
@@ -2188,7 +2190,7 @@ fn the_stream() {
 fn nothing_while_nothing_changes() {
     let served = Served::fake(&host_with_run(), &[]);
     let stream = EventStream::open(&served, &Served::query("/events", &[]), "");
-    stream.kinds(2);
+    assert_eq!(stream.kinds(3), ["record", "files", "listed"]);
     assert!(stream.events.recv_timeout(Duration::from_millis(2500)).is_err());
 }
 
@@ -2238,7 +2240,7 @@ fn a_stream_to_an_http_1_0_client_ends_with_its_connection() {
     let reply = reader.join().unwrap();
     assert_eq!(reply.status, Some(200));
     assert_eq!(reply.header("Transfer-Encoding"), None);
-    assert_eq!(reply.body, ":\n\n");
+    assert_eq!(reply.body, "event: listed\ndata: {}\n\n");
 }
 
 #[test]

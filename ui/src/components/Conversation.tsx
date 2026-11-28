@@ -41,6 +41,12 @@ export function Conversation({ api, project, record, role }: Props) {
   // The permission requests, by their journal number (unique within the journal), answered from here and not refused:
   // their buttons stay disabled until the journal's `answered` replaces them, so that one request gets one answer.
   const [answering, setAnswering] = useState<ReadonlySet<number>>(new Set());
+  // The message being typed to the agent, not yet sent, and the session it was typed in, by its start: kept here, so
+  // that it outlives the box, which shows only while the run waits and is answerable. A new session starts empty.
+  const [message, setMessage] = useState({ start, text: "" });
+  const draft = message.start === start ? message.text : "";
+  // True while a message is being sent: it can be neither sent again nor changed until the send settles.
+  const [sending, setSending] = useState(false);
   const list = useFollowEnd<HTMLOListElement>(events, start);
 
   const answers = new Map<number, { option: string; by: string }>();
@@ -63,6 +69,18 @@ export function Conversation({ api, project, record, role }: Props) {
         return false;
       },
     );
+  const sendMessage = () => {
+    if (!draft.trim() || sending) {
+      return;
+    }
+    setSending(true);
+    void settle(api.messageAgent(project, run, role, draft)).then((sent) => {
+      setSending(false);
+      if (sent) {
+        setMessage({ start, text: "" });
+      }
+    });
+  };
 
   return (
     <div className="agent conversation" role="tabpanel" aria-label={`${role} agent`}>
@@ -93,7 +111,10 @@ export function Conversation({ api, project, record, role }: Props) {
         <MessageBox
           role={role}
           why={waiting}
-          send={(text) => settle(api.messageAgent(project, run, role, text))}
+          draft={draft}
+          sending={sending}
+          onDraft={(text) => setMessage({ start, text })}
+          onSend={sendMessage}
         />
       )}
       {sendProblem && <p className="problem">{sendProblem}</p>}
@@ -184,23 +205,26 @@ function ToolCall({ call }: { call: AcpToolCall }) {
   );
 }
 
-/** The box that sends the human's message, while the run waits on it for why. send resolves to whether it was sent:
- * the box is cleared only then. */
-function MessageBox({ role, why, send }: { role: string; why: string; send: (text: string) => Promise<boolean> }) {
-  const [draft, setDraft] = useState("");
-  // True while the draft is being sent: it can be neither sent again nor changed until the send settles.
-  const [sending, setSending] = useState(false);
+/** The box for the human's message, draft, while the run waits on it for why: onDraft gets each change to it, and
+ * onSend asks for it to be sent. While sending, it can be neither changed nor sent. */
+function MessageBox({
+  role,
+  why,
+  draft,
+  sending,
+  onDraft,
+  onSend,
+}: {
+  role: string;
+  why: string;
+  draft: string;
+  sending: boolean;
+  onDraft: (draft: string) => void;
+  onSend: () => void;
+}) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (draft.trim() && !sending) {
-      setSending(true);
-      void send(draft).then((sent) => {
-        setSending(false);
-        if (sent) {
-          setDraft("");
-        }
-      });
-    }
+    onSend();
   };
   return (
     <form className="message" onSubmit={submit}>
@@ -209,7 +233,7 @@ function MessageBox({ role, why, send }: { role: string; why: string; send: (tex
         aria-label={`Message to the ${role} agent`}
         value={draft}
         readOnly={sending}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onDraft(event.target.value)}
       />
       <button type="submit" disabled={!draft.trim() || sending}>
         Send

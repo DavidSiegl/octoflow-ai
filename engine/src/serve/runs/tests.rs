@@ -56,9 +56,9 @@ fn first_poll_sends_everything() {
     w.host.state().files.insert(format!("{}/spec.md", run_dir()), "# Spec\n".to_string());
     let mut watch = RunWatch::new(&w.project);
     let events = watch.poll();
-    let runs: Vec<(&str, &str)> =
-        events.iter().map(|e| (e.kind, e.payload.get("run").and_then(Value::as_str).unwrap())).collect();
-    assert_eq!(runs, [("record", SERVE_ID), ("files", SERVE_ID)]);
+    assert_eq!(kinds(&events), ["record", "files", "listed"]);
+    let runs: Vec<Option<&str>> = events.iter().map(|e| e.payload.get("run").and_then(Value::as_str)).collect();
+    assert_eq!(runs, [Some(SERVE_ID), Some(SERVE_ID), None]);
     assert_eq!(events[0].payload.get("record").and_then(|r| r.get("phase")), Some(&Value::from("build")));
     assert_eq!(events[1].payload.get("files").unwrap().to_string(), r#"[{"name":"spec.md","mtime":0,"size":7}]"#);
     assert_eq!(watch.poll(), vec![]);
@@ -170,7 +170,7 @@ fn a_run_of_this_host_whose_orchestrator_exited_is_stale() {
         false
     });
     let events = RunWatch::new(&project).poll();
-    assert_eq!(kinds(&events), ["record", "files"]);
+    assert_eq!(kinds(&events), ["record", "files", "listed"]);
     // The project's pid_alive judged it, for its health and for whether it is resumable.
     assert_ne!(ASKED.load(Ordering::SeqCst), 0);
     let record = events[0].payload.get("record").unwrap();
@@ -192,9 +192,25 @@ fn a_problem_is_told_once_and_its_end_too() {
     w.host.state().run_states_inside_error = None;
     w.save(0, &[]);
     let events = watch.poll();
-    assert_eq!(kinds(&events), ["problem", "record", "files"]);
+    assert_eq!(kinds(&events), ["problem", "record", "files", "listed"]);
     assert_eq!(events[0].payload.to_string(), r#"{"error":null}"#);
     assert_eq!(watch.poll(), vec![]);
+}
+
+#[test]
+fn listed_follows_only_the_first_poll_that_reads_the_project() {
+    let w = Watched::new();
+    let mut watch = RunWatch::new(&w.project);
+    // A project with no runs tells of none, and still says it has told of every one.
+    let events = watch.poll();
+    assert_eq!(kinds(&events), ["listed"]);
+    assert_eq!(events[0].payload.to_string(), "{}");
+    w.save(0, &[]);
+    assert_eq!(kinds(&watch.poll()), ["record", "files"]);
+    w.host.state().run_states_inside_error = Some("ssh: connection refused".to_string());
+    assert_eq!(kinds(&watch.poll()), ["problem"]);
+    w.host.state().run_states_inside_error = None;
+    assert_eq!(kinds(&watch.poll()), ["problem"]);
 }
 
 #[test]
@@ -216,7 +232,7 @@ fn a_run_id_that_is_not_its_directory_name_is_no_run() {
     let w = Watched::new();
     w.host.state().files.insert(format!("{}/state.json", run_dir()), r#"{"run_id": "../.."}"#.to_string());
     let events = RunWatch::new(&w.project).poll();
-    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(kinds(&events), ["listed"]);
 }
 
 #[test]

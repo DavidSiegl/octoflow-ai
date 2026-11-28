@@ -249,8 +249,9 @@ pub fn project_host(cwd: &str, stopping: &Interrupt) -> Result<Reached, Orchestr
 /// - POST /close-choice: saves the JSON body's {"choice": "ask" | "keep" | "stop"} and answers {"choice"}; 400 for a
 ///   body of another shape and 413 as for /agent/input, 500 when it cannot be saved.
 /// - /events: a text/event-stream of RunWatch's events, polled every SERVE_POLL, until the client goes or the server
-///   stops. An HTTP/1.1 client gets it chunked, so that the
-///   end of the stream is the end of the response; an HTTP/1.0 client's ends when the connection closes.
+///   stops. Each stream starts from nothing: it tells of every run again, then `listed` (RunWatch::poll). An HTTP/1.1
+///   client gets it chunked, so that the end of the stream is the end of the response; an HTTP/1.0 client's ends when
+///   the connection closes.
 ///
 /// Every request is checked in this order: a Host header other than the server's own address, or an Origin other
 /// than its own or one of its origins, gets 403 {"error"}; a CORS preflight (OPTIONS) that passes gets 204, allowing

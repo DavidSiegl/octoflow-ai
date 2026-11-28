@@ -284,7 +284,7 @@ started, as the human would start one from a terminal.
   | `POST /agent/input?run=ID&role=ROLE` | for a run in herdr, types the JSON body's `{"text"}` into that agent as a prompt (`herdr agent prompt`), or presses its `{"keys"}` (`herdr agent send-keys`) |
   | `/agent/events?run=ID&role=ROLE&after=N` | for a run over ACP, `{"run", "role", "session_start", "events", "answerable"}`: the current session of the role's journal (`acp::replay`) after event `N`, and whether the run listens on its socket |
   | `POST /agent/answer`, `POST /agent/message` (`?run=ID&role=ROLE`) | for a run over ACP, the body's `{"request", "option"}` answers a permission, `{"text"}` is the human's message while the run waits on them; both through the run's socket (`acp::ask`) |
-  | `/events` | a `text/event-stream` of `record`, `files` and `problem` events; see Events below |
+  | `/events` | a `text/event-stream` of `record`, `files`, `problem` and `listed` events; see Events below |
   | `/setup` | `{"checks", "passed", "adapters"}`: `doctor`'s checks of the project (`serve::setup`), each `{"name", "level", "ok", "detail", "fix"}` of the checks for runs over ACP (`check_acp_setup`), and whether every `required` one is ok; it does not connect the project, so one that cannot be reached is a failed check; `adapters` are `{"agent", "installed", "megabytes", "installing", "error", "warning"}` for each ACP adapter (`Setup::adapters`): with how the latest install serve started goes |
   | `/setup/adapters` | `{"adapters"}`: the adapters as `/setup` gives them, with no check run, which the dialog polls while an install runs |
   | `/setup/checked`, `POST /setup/checked` | `{"checked"}`: whether the dialog need not open by itself (`Setup::checked`: the setup marker is there and the adapter of the default harness, claude, is installed for the current pins); the POST writes the marker |
@@ -306,7 +306,8 @@ started, as the human would start one from a terminal.
 - **Events.** Each `/events` stream has its own `RunWatch`. It polls `run_states_inside` every second (`SERVE_POLL`), and compares what it reads with what the stream
   last sent. A run whose record changed, other than in what ages (`RunRecord::settled`), gets a `record` event, and one whose
   files changed a `files` event; a run whose `state.json` is gone gets a `record` event with `null`. The first
-  poll sends every run. An unfinished run's files are read on every poll, a finished or failed run's only when
+  poll sends every run; the first that reads the project ends with a `listed` event, once, so that a client
+  that reconnected can drop the runs it still shows and was not told of. An unfinished run's files are read on every poll, a finished or failed run's only when
   its record changes. A project that cannot be read gives one `problem` event, and another with `null` once it
   can. A stream with nothing to send writes an SSE comment instead, so a client that has gone is noticed at the
   next poll.
@@ -379,8 +380,8 @@ browser, at a far smaller download.
   desktop app as the terminal client too").
 - **Frontend.** `api.ts` types the protocol: `RunRecord` mirrors the engine's (`cli/listing.rs`), `RunRequest` is `POST /run`'s body, and
   `Api` builds the URLs and makes the requests. `hooks.ts`'s `useRunStream` opens the `EventSource` and folds its
-  events into a `RunsState` with `runs.ts`'s `applyEvent`. Every opening starts from no runs, since the server sends
-  every run again. `runs.ts` also holds `progress` (every stage of a run from its start: its steps, `quality` after
+  events into a `RunsState` with `runs.ts`'s `applyEvent`. A project starts from no runs. A reconnect keeps the runs
+  shown, so that an open run's detail stays mounted, until the new stream's `listed` drops those it did not send. `runs.ts` also holds `progress` (every stage of a run from its start: its steps, `quality` after
   each step the quality loop follows, `publish` when the run opens a pull request, each with its turns and its
   state; the overview's `StepProgress` and the run detail's `RunMap` both draw it) and the wording helpers, which follow `format_age` and `run_round`. A `RunEntry` keeps when its record
   arrived, so `heartbeatAge` ticks with `useNow` between events. The components are `ProjectBar`, `RunsOverview`,
