@@ -150,7 +150,8 @@ export function CloseGuard({ api, project, appWindow }: { api: Api; project: Pro
 }
 
 /** "Keep running" (focused) or "Stop all", with "Don't ask again", which saves the choice made. A choice that cannot
- * be saved still goes ahead: the next close asks again. */
+ * be saved still goes ahead: the next close asks again. Once one is clicked, nothing in the dialog can be until it
+ * acts, so that one choice is saved and acted on. */
 function AskDialog({
   api,
   project,
@@ -165,7 +166,9 @@ function AskDialog({
   onStop: () => void;
 }) {
   const [remember, setRemember] = useState(false);
+  const [chosen, setChosen] = useState(false);
   const choose = (choice: "keep" | "stop", then: () => void) => {
+    setChosen(true);
     if (!remember) {
       return then();
     }
@@ -178,14 +181,14 @@ function AskDialog({
         They go on without the app, and show here again when it opens; or stop them now, to resume later.
       </p>
       <label className="check">
-        <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+        <input type="checkbox" checked={remember} disabled={chosen} onChange={(e) => setRemember(e.target.checked)} />
         Don't ask again
       </label>
       <footer>
-        <button type="button" onClick={() => choose("stop", onStop)}>
+        <button type="button" disabled={chosen} onClick={() => choose("stop", onStop)}>
           Stop all
         </button>
-        <button type="button" onClick={() => choose("keep", onKeep)} autoFocus>
+        <button type="button" disabled={chosen} onClick={() => choose("keep", onKeep)} autoFocus>
           Keep running
         </button>
       </footer>

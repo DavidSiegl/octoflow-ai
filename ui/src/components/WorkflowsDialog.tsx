@@ -7,8 +7,8 @@ import { type Opening, WorkflowEditor } from "./WorkflowEditor";
  * is. */
 type Entry = EditableWorkflow | { name: string; unread: string } | undefined;
 
-/** A workflow whose file is about to be deleted, once its confirmation is answered: its name, path and text. */
-interface Deleting {
+/** A workflow whose file is to be deleted: its name, path and text. */
+interface DeleteTarget {
   name: string;
   path: string;
   text: string;
@@ -17,7 +17,8 @@ interface Deleting {
 /** The workflows of this computer, as `run --workflow` offers them, each with its description, or for one whose file
  * does not load, its path and error. New opens the editor on a copy of the default workflow, Duplicate on a copy of
  * the entry, and Edit on the entry itself (View for a built-in one, which is read-only). Delete removes an entry's
- * file after a confirmation naming it. The workflow saved last is marked. */
+ * file after a confirmation naming it; while it does, the entry shows "Deleting…" and offers no action, and the dialog
+ * cannot be closed, so that a failure is seen. The workflow saved last is marked. */
 export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => void }) {
   // What /workflows gave, the error that kept it from giving it, or null until it answers.
   const [offered, setOffered] = useState<{ options: RunOptions } | { error: string } | null>(null);
@@ -26,8 +27,11 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
   const [generation, setGeneration] = useState(0);
   const [editing, setEditing] = useState<Opening | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<Deleting | null>(null);
-  // Why the last delete failed; null when it did not.
+  // The workflow whose delete waits on its confirmation.
+  const [confirming, setConfirming] = useState<DeleteTarget | null>(null);
+  // The names of the workflows whose delete was confirmed and has not been answered.
+  const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
+  // Why the last delete failed; null when it did not, or a save or delete came since.
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
@@ -57,20 +61,27 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
     setEntries({});
     setGeneration((g) => g + 1);
   };
-  const confirmDelete = (target: Deleting) => {
-    setDeleting(null);
+  const confirmDelete = (target: DeleteTarget) => {
+    setConfirming(null);
     setFailure(null);
+    setDeleting((before) => new Set(before).add(target.name));
+    const settled = () => setDeleting((before) => new Set([...before].filter((name) => name !== target.name)));
     api.deleteWorkflow(target.name, target.text).then(
       () => {
+        settled();
         setSaved((name) => (name === target.name ? null : name));
         reread();
       },
-      (error: Error) => setFailure(error.message),
+      (error: Error) => {
+        settled();
+        setFailure(error.message);
+      },
     );
   };
   const onSaved = (name: string) => {
     setEditing(null);
     setSaved(name);
+    setFailure(null);
     reread();
   };
   return (
@@ -86,15 +97,16 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
                 name={name}
                 entry={entries[name]}
                 saved={name === saved}
+                deleting={deleting.has(name)}
                 onOpen={setEditing}
-                onDelete={setDeleting}
+                onDelete={setConfirming}
               />
             ))}
           </ul>
         )}
         {failure !== null && <pre className="problem">{failure}</pre>}
         <footer>
-          <button type="button" onClick={onClose}>
+          <button type="button" onClick={onClose} disabled={deleting.size > 0}>
             Close
           </button>
           <button type="button" onClick={() => setEditing({ copy: DEFAULT_WORKFLOW })} disabled={!options}>
@@ -102,16 +114,16 @@ export function WorkflowsDialog({ api, onClose }: { api: Api; onClose: () => voi
           </button>
         </footer>
       </Dialog>
-      {deleting && (
-        <Dialog label="delete workflow" title={`Delete ${deleting.name}?`} className="confirm">
+      {confirming && (
+        <Dialog label="delete workflow" title={`Delete ${confirming.name}?`} className="confirm">
           <p>
-            This removes {deleting.path}. Runs already started with it keep their own copy, and resume with it.
+            This removes {confirming.path}. Runs already started with it keep their own copy, and resume with it.
           </p>
           <footer>
-            <button type="button" onClick={() => setDeleting(null)}>
+            <button type="button" onClick={() => setConfirming(null)}>
               Cancel
             </button>
-            <button type="button" onClick={() => confirmDelete(deleting)}>
+            <button type="button" onClick={() => confirmDelete(confirming)}>
               Delete
             </button>
           </footer>
@@ -129,15 +141,19 @@ interface ItemProps {
   entry: Entry;
   /** Whether this is the workflow saved last, which the list marks. */
   saved: boolean;
+  /** Whether its delete was confirmed and has not been answered. */
+  deleting: boolean;
   onOpen: (opening: Opening) => void;
-  onDelete: (target: Deleting) => void;
+  onDelete: (target: DeleteTarget) => void;
 }
 
 /** One workflow of the list: its name, its description or why it does not load, and what can be done with it. */
-function WorkflowItem({ name, entry, saved, onOpen, onDelete }: ItemProps) {
+function WorkflowItem({ name, entry, saved, deleting, onOpen, onDelete }: ItemProps) {
   let body;
   let actions = null;
-  if (entry === undefined) {
+  if (deleting) {
+    body = <p className="loading">Deleting…</p>;
+  } else if (entry === undefined) {
     body = <p className="loading">Reading…</p>;
   } else if ("unread" in entry) {
     body = <p className="problem">{entry.unread}</p>;

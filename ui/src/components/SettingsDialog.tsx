@@ -15,6 +15,9 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
   // The saved choice; null while it is read, or when it could not be.
   const [choice, setChoice] = useState<CloseChoice | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // True while a pick is being saved. Another pick is not taken meanwhile, so that choice, once the save settles, is
+  // what the server holds. The radios stay enabled, so that the one focused keeps the focus.
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     let current = true;
     api.closeChoice().then(
@@ -31,17 +34,24 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   const pick = (next: CloseChoice) => {
+    if (saving) {
+      return;
+    }
     const before = choice;
     setChoice(next);
     setProblem(null);
-    api.saveCloseChoice(next).catch((error: Error) => {
-      setChoice(before);
-      setProblem(`Could not save the setting: ${error.message}`);
-    });
+    setSaving(true);
+    api
+      .saveCloseChoice(next)
+      .catch((error: Error) => {
+        setChoice(before);
+        setProblem(`Could not save the setting: ${error.message}`);
+      })
+      .finally(() => setSaving(false));
   };
   return (
     <Dialog label="settings" title="Settings" className="settings">
-      <fieldset disabled={choice === null && problem === null}>
+      <fieldset disabled={choice === null && problem === null} aria-busy={saving}>
         <legend>When the app closes with the open project's runs running</legend>
         {CHOICES.map(({ choice: value, label }) => (
           <label key={value} className="check">

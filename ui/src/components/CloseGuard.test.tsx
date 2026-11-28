@@ -73,6 +73,24 @@ describe("closing the app", () => {
     expect(stop.choice).toBe("keep");
   });
 
+  it("acts on the first choice clicked only, while it is being saved", async () => {
+    let release = () => {};
+    const stop: FakeStop = { running: [{ run: RUN, error: null }], saveHeld: new Promise((resolve) => (release = resolve)) };
+    const win = await openApp(stop);
+    await close(win);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Don't ask again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep running" }));
+
+    expect(screen.getByRole("button", { name: "Stop all" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Keep running" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Don't ask again" })).toBeDisabled();
+    await act(async () => release());
+    await waitFor(() => expect(win.destroyed).toBe(true));
+    expect(stop.saves).toEqual(["stop"]);
+    expect(stop.stops).toBe(1);
+  });
+
   it("closes without asking or stopping once Keep running was remembered", async () => {
     const stop: FakeStop = { running: [{ run: RUN, error: null }], choice: "keep" };
     const win = await openApp(stop);
@@ -194,6 +212,24 @@ describe("the settings", () => {
     expect(within(dialog).getByRole("radio", { name: "Ask each time" })).toBeChecked();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog", { name: "settings" })).not.toBeInTheDocument();
+  });
+
+  it("keep the saved choice checked when a pick cannot be saved, and take no pick while one is saved", async () => {
+    let release = () => {};
+    const stop: FakeStop = { choice: "stop", saveError: "disk full", saveHeld: new Promise((resolve) => (release = resolve)) };
+    await openApp(stop);
+    fireEvent.click(await screen.findByRole("button", { name: "Settings…" }));
+    const dialog = screen.getByRole("dialog", { name: "settings" });
+    await waitFor(() => expect(within(dialog).getByRole("radio", { name: "Stop them" })).toBeChecked());
+
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Ask each time" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Keep them running" }));
+    expect(within(dialog).getByRole("radio", { name: "Ask each time" })).toBeChecked();
+    await act(async () => release());
+
+    expect(await within(dialog).findByText("Could not save the setting: disk full")).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: "Stop them" })).toBeChecked();
+    expect(stop.saves).toEqual(["ask"]);
   });
 
   it("show a choice that could not be read", async () => {
