@@ -367,23 +367,36 @@ describe("resuming a run", () => {
     return source;
   }
 
-  it("resumes a resumable run of the app's once while the resume is under way", async () => {
+  it("resumes a resumable run of the app's once, until the run's next record comes", async () => {
     let release = () => {};
     const resume: FakeResume = { held: new Promise((resolve) => (release = resolve)) };
-    await openResumable(resume);
+    const source = await openResumable(resume);
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     const busy = screen.getByRole("button", { name: "Resuming…" });
     expect(busy).toBeDisabled();
     fireEvent.click(busy);
     await act(async () => release());
-    expect(await screen.findByRole("button", { name: "Resume" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
+    expect(screen.queryByText(/does not show it yet/)).not.toBeInTheDocument();
+
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: DONE, record: { ...done, backend: "acp", resumable: true, error: "interrupted again" } }));
+    expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
     expect(resume.requests).toEqual([{ cwd: CONNECTION.project, run: DONE }]);
+  });
+
+  it("says a resume the server stopped waiting for has started, and keeps Resume disabled", async () => {
+    await openResumable({ status: 202, body: { run: DONE, listed: false } });
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText("The resume has started, but the run does not show it yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
   });
 
   it("says why a resume failed", async () => {
     await openResumable({ status: 422, body: { error: "the resume of run x exited before it took the run up", run: DONE } });
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     expect(await screen.findByText("the resume of run x exited before it took the run up")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
   });
 
   it("offers no resume for a run that is not resumable, or not the app's", async () => {

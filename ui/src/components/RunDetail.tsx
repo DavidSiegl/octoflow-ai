@@ -83,18 +83,24 @@ function Status({ entry }: { entry: RunEntry }) {
 }
 
 /** Resume, for a desktop app's run a resume would take up (RunRecord.resumable), and why the last resume failed. The
- * run's next record, from the event stream, shows it resumed. */
+ * run's next record, from the event stream, shows it resumed. From the click until that record comes, or the resume
+ * fails, Resume cannot be clicked again: a second resume would end the first one's agents (POST /resume). */
 function ResumeButton({ api, project, record }: { api: Api; project: Project; record: RunRecord }) {
-  // True from the click until the server answers: a second click would start a second resume.
-  const [resuming, setResuming] = useState(false);
+  // The record Resume was clicked on, until the resume fails; null before a click. The stream sends a run's record
+  // only when it changes, so while this is still the record shown, the resume has not shown in it yet.
+  const [clickedOn, setClickedOn] = useState<RunRecord | null>(null);
+  // True when the last resume started but had not taken the run up by the end of the server's wait.
+  const [unlisted, setUnlisted] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const resuming = clickedOn === record;
   const resume = () => {
-    setResuming(true);
+    setClickedOn(record);
+    setUnlisted(false);
     setProblem(null);
     api.resumeRun(project, record.id).then(
-      () => setResuming(false),
+      (listed) => setUnlisted(!listed),
       (e: unknown) => {
-        setResuming(false);
+        setClickedOn(null);
         setProblem(e instanceof Error ? e.message : String(e));
       },
     );
@@ -104,6 +110,7 @@ function ResumeButton({ api, project, record }: { api: Api; project: Project; re
       <button type="button" onClick={resume} disabled={resuming}>
         {resuming ? "Resuming…" : "Resume"}
       </button>
+      {resuming && unlisted && <span className="note"> The resume has started, but the run does not show it yet.</span>}
       {problem && <span className="problem"> {problem}</span>}
     </p>
   );
