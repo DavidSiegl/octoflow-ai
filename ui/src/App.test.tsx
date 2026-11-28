@@ -157,7 +157,47 @@ describe("the runs overview", () => {
     expect(source.closed).toBe(true);
     const url = new URL(FakeEventSource.last.url);
     expect(url.searchParams.get("cwd")).toBe("~/other");
+    // Saved only once the server has read it.
+    expect(localStorage.getItem("orchestrator.project")).toBeNull();
+    act(() => FakeEventSource.last.emit("open"));
     expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "")).toEqual({ cwd: "~/other" });
+  });
+
+  it("shows why the server refused a project folder, without retrying, and does not remember it", async () => {
+    const { fetch } = await openApp();
+    const served = fetch.getMockImplementation();
+    if (!served) {
+      throw new Error("stubServer's fetch has no implementation");
+    }
+    const refused = "sh: 1: cd: can't cd to /no/such/folder";
+    fetch.mockImplementation(async (url: string, init?: RequestInit) =>
+      new URL(url).pathname === "/runs"
+        ? new Response(JSON.stringify({ error: refused }), { status: 502 })
+        : served(url, init),
+    );
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "/no/such/folder" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    const source = FakeEventSource.last;
+    source.readyState = FakeEventSource.CLOSED;
+    act(() => source.emit("error"));
+
+    expect(await screen.findByText(refused)).toHaveClass("problem");
+    expect(screen.queryByText(/retrying/)).toBeNull();
+    expect(screen.getByRole("button", { name: "New run…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clean up runs…" })).toBeDisabled();
+    expect(localStorage.getItem("orchestrator.project")).toBeNull();
+  });
+
+  it("says it is retrying while a dropped stream reconnects, and enables its actions again once it has", async () => {
+    const { source } = await openApp();
+    act(() => source.emit("open"));
+    act(() => source.emit("error"));
+    expect(screen.getByText("lost the connection to the orchestrator; retrying")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New run…" })).toBeDisabled();
+
+    act(() => source.emit("open"));
+    expect(screen.queryByText(/retrying/)).toBeNull();
+    expect(screen.getByRole("button", { name: "New run…" })).toBeEnabled();
   });
 
   it("opens a project saved with a machine here, saying once that machines are the command line's", async () => {

@@ -91,8 +91,11 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
       current = false;
     };
   }, [api, startedWithProject]);
+  // The project the user last opened, saved as the one to reopen once the server has read it (ProjectRuns' remember);
+  // null before they open one.
+  const [opened, setOpened] = useState<Project | null>(null);
   const open = (next: Project) => {
-    saveProject(next);
+    setOpened(next);
     setProject(next);
     setDroppedMachine(null);
   };
@@ -130,7 +133,7 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
       )}
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
-        <ProjectRuns key={project.cwd} api={api} project={project} />
+        <ProjectRuns key={project.cwd} api={api} project={project} remember={project === opened} />
       ) : (
         <p className="empty">Open a project folder to see its runs.</p>
       )}
@@ -148,8 +151,10 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
 
 /** One project's runs, live: the overview, with the form for a new run and the dialogs that clean up runs and delete
  * closed ones, or the run picked from it, or started, in detail. A selected run the stream has not listed shows as the
- * overview until it does, with a word on it when it is the run just started. */
-function ProjectRuns({ api, project }: { api: Api; project: Project }) {
+ * overview until it does, with a word on it when it is the run just started. While the server reports a problem with
+ * the project, no run can be started or cleaned up. remember saves project as the one to reopen once the server has
+ * read it, never before, so a folder that cannot be opened is not reopened at the next start. */
+function ProjectRuns({ api, project, remember }: { api: Api; project: Project; remember: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
@@ -160,6 +165,11 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   // The id of the run last started from the form; null before one is.
   const [started, setStarted] = useState<string | null>(null);
   const state = useRunStream(api, project);
+  useEffect(() => {
+    if (remember && state.read) {
+      saveProject(project);
+    }
+  }, [remember, state.read, project]);
   const entry = selected ? state.runs[selected] : undefined;
   const openStarted = (run: string) => {
     setFormOpen(false);
@@ -177,10 +187,10 @@ function ProjectRuns({ api, project }: { api: Api; project: Project }) {
       ) : (
         <>
           <div className="runs-actions">
-            <button type="button" onClick={() => setFormOpen(true)}>
+            <button type="button" disabled={state.problem !== null} onClick={() => setFormOpen(true)}>
               New run…
             </button>
-            <button type="button" onClick={() => setCleaningUp(true)}>
+            <button type="button" disabled={state.problem !== null} onClick={() => setCleaningUp(true)}>
               Clean up runs…
             </button>
             {selected !== null && selected === started && (

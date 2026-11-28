@@ -416,6 +416,16 @@ export class Api {
     return this.url("/events", project, { token: this.connection.token });
   }
 
+  /** Why the server cannot read the project's runs, as it answers a request for them; null when it can. Rejects only
+   * when no answer comes. */
+  async runsProblem(project: Project): Promise<string | null> {
+    const { status, body } = await this.request(this.url("/runs", project, {}));
+    if (status >= 200 && status <= 299) {
+      return null;
+    }
+    return (body as { error?: string } | undefined)?.error ?? `HTTP ${status}`;
+  }
+
   /** The text of a run's file; rejects with the server's error message for a missing file or a failed read. */
   async fileText(project: Project, run: string, name: string): Promise<string> {
     return this.text(this.url("/file", project, { run, name }));

@@ -31,8 +31,14 @@ export const CONNECTION = {
 
 /** An EventSource the test drives; every one the app opens is in `opened`. */
 export class FakeEventSource {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
   static opened: FakeEventSource[] = [];
   closed = false;
+  /** What the app reads as the EventSource's readyState: CONNECTING unless a test sets it, as to CLOSED before it
+   * emits the error of a stream the server refused. */
+  readyState = FakeEventSource.CONNECTING;
   private listeners = new Map<string, ((event: MessageEvent<string>) => void)[]>();
 
   constructor(readonly url: string) {
