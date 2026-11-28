@@ -13,14 +13,23 @@ interface Props {
 
 type Loaded = { text: string } | { error: string } | null;
 
-/** A Markdown link in a handoff file: an absolute `https` link opens outside the app, as OutsideLink does; any other
- * (relative, `file:`, `http:`, …) is shown as its text, its target as the tooltip, since followed in the webview it
- * would take the app's window away from the app. */
-function HandoffLink({ href, children }: ComponentProps<"a">) {
+/** A Markdown link in a handoff file, never an `<a href>` (OutsideLink says why): an absolute `https` link is an
+ * OutsideLink; any other (relative, `file:`, `http:`, …) is its text, marked as a link the app does not follow. Either
+ * shows its target as the tooltip, after the link's own title when it has one. */
+function HandoffLink({ href, title, children }: ComponentProps<"a">) {
+  const tooltip = [title, href].filter(Boolean).join(" — ");
   if (href && isHttps(href)) {
-    return <OutsideLink target={{ page: href }}>{children}</OutsideLink>;
+    return (
+      <OutsideLink target={{ page: href }} title={tooltip}>
+        {children}
+      </OutsideLink>
+    );
   }
-  return <span title={href}>{children}</span>;
+  return (
+    <span className="unfollowed-link" title={`${tooltip} (not opened: only an https link opens, outside the app)`}>
+      {children}
+    </span>
+  );
 }
 
 /** Whether href is an absolute `https` URL. */
@@ -34,10 +43,10 @@ function isHttps(href: string) {
 
 const COMPONENTS: Components = { a: HandoffLink };
 
-/** The file rendered as Markdown, raw HTML in it dropped and its links kept in the app (HandoffLink); fetched again whenever its mtime or its size changes: the
- * mtime is in whole seconds, so a write within the second of the one read, which can have caught the first partway,
- * changes only the size. A newer version keeps the older text on show until it arrives; another file shows as loading
- * until it arrives. */
+/** The file rendered as Markdown, raw HTML in it dropped and its links never followed in the window (HandoffLink);
+ * fetched again whenever its mtime or its size changes: the mtime is in whole seconds, so a write within the second of
+ * the one read, which can have caught the first partway, changes only the size. A newer version keeps the older text
+ * on show until it arrives; another file shows as loading until it arrives. */
 export function HandoffFile({ api, project, run, file }: Props) {
   // What was last fetched, keyed by the file it is of but not the version: a newer version of the file on show
   // replaces the text only once it arrives, so the panel neither flashes nor changes height, while another file

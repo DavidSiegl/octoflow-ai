@@ -606,8 +606,8 @@ fn run_opener(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), St
     Ok(())
 }
 
-/// Run the app until its window closes, then stop the sidecar. The window never leaves the app's own pages: a link the
-/// page did not open outside (`open_outside`) is refused, not followed.
+/// Run the app until its window closes, then stop the sidecar. The window never navigates to another origin than the
+/// app's (`in_app`), whatever link the page follows; a page of the app's own origin is let through.
 pub fn run() {
     let stay_in_app = tauri::plugin::Builder::<tauri::Wry>::new("stay-in-app")
         .on_navigation(|webview, url| in_app(url, &webview_origin(webview.config())))

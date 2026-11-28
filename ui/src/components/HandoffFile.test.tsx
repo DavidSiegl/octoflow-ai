@@ -88,15 +88,17 @@ describe("the handoff file on show", () => {
   it("opens an https link outside the app and follows no other link", async () => {
     const { api, settle } = pendingReads();
     render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "summary.md", mtime: 1, size: 10 }} />);
-    await settle(0, "[the PR](https://github.com/o/r/pull/1), [the spec](spec.md), [a page](http://example.com)");
+    await settle(0, '[the PR](https://github.com/o/r/pull/1 "PR 1"), [the spec](spec.md), [a page](http://example.com)');
 
     expect(screen.queryAllByRole("link")).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "the PR" }));
+    const pr = screen.getByRole("button", { name: "the PR" });
+    expect(pr).toHaveAttribute("title", "PR 1 — https://github.com/o/r/pull/1");
+    fireEvent.click(pr);
     expect(invoke).toHaveBeenLastCalledWith("open_outside", { target: { page: "https://github.com/o/r/pull/1" } });
     invoke.mockClear();
     fireEvent.click(screen.getByText("the spec"));
     fireEvent.click(screen.getByText("a page"));
     expect(invoke).not.toHaveBeenCalled();
-    expect(screen.getByText("the spec")).toHaveAttribute("title", "spec.md");
+    expect(screen.getByText("the spec").title).toMatch(/^spec\.md \(not opened/);
   });
 });

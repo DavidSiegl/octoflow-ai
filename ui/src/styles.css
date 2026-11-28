@@ -853,6 +853,18 @@ button.link:hover:not(:disabled) {
   border: none;
 }
 
+/* A link in Markdown, an OutsideLink or one the app does not follow (HandoffFile), flows and wraps with the text
+ * around it, as an <a> would. */
+.markdown button.link {
+  display: inline;
+  text-align: inherit;
+}
+
+.markdown .unfollowed-link {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
 /* An OutsideLink's failure wraps, also in a table cell that does not. */
 .outside-link .problem {
   white-space: normal;

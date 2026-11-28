@@ -42,6 +42,11 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **Nothing tests that the shell's navigation guard is wired in.** Review 356 (F5): only the pure `in_app`
+  (`ui/src-tauri/src/lib.rs`) is tested; were `.plugin(stay_in_app)` dropped from `run`, or the origin taken from
+  the wrong config, every test would still pass, and the dev-url branch of `webview_origin` is untested too. What
+  would close it: a test that builds the app with Tauri's mock runtime (`tauri::test`) and asks its webview to
+  navigate to another origin.
 - **The app words a finished run's verdict by a copy of the engine's rule.** `finishedVerdict` (`ui/src/runs.ts`)
   repeats `outcome_verdict` (`engine/src/cli/listing.rs`): a non-APPROVE verdict from a run judged by several steps
   names the last step. A change to one passes every test of the other. Left when the run record became typed
