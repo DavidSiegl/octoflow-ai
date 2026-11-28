@@ -614,6 +614,8 @@ pub fn run() {
         .build();
     tauri::Builder::default()
         .plugin(stay_in_app)
+        // Its init script also makes window.alert and window.confirm calls of its message command, which the
+        // capability does not grant, and confirm a Promise: ui/eslint.config.js refuses them (no-alert).
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(Sidecar::of_app(&webview_origin(app.config())));

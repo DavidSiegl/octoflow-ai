@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectBar } from "./ProjectBar";
 
@@ -50,5 +50,39 @@ describe("the project bar's Choose…", () => {
 
     expect(await screen.findByText("Could not show the folder dialog: dialog.open not allowed")).toHaveClass("problem");
     expectDialogAt("/p");
+  });
+
+  it("stops saying why the dialog failed once a project is opened from the bar", async () => {
+    invoke.mockImplementation(() => Promise.reject("dialog.open not allowed"));
+    const onOpen = vi.fn();
+    render(<ProjectBar project={{ cwd: "/p" }} onOpen={onOpen} onCheckSetup={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose…" }));
+    await screen.findByText("Could not show the folder dialog: dialog.open not allowed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+
+    expect(onOpen).toHaveBeenCalledWith({ cwd: "/p" });
+    expect(screen.queryByText(/Could not show the folder dialog/)).not.toBeInTheDocument();
+  });
+
+  it("offers neither Open nor Choose… while the dialog is open", async () => {
+    let pick: (folder: string | null) => void = () => {};
+    invoke.mockImplementation(() => new Promise((resolve) => (pick = resolve)));
+    const onOpen = vi.fn();
+    render(<ProjectBar project={{ cwd: "/p" }} onOpen={onOpen} onCheckSetup={() => {}} />);
+    const choose = screen.getByRole("button", { name: "Choose…" });
+    const open = screen.getByRole("button", { name: "Open" });
+    fireEvent.click(choose);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+
+    expect(choose).toBeDisabled();
+    expect(open).toBeDisabled();
+    fireEvent.submit(open);
+    expect(onOpen).not.toHaveBeenCalled();
+
+    await act(async () => pick("/q"));
+    expect(onOpen).toHaveBeenCalledWith({ cwd: "/q" });
+    expect(choose).toBeEnabled();
+    expect(open).toBeEnabled();
   });
 });
