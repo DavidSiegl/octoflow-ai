@@ -113,12 +113,24 @@ describe("the runs overview", () => {
     act(() => source.replay("a run started its interview"));
     fireEvent.click(row(RUN));
     const back = screen.getByRole("button", { name: "‹ Runs" });
+    const box = (await screen.findAllByRole("textbox"))[0] as HTMLElement;
+    fireEvent.change(box, { target: { value: "per cli" } });
 
     act(() => source.emit("open"));
     expect(screen.getByRole("button", { name: "‹ Runs" })).toBe(back);
     act(() => source.replayOne("a run started its interview"));
     act(() => source.replayOne("the stream opened"));
     expect(screen.getByRole("button", { name: "‹ Runs" })).toBe(back);
+    expect(box).toHaveValue("per cli");
+  });
+
+  it("drops, at a problem of a reconnected stream, the runs it has not told of", async () => {
+    const { source } = await openApp();
+    act(() => source.replay("a run started its interview"));
+    act(() => source.emit("open"));
+    act(() => source.emit("problem", { error: "ssh: connection refused" }));
+    expect(screen.getByText("ssh: connection refused")).toBeInTheDocument();
+    expect(screen.getByText("No runs.")).toBeInTheDocument();
   });
 
   it("drops, once a reconnected stream has told of every run, the runs it did not tell of", async () => {

@@ -19,9 +19,10 @@ function reduce(state: RunsState, action: Action): RunsState {
  *
  * The stream starts with every run's record and files, then `listed`, also after the EventSource reconnects. A
  * project starts from no runs; a reconnect keeps the runs shown, so that an open run's detail stays mounted, until
- * listed drops those the new stream did not tell of (RunsState.relisted). A dropped stream, which the EventSource reconnects, shows as the state's problem until it
- * does. A stream the server refused, as for a project folder it cannot open, is closed for good: its problem is then
- * the server's reason (Api.runsProblem), and nothing reconnects it but opening the project again.
+ * listed drops those the new stream did not tell of (RunsState.relisted), or a problem does. A dropped stream, which
+ * the EventSource reconnects, shows as the state's problem until it does. A stream the server refused, as for a
+ * project folder it cannot open, is closed for good: its problem is then the server's reason (Api.runsProblem), and
+ * nothing reconnects it but opening the project again.
  */
 export function useRunStream(api: Api, project: Project): RunsState {
   const [state, dispatch] = useReducer(reduce, NO_RUNS);

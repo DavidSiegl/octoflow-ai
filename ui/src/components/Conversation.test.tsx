@@ -193,6 +193,50 @@ describe("the conversation of an agent over ACP", () => {
     expect(screen.getByLabelText("Message to the spec agent")).toHaveValue("per cli");
   });
 
+  it("sends a message once while its box is hidden and shown again during the send", async () => {
+    vi.useFakeTimers();
+    let release = () => {};
+    const waiting = session("interview");
+    const { api, settle } = fakeApi([
+      { session_start: 1, events: waiting, answerable: true },
+      { session_start: 1, events: waiting, answerable: false },
+      { session_start: 1, events: waiting, answerable: true },
+    ]);
+    settle.mockImplementation(() => new Promise<void>((resolve) => (release = resolve)));
+    show(api);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.change(screen.getByLabelText("Message to the spec agent"), { target: { value: "per client" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS * 2);
+    });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => release());
+    expect(settle).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Message to the spec agent")).toHaveValue("");
+  });
+
+  it("starts a new session's message empty", async () => {
+    vi.useFakeTimers();
+    const resumed = [...session("interview"), event(12, { kind: "session", session: "s-1", harness: "agy", resumed: true }), event(13, { kind: "waiting", why: "interview" })];
+    const { api } = fakeApi([
+      { session_start: 1, events: session("interview"), answerable: true },
+      { session_start: 12, events: resumed, answerable: true },
+    ]);
+    show(api);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.change(screen.getByLabelText("Message to the spec agent"), { target: { value: "per cli" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+    });
+    expect(screen.getByLabelText("Message to the spec agent")).toHaveValue("");
+  });
+
   it("reads on from the last event held, and starts over when a new session starts", async () => {
     vi.useFakeTimers();
     const resumed = [

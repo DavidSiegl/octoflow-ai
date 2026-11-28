@@ -28,19 +28,26 @@ export function relisting(state: RunsState): RunsState {
   return { ...state, problem: null, relisted: new Set() };
 }
 
+/** state with only the runs the stream now open told of, once it has told of all it will for now: at its listed
+ * event, or at a problem, after which it tells of none until the project can be read again. */
+function relisted(state: RunsState): RunsState {
+  const told = state.relisted;
+  if (told === null) {
+    return state;
+  }
+  const runs = Object.fromEntries(Object.entries(state.runs).filter(([run]) => told.has(run)));
+  return { ...state, runs, relisted: null };
+}
+
 /** The state after an event that arrived at the time `at`, in milliseconds since the epoch. */
 export function applyEvent(state: RunsState, event: RunEvent, at: number): RunsState {
   switch (event.kind) {
-    case "problem":
-      return { ...state, problem: event.error };
-    case "listed": {
-      const told = state.relisted;
-      if (told === null) {
-        return state;
-      }
-      const runs = Object.fromEntries(Object.entries(state.runs).filter(([run]) => told.has(run)));
-      return { ...state, runs, relisted: null };
+    case "problem": {
+      const shown = event.error === null ? state : relisted(state);
+      return { ...shown, problem: event.error };
     }
+    case "listed":
+      return relisted(state);
     case "record": {
       const { [event.run]: old, ...others } = state.runs;
       const relisted = state.relisted && new Set(state.relisted).add(event.run);
