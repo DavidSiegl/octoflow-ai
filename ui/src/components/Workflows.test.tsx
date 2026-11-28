@@ -410,7 +410,7 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
     expect(within(entry(dialog, "tdd")).queryByRole("button")).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
     await act(async () => release());
-    expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled();
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled());
     expect(posts(edit, "/workflow/delete")).toHaveLength(1);
   });
 
@@ -427,6 +427,20 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
     fireEvent.click(await saveable(form));
 
     await waitFor(() => expect(within(dialog).queryByText("tdd.toml changed since it was read")).not.toBeInTheDocument());
+  });
+
+  it("clears a failed delete's reason once a later delete is confirmed", async () => {
+    const edit: FakeEdit = { remove: { status: 409, body: { error: "tdd.toml changed since it was read" } } };
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Delete…" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "delete workflow" })).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByText("tdd.toml changed since it was read")).toBeInTheDocument();
+
+    edit.remove = undefined;
+    fireEvent.click(within(entry(dialog, "broken")).getByRole("button", { name: "Delete…" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "delete workflow" })).getByRole("button", { name: "Delete" }));
+    expect(within(dialog).queryByText("tdd.toml changed since it was read")).not.toBeInTheDocument();
+    await waitFor(() => expect(posts(edit, "/workflow/delete")).toHaveLength(2));
   });
 
   it("deletes nothing when the confirmation is cancelled", async () => {

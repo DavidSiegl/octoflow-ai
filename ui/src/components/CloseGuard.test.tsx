@@ -91,6 +91,37 @@ describe("closing the app", () => {
     expect(stop.stops).toBe(1);
   });
 
+  it("acts on the first choice clicked only, with Don't ask again unticked", async () => {
+    const stop: FakeStop = { running: [{ run: RUN, error: null }] };
+    const win = await openApp(stop);
+    await close(win);
+    const stopAll = screen.getByRole("button", { name: "Stop all" });
+    const keep = screen.getByRole("button", { name: "Keep running" });
+    fireEvent.click(stopAll);
+    fireEvent.click(keep);
+    await waitFor(() => expect(win.destroyed).toBe(true));
+    expect(stop.stops).toBe(1);
+    expect(stop.saves ?? []).toEqual([]);
+  });
+
+  it("acts on a choice whose save is not answered within CLOSE_CHECK_WAIT", async () => {
+    const stop: FakeStop = { running: [{ run: RUN, error: null }], saveHeld: new Promise<void>(() => {}) };
+    const win = await openApp(stop);
+    await close(win);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Don't ask again" }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Keep running" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CLOSE_CHECK_WAIT);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    await waitFor(() => expect(win.destroyed).toBe(true));
+    expect(stop.stops ?? 0).toBe(0);
+  });
+
   it("closes without asking or stopping once Keep running was remembered", async () => {
     const stop: FakeStop = { running: [{ run: RUN, error: null }], choice: "keep" };
     const win = await openApp(stop);
@@ -230,6 +261,27 @@ describe("the settings", () => {
     expect(await within(dialog).findByText("Could not save the setting: disk full")).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: "Stop them" })).toBeChecked();
     expect(stop.saves).toEqual(["ask"]);
+  });
+
+  it("stay open through Escape and Close while a pick is saved, and say so", async () => {
+    let release = () => {};
+    const stop: FakeStop = { choice: "stop", saveError: "disk full", saveHeld: new Promise((resolve) => (release = resolve)) };
+    await openApp(stop);
+    fireEvent.click(await screen.findByRole("button", { name: "Settings…" }));
+    const dialog = screen.getByRole("dialog", { name: "settings" });
+    await waitFor(() => expect(within(dialog).getByRole("radio", { name: "Stop them" })).toBeChecked());
+
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Keep them running" }));
+    expect(within(dialog).getByText("Saving…")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(screen.getByRole("dialog", { name: "settings" })).toBeInTheDocument();
+    await act(async () => release());
+
+    expect(await within(dialog).findByText("Could not save the setting: disk full")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Saving…")).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "settings" })).not.toBeInTheDocument();
   });
 
   it("show a choice that could not be read", async () => {
