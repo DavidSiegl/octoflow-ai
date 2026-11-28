@@ -14,6 +14,9 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      // In the desktop app, tauri-plugin-dialog replaces alert and confirm with calls the window may not make
+      // (ui/src-tauri/src/lib.rs, run).
+      "no-alert": "error",
     },
   },
 );
