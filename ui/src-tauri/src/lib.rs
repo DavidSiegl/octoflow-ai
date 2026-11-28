@@ -378,8 +378,8 @@ impl Sidecar {
 
     /// Start program's `serve`, answering requests from origin, and read the server's first line; project is the one
     /// the window opens first. The sidecar inherits the app's environment and directory, and takes the user's shell
-    /// itself, as the CLI does (`Cli::enter`). A sidecar that cannot be started, or prints no such line, keeps the reason
-    /// as its connection.
+    /// itself, as the CLI does (`Cli::enter`). A sidecar that cannot be started, or prints no such line, keeps the
+    /// reason as its connection.
     fn start(program: &Path, origin: &str, project: Option<String>) -> Sidecar {
         match spawn(program, origin) {
             Ok((child, served)) => {

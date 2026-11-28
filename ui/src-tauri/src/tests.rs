@@ -490,7 +490,8 @@ fn what_only_the_appimage_sets_is_unset() {
 }
 
 /// Set for the process `the_process_takes_the_users_shell` starts: that run of the test stands in for the app,
-/// enters a shell and execs into sh, which prints what it got.
+/// enters a shell and execs into sh, which prints what it got. It changes the environment with another thread alive,
+/// as `ENTERS_CLI`'s says is safe.
 #[cfg(unix)]
 const ENTERS_SHELL: &str = "OCTOFLOW_UI_TEST_ENTERS_SHELL";
 
@@ -522,7 +523,9 @@ fn the_process_takes_the_users_shell() {
 }
 
 /// Set for the process `serve_starts_its_runs_by_the_appimage_the_app_was_started_from` starts: that run of the test
-/// stands in for an app started from its AppImage's mount, and enters the CLI.
+/// stands in for an app started from its AppImage's mount, and enters the CLI. Entering changes the environment, which
+/// is safe only while no other thread reads it: libtest runs the test on a thread of its own, named after it, and its
+/// main thread meanwhile only waits for the result.
 #[cfg(unix)]
 const ENTERS_CLI: &str = "OCTOFLOW_UI_TEST_ENTERS_CLI";
 
@@ -532,12 +535,15 @@ fn serve_starts_its_runs_by_the_appimage_the_app_was_started_from() {
     let appimage = "/home/u/Octoflow.AppImage";
     if std::env::var_os(ENTERS_CLI).is_some() {
         let cli = Cli { argv: vec!["octoflow".into(), "serve".into()] };
-        let argv = cli.enter(|_: &Path| true).expect("the user's shell entered");
+        let exe = std::env::current_exe().expect("the test binary");
+        let mount = exe.parent().expect("the test binary's directory").canonicalize().expect("its directory resolved");
+        let argv = cli.enter(|dir: &Path| dir == mount).expect("the user's shell entered");
         assert_eq!(argv, ["octoflow", "serve", "--run-program", appimage].map(OsString::from));
         assert_eq!(std::env::var_os("APPIMAGE"), None, "the user's shell has no APPIMAGE");
         return;
     }
-    // The test binary's own directory as the bundle, the AppImage's mount (`mount_root` above says it is one).
+    // The test binary's own directory as the bundle, the AppImage's mount, which the predicate the child gives
+    // `Cli::enter` takes for a FUSE mount's root.
     let exe = std::env::current_exe().expect("the test binary");
     let appdir = exe.parent().expect("the test binary's directory");
     let out = Command::new(&exe)
@@ -549,7 +555,12 @@ fn serve_starts_its_runs_by_the_appimage_the_app_was_started_from() {
         .output()
         .expect("the test binary runs");
     let printed = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{printed}{}", String::from_utf8_lossy(&out.stderr));
+    // A filter that matches no test, as after a rename, runs none and succeeds too.
+    assert!(
+        out.status.success() && printed.contains("test result: ok. 1 passed"),
+        "{printed}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
