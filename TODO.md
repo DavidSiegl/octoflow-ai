@@ -49,6 +49,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `plugin:dialog|open`, which its tests mock; the by-hand check in the packaged app was not run. What would close it:
   a test that builds the app with Tauri's mock runtime (`tauri::test`), asks its webview to navigate to another
   origin, and invokes `plugin:dialog|open` through its IPC to see that the command is known and allowed.
+- **A conversation can miss an ACP agent's journal for a turn.** Review 359: the engine saves a role's new agent into
+  state.json (`engine/src/workflow/turn.rs`) before `Agents::start` opens its journal (`engine/src/acp.rs`), so a
+  record that lists the agent can come first; the conversation's first read then answers 404, and it reads again
+  only when the run's record changes next (`readsAgain`, `ui/src/runs.ts`), which may be when the turn is recorded.
+  What would close it: open the journal before the agent is saved, or have the server answer an agent with no
+  journal yet as an empty session rather than 404.
 - **The app words a finished run's verdict by a copy of the engine's rule.** `finishedVerdict` (`ui/src/runs.ts`)
   repeats `outcome_verdict` (`engine/src/cli/listing.rs`): a non-APPROVE verdict from a run judged by several steps
   names the last step. A change to one passes every test of the other. Left when the run record became typed
