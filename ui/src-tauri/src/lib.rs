@@ -491,15 +491,22 @@ fn fuse_mount_root(dir: &Path) -> bool {
     }
 }
 
-/// The origin of the webview's pages, which the sidecar must answer: Vite's dev server under `tauri dev`, else the
-/// custom protocol the bundled frontend is served by.
-fn webview_origin(app: &tauri::App) -> String {
+/// The origin of the webview's pages, as config, the app's, gives it, which the sidecar must answer: Vite's dev server
+/// under `tauri dev`, else the custom protocol the bundled frontend is served by.
+fn webview_origin(config: &tauri::Config) -> String {
     if tauri::is_dev() {
-        if let Some(url) = &app.config().build.dev_url {
+        if let Some(url) = &config.build.dev_url {
             return url.origin().ascii_serialization();
         }
     }
     if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" }.to_string()
+}
+
+/// Whether url is one of the app's own pages, at origin (webview_origin's): scheme, host and port compared by hand,
+/// since `tauri://localhost`, of a scheme `url` does not know, has an opaque origin.
+fn in_app(url: &tauri::Url, origin: &str) -> bool {
+    let port = url.port().map(|port| format!(":{port}")).unwrap_or_default();
+    format!("{}://{}{port}", url.scheme(), url.host_str().unwrap_or_default()) == origin
 }
 
 /// The sidecar's Connection, or why it could not be started.
@@ -599,11 +606,16 @@ fn run_opener(opener: &Path, target: &OsStr, shell: &UserShell) -> Result<(), St
     Ok(())
 }
 
-/// Run the app until its window closes, then stop the sidecar.
+/// Run the app until its window closes, then stop the sidecar. The window never leaves the app's own pages: a link the
+/// page did not open outside (`open_outside`) is refused, not followed.
 pub fn run() {
+    let stay_in_app = tauri::plugin::Builder::<tauri::Wry>::new("stay-in-app")
+        .on_navigation(|webview, url| in_app(url, &webview_origin(webview.config())))
+        .build();
     tauri::Builder::default()
+        .plugin(stay_in_app)
         .setup(|app| {
-            app.manage(Sidecar::of_app(&webview_origin(app)));
+            app.manage(Sidecar::of_app(&webview_origin(app.config())));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![server, open_outside])

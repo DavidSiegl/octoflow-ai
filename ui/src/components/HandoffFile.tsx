@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
+import { useEffect, useState, type ComponentProps } from "react";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Api, Project, RunFile } from "../api";
+import { OutsideLink } from "./OutsideLink";
 
 interface Props {
   api: Api;
@@ -12,7 +13,28 @@ interface Props {
 
 type Loaded = { text: string } | { error: string } | null;
 
-/** The file rendered as Markdown, raw HTML in it dropped; fetched again whenever its mtime or its size changes: the
+/** A Markdown link in a handoff file: an absolute `https` link opens outside the app, as OutsideLink does; any other
+ * (relative, `file:`, `http:`, …) is shown as its text, its target as the tooltip, since followed in the webview it
+ * would take the app's window away from the app. */
+function HandoffLink({ href, children }: ComponentProps<"a">) {
+  if (href && isHttps(href)) {
+    return <OutsideLink target={{ page: href }}>{children}</OutsideLink>;
+  }
+  return <span title={href}>{children}</span>;
+}
+
+/** Whether href is an absolute `https` URL. */
+function isHttps(href: string) {
+  try {
+    return new URL(href).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const COMPONENTS: Components = { a: HandoffLink };
+
+/** The file rendered as Markdown, raw HTML in it dropped and its links kept in the app (HandoffLink); fetched again whenever its mtime or its size changes: the
  * mtime is in whole seconds, so a write within the second of the one read, which can have caught the first partway,
  * changes only the size. A newer version keeps the older text on show until it arrives; another file shows as loading
  * until it arrives. */
@@ -42,7 +64,7 @@ export function HandoffFile({ api, project, run, file }: Props) {
   }
   return (
     <article className="markdown">
-      <Markdown remarkPlugins={[remarkGfm]} skipHtml>
+      <Markdown remarkPlugins={[remarkGfm]} components={COMPONENTS} skipHtml>
         {content.text}
       </Markdown>
     </article>
