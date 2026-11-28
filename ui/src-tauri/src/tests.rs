@@ -51,31 +51,52 @@ fn serves_a_program_that_prints_serve_s_first_line() {
     // serve's first line, then a process for stop to kill.
     let script = "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\nexec sleep 60\n";
     put_executable(&program, script);
-    let sidecar = Sidecar::start(&program, "tauri://localhost", None, None);
+    let sidecar = Sidecar::start(&program, "tauri://localhost", None);
     let connection = sidecar.connection.clone().expect("the sidecar started");
     assert_eq!(connection.url, "http://127.0.0.1:9");
     assert_eq!(connection.project, None);
     sidecar.stop();
 }
 
+/// argv as the CLI is given it, the app's own name first.
+fn argv(args: &[&str]) -> Vec<OsString> {
+    std::iter::once("octoflow-desktop").chain(args.iter().copied()).map(OsString::from).collect()
+}
+
 #[test]
-#[cfg(unix)]
-fn the_sidecar_is_given_the_program_its_runs_start_by() {
-    let dir = scratch_dir();
-    let program = dir.path().join("octoflow");
-    let args = dir.path().join("args");
-    // Records its arguments, then prints serve's first line.
-    let script = format!(
-        "#!/bin/sh\necho \"$*\" >> '{}'\necho '{{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}}'\n",
-        args.display()
-    );
-    put_executable(&program, &script);
-    Sidecar::start(&program, "tauri://localhost", None, None).stop();
-    Sidecar::start(&program, "tauri://localhost", None, Some(Path::new("/home/u/Octoflow.AppImage"))).stop();
-    let given = std::fs::read_to_string(&args).expect("the sidecars' arguments");
-    let expected = "serve --origin tauri://localhost\n\
-                    serve --origin tauri://localhost --run-program /home/u/Octoflow.AppImage\n";
+fn serve_from_a_mounted_appimage_starts_its_runs_by_the_appimage_file() {
+    // `<AppImage> serve`, from the window or a terminal, the app's program on the AppImage's mount.
+    let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
+    let runs_by = run_program(Some("/home/u/Octoflow.AppImage".into()), exe, |_: &Path| true);
+    let given = with_run_program(argv(&["serve", "--origin", "tauri://localhost"]), runs_by);
+    let expected = argv(&["serve", "--run-program", "/home/u/Octoflow.AppImage", "--origin", "tauri://localhost"]);
     assert_eq!(given, expected);
+}
+
+#[test]
+fn only_serve_is_given_a_program_for_its_runs() {
+    let appimage = || Some(PathBuf::from("/home/u/Octoflow.AppImage"));
+    assert_eq!(with_run_program(argv(&["serve"]), None), argv(&["serve"]));
+    assert_eq!(with_run_program(argv(&["list"]), appimage()), argv(&["list"]));
+    assert_eq!(with_run_program(argv(&["--help"]), appimage()), argv(&["--help"]));
+    // Another command's argument that reads `serve`, as a run's task can.
+    assert_eq!(with_run_program(argv(&["run", "serve"]), appimage()), argv(&["run", "serve"]));
+}
+
+#[test]
+fn a_run_program_the_user_gives_serve_wins_over_the_app_s() {
+    let given =
+        with_run_program(argv(&["serve", "--run-prog=/opt/octoflow"]), Some("/home/u/Octoflow.AppImage".into()));
+    let parsed = octoflow_engine::cli::args::parse_args(
+        given.into_iter().skip(1),
+        &octoflow_engine::env::ConfigDir::at("/nowhere"),
+    );
+    match parsed.expect("serve's arguments parse") {
+        octoflow_engine::cli::args::Command::Serve { run_program, .. } => {
+            assert_eq!(run_program.as_deref(), Some("/opt/octoflow"));
+        }
+        _ => panic!("not serve"),
+    }
 }
 
 #[test]
@@ -117,7 +138,7 @@ fn the_connection_s_version_is_the_release_s() {
     let dir = scratch_dir();
     let program = dir.path().join("octoflow");
     put_executable(&program, "#!/bin/sh\necho '{\"url\": \"http://127.0.0.1:9\", \"token\": \"t\"}'\n");
-    let sidecar = Sidecar::start(&program, "tauri://localhost", None, None);
+    let sidecar = Sidecar::start(&program, "tauri://localhost", None);
     let connection = sidecar.connection.clone().expect("the sidecar started");
     assert_eq!(connection.version, release.trim());
     sidecar.stop();
@@ -203,8 +224,7 @@ fn an_opener_still_running_is_left_to_run() {
 #[test]
 #[cfg(target_os = "linux")]
 fn serves_the_engine_s_serve_and_stops() {
-    let appimage = Some(Path::new("/home/u/Octoflow.AppImage"));
-    let sidecar = Sidecar::start(&built_orchestrator(), "tauri://localhost", Some("/home/u/proj".into()), appimage);
+    let sidecar = Sidecar::start(&built_orchestrator(), "tauri://localhost", Some("/home/u/proj".into()));
     let connection = sidecar.connection.clone().expect("the sidecar started");
     assert!(connection.url.starts_with("http://127.0.0.1:"), "{}", connection.url);
     assert!(!connection.token.is_empty());
@@ -223,7 +243,7 @@ fn a_sidecar_that_refuses_gives_its_reason() {
     let program = dir.path().join("octoflow");
     let script = "#!/bin/sh\necho 'octoflow: cannot start in /gone: it is not a directory' >&2\nexit 1\n";
     put_executable(&program, script);
-    let reason = Sidecar::start(&program, "tauri://localhost", None, None).connection.err().expect("an error");
+    let reason = Sidecar::start(&program, "tauri://localhost", None).connection.err().expect("an error");
     assert_eq!(reason, "octoflow: cannot start in /gone: it is not a directory");
 }
 
@@ -233,13 +253,13 @@ fn a_sidecar_that_prints_something_else_is_named_with_what_it_printed() {
     let dir = scratch_dir();
     let program = dir.path().join("octoflow");
     put_executable(&program, "#!/bin/sh\necho hello\n");
-    let reason = Sidecar::start(&program, "tauri://localhost", None, None).connection.err().expect("an error");
+    let reason = Sidecar::start(&program, "tauri://localhost", None).connection.err().expect("an error");
     assert!(reason.contains("serve printed \"hello\", not its address"), "{reason}");
 }
 
 #[test]
 fn a_program_that_is_not_there_is_an_error() {
-    let sidecar = Sidecar::start(Path::new("/nonexistent/octoflow"), "tauri://localhost", None, None);
+    let sidecar = Sidecar::start(Path::new("/nonexistent/octoflow"), "tauri://localhost", None);
     let reason = sidecar.connection.err().expect("an error");
     assert!(reason.contains("/nonexistent/octoflow"), "{reason}");
     assert!(sidecar.child.lock().unwrap().is_none());
