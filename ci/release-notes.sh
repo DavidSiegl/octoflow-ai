@@ -22,6 +22,7 @@ set -eu
 
 [ $# -eq 1 ] || { echo "usage: release-notes.sh VERSION < TAGS" >&2; exit 2; }
 version=$1
+# shellcheck source=ci/release-tags.sh
 . "$(dirname "$0")/release-tags.sh"
 
 tags=$(cat) || { echo "release-notes.sh: cannot read the release tags from standard input" >&2; exit 1; }

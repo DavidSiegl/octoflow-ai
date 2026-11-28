@@ -1,30 +1,18 @@
 //! ci/release-latest.sh, which tells the Release stage whether a release may be GitHub's Latest: not when a release
 //! above it is there already.
 
-use std::io::Write;
-use std::process::{Command, Output, Stdio};
+mod release_scripts;
+
+use std::process::Output;
 
 /// The script's run from the checkout with args, given the release tags released on standard input.
 fn run(args: &[&str], released: &[&str]) -> Output {
-    let mut child = Command::new("sh")
-        .arg("ci/release-latest.sh")
-        .args(args)
-        .current_dir(xtask::checkout())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("sh runs");
-    let tags: String = released.iter().map(|t| format!("{t}\n")).collect();
-    child.stdin.take().expect("piped").write_all(tags.as_bytes()).expect("written");
-    child.wait_with_output().expect("sh ends")
+    release_scripts::run(&xtask::checkout(), "ci/release-latest.sh", args, released)
 }
 
 /// What the script printed for version, given released; panics with its standard error when it did not exit 0.
 fn printed(version: &str, released: &[&str]) -> String {
-    let output = run(&[version], released);
-    assert_eq!(output.status.code(), Some(0), "{}", String::from_utf8_lossy(&output.stderr));
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    release_scripts::printed(run(&[version], released))
 }
 
 #[test]

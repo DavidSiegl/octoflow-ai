@@ -15,13 +15,16 @@ set -eu
 
 [ $# -eq 1 ] || { echo "usage: release-latest.sh VERSION < TAGS" >&2; exit 2; }
 version=$1
+# shellcheck source=ci/release-tags.sh
 . "$(dirname "$0")/release-tags.sh"
 
 tags=$(cat) || { echo "release-latest.sh: cannot read the release tags from standard input" >&2; exit 1; }
 released=$(printf '%s\n' "$tags" | released_versions) ||
     { echo "release-latest.sh: cannot sort the released versions" >&2; exit 1; }
-highest=$(printf '%s\n' "$released" "$version" | sed '/^$/d' | sort -V | tail -n 1) ||
+# sort last, so that its own failure is the pipeline's.
+sorted=$(printf '%s\n' "$released" "$version" | sed '/^$/d' | sort -V) ||
     { echo "release-latest.sh: cannot sort the versions" >&2; exit 1; }
+highest=$(printf '%s\n' "$sorted" | tail -n 1)
 if [ "$highest" = "$version" ]; then
     echo true
 else

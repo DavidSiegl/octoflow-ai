@@ -1,14 +1,15 @@
 //! ci/release-notes.sh, which gives the Release stage the notes of a release: its own version's docs/releases/ file,
 //! and those of the versions above the highest release that main reached without a release of their own.
 
+mod release_scripts;
+
 use std::fs;
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
-/// A tree to run the script in: a copy of it and of ci/release-tags.sh, which it sources, and docs/releases/ holding a notes file `## <version>\n` for each of
-/// notes. Removed when dropped.
+/// A tree to run the script in: a copy of it and of ci/release-tags.sh, which it sources, and docs/releases/ holding a
+/// notes file `## <version>\n` for each of notes. Removed when dropped.
 fn tree(notes: &[&str]) -> tempfile::TempDir {
     let dir = tempfile::Builder::new().prefix("xtask-release-notes-test-").tempdir().expect("a temporary directory");
     fs::create_dir(dir.path().join("ci")).expect("made");
@@ -24,27 +25,14 @@ fn tree(notes: &[&str]) -> tempfile::TempDir {
 
 /// The script's run in dir with args, given the release tags released on standard input.
 fn run(dir: &Path, args: &[&str], released: &[&str]) -> Output {
-    let mut child = Command::new("sh")
-        .arg("ci/release-notes.sh")
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("sh runs");
-    let tags: String = released.iter().map(|t| format!("{t}\n")).collect();
-    child.stdin.take().expect("piped").write_all(tags.as_bytes()).expect("written");
-    child.wait_with_output().expect("sh ends")
+    release_scripts::run(dir, "ci/release-notes.sh", args, released)
 }
 
 /// What the script printed on standard output for version, with notes and released as tree and run take them;
 /// panics with its standard error when it did not exit 0.
 fn printed(notes: &[&str], version: &str, released: &[&str]) -> String {
     let dir = tree(notes);
-    let output = run(dir.path(), &[version], released);
-    assert_eq!(output.status.code(), Some(0), "{}", String::from_utf8_lossy(&output.stderr));
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    release_scripts::printed(run(dir.path(), &[version], released))
 }
 
 #[test]

@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Sourced, not run: what counts as a release among a repository's tags, for ci/release-notes.sh and
 # ci/release-latest.sh. Only a plain version tag, such as v0.9.0, does, so that a prerelease's or another tag does not
 # sort above the real ones.
