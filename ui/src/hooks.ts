@@ -11,17 +11,30 @@ function reduce(state: RunsState, action: Action): RunsState {
 /** The project's runs, kept up to date by the server's event stream for as long as the component is mounted.
  *
  * The stream starts with every run's record and files, also after the EventSource reconnects, so each opening
- * starts from no runs. A stream that cannot be opened shows as the state's problem until it reconnects.
+ * starts from no runs. A dropped stream, which the EventSource reconnects, shows as the state's problem until it
+ * does. A stream the server refused, as for a project folder it cannot open, is closed for good: its problem is then
+ * the server's reason (Api.runsProblem), and nothing reconnects it but opening the project again.
  */
 export function useRunStream(api: Api, project: Project): RunsState {
   const [state, dispatch] = useReducer(reduce, NO_RUNS);
   useEffect(() => {
+    let current = true;
+    // A problem to show, unless the effect has been cleaned up since: the server's reason arrives after a request.
+    const problem = (error: string) =>
+      current && dispatch({ type: "event", event: { kind: "problem", error }, at: Date.now() });
     dispatch({ type: "reset" });
     const source = new EventSource(api.eventsUrl(project));
     source.addEventListener("open", () => dispatch({ type: "reset" }));
     source.addEventListener("error", () => {
-      const event: RunEvent = { kind: "problem", error: "lost the connection to the orchestrator; retrying" };
-      dispatch({ type: "event", event, at: Date.now() });
+      if (source.readyState !== EventSource.CLOSED) {
+        problem("lost the connection to the orchestrator; retrying");
+        return;
+      }
+      api.runsProblem(project).then(
+        (why) =>
+          problem(`${why ?? "the orchestrator closed the project's event stream"}; open the project again to retry`),
+        (error: Error) => problem(`lost the connection to the orchestrator: ${error.message}`),
+      );
     });
     for (const kind of EVENT_KINDS) {
       source.addEventListener(kind, (message: MessageEvent<string>) => {
@@ -29,7 +42,10 @@ export function useRunStream(api: Api, project: Project): RunsState {
         dispatch({ type: "event", event, at: Date.now() });
       });
     }
-    return () => source.close();
+    return () => {
+      current = false;
+      source.close();
+    };
   }, [api, project]);
   return state;
 }

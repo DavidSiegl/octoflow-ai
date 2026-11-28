@@ -157,7 +157,71 @@ describe("the runs overview", () => {
     expect(source.closed).toBe(true);
     const url = new URL(FakeEventSource.last.url);
     expect(url.searchParams.get("cwd")).toBe("~/other");
-    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "")).toEqual({ cwd: "~/other" });
+    // Saved only once the server has read it.
+    expect(localStorage.getItem("orchestrator.project")).toBeNull();
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "null")).toEqual({ cwd: "~/other" }),
+    );
+  });
+
+  it("shows why the server refused a project folder, without retrying, and does not remember it", async () => {
+    const { fetch } = await openApp();
+    const served = fetch.getMockImplementation();
+    if (!served) {
+      throw new Error("stubServer's fetch has no implementation");
+    }
+    const refused = "sh: 1: cd: can't cd to /no/such/folder";
+    fetch.mockImplementation(async (url: string, init?: RequestInit) =>
+      new URL(url).pathname === "/runs"
+        ? new Response(JSON.stringify({ error: refused }), { status: 502 })
+        : served(url, init),
+    );
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "/no/such/folder" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    const source = FakeEventSource.last;
+    source.readyState = FakeEventSource.CLOSED;
+    act(() => source.emit("error"));
+
+    expect(await screen.findByText(`${refused}; open the project again to retry`)).toHaveClass("problem");
+    expect(screen.queryByText(/retrying/)).toBeNull();
+    expect(screen.getByRole("button", { name: "New run…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clean up runs…" })).toBeDisabled();
+    expect(localStorage.getItem("orchestrator.project")).toBeNull();
+  });
+
+  it("forgets a saved project the server now refuses, so the next start does not reopen it", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "/gone" }));
+    const fetch = stubServer({});
+    const served = fetch.getMockImplementation();
+    if (!served) {
+      throw new Error("stubServer's fetch has no implementation");
+    }
+    fetch.mockImplementation(async (url: string, init?: RequestInit) =>
+      new URL(url).pathname === "/runs"
+        ? new Response(JSON.stringify({ error: "can't cd to /gone" }), { status: 502 })
+        : served(url, init),
+    );
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
+    await waitFor(() => expect(localStorage.getItem("orchestrator.project")).toBeNull());
+  });
+
+  it("keeps a saved project the server can read", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "~/proj" }));
+    const { fetch } = await openApp();
+    await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(url).pathname === "/runs")).toBe(true));
+    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "null")).toEqual({ cwd: "~/proj" });
+  });
+
+  it("says it is retrying while a dropped stream reconnects, and enables its actions again once it has", async () => {
+    const { source } = await openApp();
+    act(() => source.emit("open"));
+    act(() => source.emit("error"));
+    expect(screen.getByText("lost the connection to the orchestrator; retrying")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New run…" })).toBeDisabled();
+
+    act(() => source.emit("open"));
+    expect(screen.queryByText(/retrying/)).toBeNull();
+    expect(screen.getByRole("button", { name: "New run…" })).toBeEnabled();
   });
 
   it("opens a project saved with a machine here, saying once that machines are the command line's", async () => {
