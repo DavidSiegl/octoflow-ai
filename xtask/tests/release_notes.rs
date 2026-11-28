@@ -7,13 +7,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-/// A tree to run the script in: a copy of it, and docs/releases/ holding a notes file `## <version>\n` for each of
+/// A tree to run the script in: a copy of it and of ci/release-tags.sh, which it sources, and docs/releases/ holding a notes file `## <version>\n` for each of
 /// notes. Removed when dropped.
 fn tree(notes: &[&str]) -> tempfile::TempDir {
     let dir = tempfile::Builder::new().prefix("xtask-release-notes-test-").tempdir().expect("a temporary directory");
     fs::create_dir(dir.path().join("ci")).expect("made");
     fs::create_dir_all(dir.path().join("docs/releases")).expect("made");
-    fs::copy(xtask::checkout().join("ci/release-notes.sh"), dir.path().join("ci/release-notes.sh")).expect("copied");
+    for script in ["ci/release-notes.sh", "ci/release-tags.sh"] {
+        fs::copy(xtask::checkout().join(script), dir.path().join(script)).expect("copied");
+    }
     for v in notes {
         fs::write(dir.path().join(format!("docs/releases/v{v}.md")), format!("## {v}\n")).expect("written");
     }

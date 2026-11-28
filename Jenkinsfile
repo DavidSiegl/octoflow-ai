@@ -335,6 +335,10 @@ pipeline {
                         ci/release-notes.sh "$version" < release-tags.txt > release-notes.md
                         set --
                         [ ! -s release-notes.md ] || set -- --notes-file release-notes.md
+                        # Below a release already there, as a failed main build re-run after a later merge released is,
+                        # it must not take Latest from that one, which GitHub would give it by default.
+                        latest=$(ci/release-latest.sh "$version" < release-tags.txt)
+                        [ "$latest" = true ] || set -- "$@" --latest=false
                         # Publishing it starts .github/workflows/macos-binary.yml, which adds the macOS binary and app.
                         gh release create "$tag" "$@" \
                             dist/octoflow-linux-x86_64 dist/octoflow-linux-x86_64.sha256 \
