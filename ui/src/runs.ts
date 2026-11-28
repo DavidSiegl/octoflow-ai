@@ -14,15 +14,15 @@ export interface RunsState {
   runs: Record<string, RunEntry>;
   /** Why the server could not read the project, as its last problem event said; null once it can. */
   problem: string | null;
-  /** The runs the stream now open has sent a record of, until its listed event; null once that came, or before a
-   * stream opened. The runs from an earlier stream stay shown meanwhile, and those this one did not tell of go at
-   * listed. */
+  /** The runs the stream now open has sent a record of, until it has told of all it will for now: its listed event,
+   * or a problem; null once one of those came, or before a stream opened. The runs from an earlier stream stay shown
+   * meanwhile, and those this one did not tell of go at that event. */
   relisted: ReadonlySet<string> | null;
 }
 
 export const NO_RUNS: RunsState = { runs: {}, problem: null, relisted: null };
 
-/** The state once a stream (re)opens, which tells of every run again: the runs stay until its listed event (see
+/** The state once a stream (re)opens, which tells of every run again: the runs stay until it has told of them all (see
  * RunsState.relisted), and the problem of the stream before it is cleared. */
 export function relisting(state: RunsState): RunsState {
   return { ...state, problem: null, relisted: new Set() };

@@ -209,8 +209,13 @@ describe("the conversation of an agent over ACP", () => {
     });
     fireEvent.change(screen.getByLabelText("Message to the spec agent"), { target: { value: "per client" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // One act per poll: React renders an act's updates only when it ends, so one act for both would never hide it.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS * 2);
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+    });
+    expect(screen.queryByLabelText("Message to the spec agent")).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
     });
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
