@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { AcpPermissionOption, AcpToolCall, AgentEvent, Api, Project } from "../api";
+import { type AcpPermissionOption, type AcpToolCall, type AgentEvent, type Api, HttpError, type Project } from "../api";
 import { useFollowEnd } from "../hooks";
 import { AGENT_POLL_MS } from "./AgentPanes";
 
@@ -27,14 +27,16 @@ interface Props {
   project: Project;
   run: string;
   role: string;
+  /** Whether something drives the run, so that its agent's journal can still grow (useConversation). */
+  driven: boolean;
 }
 
-/** The current session of a run's agent over ACP, read again every AGENT_POLL_MS while shown: what the agent says
- * and thinks (thoughts collapsed), its tool calls with their status, its permission requests with a button per
- * option, and, while the run waits on the human's message to it, a box to send one. Nothing can be answered while the
- * run is not running. */
-export function Conversation({ api, project, run, role }: Props) {
-  const { start, events, answerable, problem, refresh } = useConversation(api, project, run, role);
+/** The current session of a run's agent over ACP, read again every AGENT_POLL_MS while shown and driven: what the
+ * agent says and thinks (thoughts collapsed), its tool calls with their status, its permission requests with a button
+ * per option, and, while the run waits on the human's message to it, a box to send one. Nothing can be answered while
+ * the run is not running. */
+export function Conversation({ api, project, run, role, driven }: Props) {
+  const { start, events, answerable, problem, refresh } = useConversation(api, project, run, role, driven);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
   const list = useFollowEnd<HTMLOListElement>(events, start);
 
@@ -302,11 +304,13 @@ function pendingWait(events: AgentEvent[]): string | null {
   return why;
 }
 
-/** The current session of the agent's events, read now and every AGENT_POLL_MS while mounted, one read at a time,
- * each asking only for the events after the last one held; a session that started since replaces them all. start is
- * the session's start, as the server numbers it, null before the first read. answerable is the last read's; problem says why the last read failed, null once one succeeds. refresh reads again
- * at once. */
-function useConversation(api: Api, project: Project, run: string, role: string) {
+/** The current session of the agent's events, read now and, while driven (something drives the run), every
+ * AGENT_POLL_MS while mounted, one read at a time, each asking only for the events after the last one held; a session
+ * that started since replaces them all. Reading stops at a 404, which reading again will not change (Api.agentEvents),
+ * and starts over whenever driven changes, so a resumed run is read again. start is the session's start, as the server
+ * numbers it, null before the first read. answerable is the last read's; problem says why the last read failed, null
+ * once one succeeds. refresh reads again at once. */
+function useConversation(api: Api, project: Project, run: string, role: string, driven: boolean) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [start, setStart] = useState<number | null>(null);
   const [answerable, setAnswerable] = useState(false);
@@ -332,12 +336,16 @@ function useConversation(api: Api, project: Project, run: string, role: string) 
           setStart(next.session_start);
           setAnswerable(next.answerable);
           setProblem(null);
-          timer = setTimeout(read, AGENT_POLL_MS);
+          if (driven) {
+            timer = setTimeout(read, AGENT_POLL_MS);
+          }
         },
         (error: Error) => {
           if (current) {
             setProblem(error.message);
-            timer = setTimeout(read, AGENT_POLL_MS);
+            if (driven && !(error instanceof HttpError && error.status === 404)) {
+              timer = setTimeout(read, AGENT_POLL_MS);
+            }
           }
         },
       );
@@ -347,6 +355,6 @@ function useConversation(api: Api, project: Project, run: string, role: string) 
       current = false;
       clearTimeout(timer);
     };
-  }, [api, project, run, role, reads]);
+  }, [api, project, run, role, driven, reads]);
   return { start, events, answerable, problem, refresh: () => setReads((n) => n + 1) };
 }

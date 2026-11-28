@@ -25,10 +25,12 @@ interface Props {
 }
 
 /** The run's agents, a tab each: for a run in herdr, what the chosen one's pane shows, read again every AGENT_POLL_MS
- * while it is shown, and a box and keys to type into it, as into its herdr pane; for a run over ACP, its conversation
- * (Conversation). The current role's agent is chosen until another is. */
+ * while it is shown and the run is driven, and a box and keys to type into it, as into its herdr pane, until it has
+ * exited; for a run over ACP, its conversation (Conversation). The current role's agent is chosen until another is. */
 export function AgentPanes({ api, project, record }: Props) {
   const agents = record.agents ?? [];
+  // A run nothing drives (health null) is finished or cut short: what its agents show no longer changes.
+  const driven = record.health !== null;
   const [chosen, setChosen] = useState<string | null>(null);
   const shown = agents.find((a) => a.role === chosen) ?? agents.find((a) => a.role === record.role) ?? agents[0];
   if (!shown) {
@@ -56,17 +58,29 @@ export function AgentPanes({ api, project, record }: Props) {
       </div>
       {/* Keyed by the agent, so another one starts from nothing read and nothing typed. */}
       {record.backend === "acp" ? (
-        <Conversation key={shown.name} api={api} project={project} run={record.id} role={shown.role} />
+        <Conversation key={shown.name} api={api} project={project} run={record.id} role={shown.role} driven={driven} />
       ) : (
-        <AgentPane key={shown.name} api={api} project={project} run={record.id} agent={shown} />
+        <AgentPane key={shown.name} api={api} project={project} run={record.id} agent={shown} driven={driven} />
       )}
     </section>
   );
 }
 
-/** What one agent's pane shows, and the input to it. */
-function AgentPane({ api, project, run, agent }: { api: Api; project: Project; run: string; agent: AgentRef }) {
-  const { text, problem, refresh } = useAgentText(api, project, run, agent.role);
+/** What one agent's pane shows, and the input to it while it has not exited. driven is useAgentText's. */
+function AgentPane({
+  api,
+  project,
+  run,
+  agent,
+  driven,
+}: {
+  api: Api;
+  project: Project;
+  run: string;
+  agent: AgentRef;
+  driven: boolean;
+}) {
+  const { text, problem, exited, refresh } = useAgentText(api, project, run, agent.role, driven);
   const [draft, setDraft] = useState("");
   // True while the draft is being sent: it can be neither sent again nor changed until the send settles, so that one
   // Enter sends it once and success clears what was sent.
@@ -106,7 +120,7 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
     <div className="agent" role="tabpanel" aria-label={`${agent.role} agent`}>
       {problem && <p className="problem">{problem}</p>}
       <pre ref={screen} aria-label={`what the ${agent.role} agent shows`}>
-        {screenText ?? "Reading…"}
+        {screenText ?? (exited ? "No output to show." : "Reading…")}
       </pre>
       {/* Mounted, empty, while nothing is held, so that a screen reader announces the text when it comes. */}
       <p className="notice" role="status">
@@ -117,14 +131,21 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
           aria-label={`Message to the ${agent.role} agent`}
           value={draft}
           readOnly={sending}
+          disabled={exited}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Type to the agent, as in its pane"
         />
-        <button type="submit" disabled={!draft.trim() || sending}>
+        <button type="submit" disabled={!draft.trim() || sending || exited}>
           Send
         </button>
         {KEYS.map(([key, label]) => (
-          <button key={key} type="button" aria-label={`press ${key}`} onClick={() => void type({ keys: [key] })}>
+          <button
+            key={key}
+            type="button"
+            aria-label={`press ${key}`}
+            disabled={exited}
+            onClick={() => void type({ keys: [key] })}
+          >
             {label}
           </button>
         ))}
@@ -134,13 +155,15 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
   );
 }
 
-/** The last AGENT_LINES lines of what the agent shows, read now and every AGENT_POLL_MS while mounted, one read at a
- * time, until a read answers 404: the agent has exited, or never was, and the server would only spawn herdr to say so
- * again. text keeps the last read that succeeded, and problem says why the last one failed, null once one succeeds.
- * refresh reads again at once, and resumes reading after a 404. */
-function useAgentText(api: Api, project: Project, run: string, role: string) {
+/** The last AGENT_LINES lines of what the agent shows, read now and, while driven (something drives the run), every
+ * AGENT_POLL_MS while mounted, one read at a time, until a read answers 404: the agent has exited, or never was, and
+ * the server would only spawn herdr to say so again. Reading starts over whenever driven changes, so a resumed run is
+ * read again. text keeps the last read that succeeded, and problem says why the last one failed, null once one
+ * succeeds; exited is true while the last read answered 404. refresh reads again at once, also after a 404. */
+function useAgentText(api: Api, project: Project, run: string, role: string, driven: boolean) {
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [exited, setExited] = useState(false);
   const [reads, setReads] = useState(0);
   useEffect(() => {
     let current = true;
@@ -151,13 +174,18 @@ function useAgentText(api: Api, project: Project, run: string, role: string) {
           if (current) {
             setText(next);
             setProblem(null);
-            timer = setTimeout(read, AGENT_POLL_MS);
+            setExited(false);
+            if (driven) {
+              timer = setTimeout(read, AGENT_POLL_MS);
+            }
           }
         },
         (error: Error) => {
           if (current) {
             setProblem(error.message);
-            if (!(error instanceof HttpError && error.status === 404)) {
+            const gone = error instanceof HttpError && error.status === 404;
+            setExited(gone);
+            if (driven && !gone) {
               timer = setTimeout(read, AGENT_POLL_MS);
             }
           }
@@ -169,6 +197,6 @@ function useAgentText(api: Api, project: Project, run: string, role: string) {
       current = false;
       clearTimeout(timer);
     };
-  }, [api, project, run, role, reads]);
-  return { text, problem, refresh: () => setReads((n) => n + 1) };
+  }, [api, project, run, role, driven, reads]);
+  return { text, problem, exited, refresh: () => setReads((n) => n + 1) };
 }

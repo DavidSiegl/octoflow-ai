@@ -505,7 +505,7 @@ describe("the agents", () => {
     await waitFor(() => expect(box).toHaveValue(""));
   });
 
-  it("stops reading an agent that has exited, until a send", async () => {
+  it("stops reading an agent that has exited, and offers no key to press", async () => {
     vi.useFakeTimers();
     const fetch = stubServer({ "spec.md": SPEC }, {});
     render(<App connect={connect} appWindow={new FakeWindow()} />);
@@ -525,9 +525,7 @@ describe("the agents", () => {
     });
     expect(reads()).toBe(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "press esc" }));
-    await act(async () => {});
-    expect(reads()).toBe(2);
+    expect(screen.getByRole("button", { name: "press esc" })).toBeDisabled();
   });
 
   it("says when an agent has exited, and when none has started", async () => {

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Api, RunRecord } from "../api";
+import { type Api, HttpError, type RunRecord } from "../api";
 import { AGENT_POLL_MS, AgentPanes } from "./AgentPanes";
 
 const PROJECT = { cwd: "/home/me/proj", machine: "" };
@@ -142,5 +142,56 @@ describe("the herdr pane of an agent whose output outgrows the lines read", () =
     expect(pane.textContent).toBe("line 7\nline 8\nline 9\nline 10\nline 11");
     expect(pane.scrollTop).toBe(pane.scrollHeight);
     expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+});
+
+describe("the herdr pane of an agent that has exited", () => {
+  it("says there is no output, offers nothing to type or press, and reads no more", async () => {
+    vi.useFakeTimers();
+    const agentText = vi.fn(async () => {
+      throw new HttpError(404, "the build agent has exited");
+    });
+    const record = {
+      id: "20261122-120000-c0ffee",
+      role: "build",
+      backend: "herdr",
+      health: "running",
+      agents: [{ role: "build", name: "build-1", kind: "claude" }],
+    } as unknown as RunRecord;
+    render(<AgentPanes api={{ agentText } as unknown as Api} project={PROJECT} record={record} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * AGENT_POLL_MS);
+    });
+
+    expect(agentText).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("the build agent has exited")).toBeInTheDocument();
+    expect(screen.getByLabelText("what the build agent shows")).toHaveTextContent("No output to show.");
+    expect(screen.queryByText("Reading…")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message to the build agent")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    for (const key of ["esc", "enter", "up", "down", "ctrl+c"]) {
+      expect(screen.getByRole("button", { name: `press ${key}` })).toBeDisabled();
+    }
+  });
+});
+
+describe("the herdr pane of an agent of a run nothing drives", () => {
+  it("is read once", async () => {
+    vi.useFakeTimers();
+    const agentText = vi.fn(async () => "done");
+    const record = {
+      id: "20261122-120000-c0ffee",
+      role: "build",
+      backend: "herdr",
+      health: null,
+      agents: [{ role: "build", name: "build-1", kind: "claude" }],
+    } as unknown as RunRecord;
+    render(<AgentPanes api={{ agentText } as unknown as Api} project={PROJECT} record={record} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * AGENT_POLL_MS);
+    });
+
+    expect(agentText).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("what the build agent shows")).toHaveTextContent("done");
   });
 });
