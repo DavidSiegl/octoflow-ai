@@ -8,11 +8,14 @@ pipeline {
         // Per branch or pull request; a discarded build takes its archived quality.md with it. Jenkins never discards
         // the last successful build, which GIT_PREVIOUS_SUCCESSFUL_COMMIT names for the Gate stage.
         buildDiscarder(logRotator(numToKeepStr: '30'))
-        // One build at a time per branch or pull request, so main releases in merge order and the highest version is
-        // the one GitHub marks Latest; a build waits rather than aborting the one before (no abortPrevious), which
-        // would skip that merge's release. Jenkins merges builds queued meanwhile into one, of the newest commit, whose
-        // notes still carry the versions it skipped (ci/release-notes.sh).
-        disableConcurrentBuilds()
+        // One build at a time per branch or pull request. On main a build waits for the one before rather than
+        // aborting it, which would skip that merge's release, so main releases in merge order and the highest version
+        // is the one GitHub marks Latest; Jenkins merges builds queued meanwhile into one, of the newest commit, whose
+        // notes still carry the versions it skipped (ci/release-notes.sh). On a pull request, whose job alone has
+        // CHANGE_ID, a new build aborts the running one: a superseded head releases nothing, and waiting for it would
+        // hold back the new head's status and its auto-merge. Any other job, CHANGE_ID unset, queues as main does,
+        // so a job that lacked it when options are read would wait, never abort a release.
+        disableConcurrentBuilds(abortPrevious: env.CHANGE_ID != null)
     }
 
     environment {
@@ -346,7 +349,10 @@ pipeline {
         }
     }
 
-    // Mail on a failure and on the first green build after one, never on a run that merely succeeded again.
+    // Mail on a failure and on the first green build after one, never on a run that merely succeeded again. A build
+    // that was stopped, aborted by hand or superseded on a pull request (disableConcurrentBuilds above, which ends it
+    // NOT_BUILT: PR-697 #1, "Superseded by #2"), neither fails nor recovers: the build before it decides whether a
+    // green one is a recovery.
     post {
         always {
             cleanWs()
@@ -363,12 +369,21 @@ ${env.BUILD_URL}console""",
                 compressLog: true
             )
         }
-        fixed {
-            emailext(
-                to: 'david.siegl95@gmail.com',
-                subject: "RECOVERED  ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: "${env.BUILD_URL}"
-            )
+        // Not `fixed`, which looks at the previous build only and so takes an aborted one for no failure.
+        success {
+            script {
+                def before = currentBuild.previousBuild
+                while (before != null && before.result in ['ABORTED', 'NOT_BUILT']) {
+                    before = before.previousBuild
+                }
+                if (before != null && before.result in ['FAILURE', 'UNSTABLE']) {
+                    emailext(
+                        to: 'david.siegl95@gmail.com',
+                        subject: "RECOVERED  ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: "${env.BUILD_URL}"
+                    )
+                }
+            }
         }
     }
 }
