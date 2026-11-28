@@ -41,6 +41,9 @@ export function Conversation({ api, project, record, role }: Props) {
   // The permission requests, by their journal number (unique within the journal), answered from here and not refused:
   // their buttons stay disabled until the journal's `answered` replaces them, so that one request gets one answer.
   const [answering, setAnswering] = useState<ReadonlySet<number>>(new Set());
+  // The message being typed to the agent, not yet sent: kept here, so that it outlives the box, which shows only
+  // while the run waits and is answerable.
+  const [draft, setDraft] = useState("");
   const list = useFollowEnd<HTMLOListElement>(events, start);
 
   const answers = new Map<number, { option: string; by: string }>();
@@ -93,6 +96,8 @@ export function Conversation({ api, project, record, role }: Props) {
         <MessageBox
           role={role}
           why={waiting}
+          draft={draft}
+          onDraft={setDraft}
           send={(text) => settle(api.messageAgent(project, run, role, text))}
         />
       )}
@@ -184,10 +189,21 @@ function ToolCall({ call }: { call: AcpToolCall }) {
   );
 }
 
-/** The box that sends the human's message, while the run waits on it for why. send resolves to whether it was sent:
- * the box is cleared only then. */
-function MessageBox({ role, why, send }: { role: string; why: string; send: (text: string) => Promise<boolean> }) {
-  const [draft, setDraft] = useState("");
+/** The box that sends the human's message, draft, while the run waits on it for why; onDraft gets each change to it.
+ * send resolves to whether it was sent: the draft is cleared only then. */
+function MessageBox({
+  role,
+  why,
+  draft,
+  onDraft,
+  send,
+}: {
+  role: string;
+  why: string;
+  draft: string;
+  onDraft: (draft: string) => void;
+  send: (text: string) => Promise<boolean>;
+}) {
   // True while the draft is being sent: it can be neither sent again nor changed until the send settles.
   const [sending, setSending] = useState(false);
   const submit = (event: FormEvent) => {
@@ -197,7 +213,7 @@ function MessageBox({ role, why, send }: { role: string; why: string; send: (tex
       void send(draft).then((sent) => {
         setSending(false);
         if (sent) {
-          setDraft("");
+          onDraft("");
         }
       });
     }
@@ -209,7 +225,7 @@ function MessageBox({ role, why, send }: { role: string; why: string; send: (tex
         aria-label={`Message to the ${role} agent`}
         value={draft}
         readOnly={sending}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onDraft(event.target.value)}
       />
       <button type="submit" disabled={!draft.trim() || sending}>
         Send

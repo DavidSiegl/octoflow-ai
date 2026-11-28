@@ -193,13 +193,15 @@ export interface RunFile {
   size: number;
 }
 
-/** An event of the server's /events stream, its SSE event name as kind. */
+/** An event of the server's /events stream, its SSE event name as kind. `listed` follows the events of the first
+ * poll that read the project, which told of every run it lists; it comes once per stream. */
 export type RunEvent =
   | { kind: "record"; run: string; record: RunRecord | null }
   | { kind: "files"; run: string; files: RunFile[] }
-  | { kind: "problem"; error: string | null };
+  | { kind: "problem"; error: string | null }
+  | { kind: "listed" };
 
-export const EVENT_KINDS = ["record", "files", "problem"] as const;
+export const EVENT_KINDS = ["record", "files", "problem", "listed"] as const;
 
 /** One thing a run needs, as `octoflow doctor` checks it: `required` for any run, `needed-for-pr` for a run
  * that opens a pull request, `optional` for some runs only. When not ok, detail says why and fix what to run or do;

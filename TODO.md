@@ -61,8 +61,7 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   (`ui/src/components/Conversation.tsx`) are component state. Leaving a run with ‹ Runs and coming back, or switching
   to another role's tab and back (AgentPanes keys Conversation by agent), shows Resume or the request's options
   enabled again while the first is under way; after a 202 the server no longer holds the run's resume lock, so a
-  second resume ends the first one's agents. A second answer is refused with 409 `already_answered` and shown. The
-  stream's reconnect remounted RunDetail too, until ticket gui-review/07 kept it mounted. What would close it: keep
+  second resume ends the first one's agents. A second answer is refused with 409 `already_answered` and shown. What would close it: keep
   both in App's state, keyed by project and run (and agent), or have the server refuse a resume while one it started
   is still starting.
 - **A conversation can miss an ACP agent's journal for a turn.** Review 359: the engine saves a role's new agent into

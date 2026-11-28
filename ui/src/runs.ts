@@ -9,27 +9,46 @@ export interface RunEntry {
   files: RunFile[] | null;
 }
 
-/** What a project's event stream has told the app. */
+/** What a project's event streams have told the app. */
 export interface RunsState {
   runs: Record<string, RunEntry>;
   /** Why the server could not read the project, as its last problem event said; null once it can. */
   problem: string | null;
+  /** The runs the stream now open has sent a record of, until its listed event; null once that came, or before a
+   * stream opened. The runs from an earlier stream stay shown meanwhile, and those this one did not tell of go at
+   * listed. */
+  relisted: ReadonlySet<string> | null;
 }
 
-export const NO_RUNS: RunsState = { runs: {}, problem: null };
+export const NO_RUNS: RunsState = { runs: {}, problem: null, relisted: null };
+
+/** The state once a stream (re)opens, which tells of every run again: the runs stay until its listed event (see
+ * RunsState.relisted), and the problem of the stream before it is cleared. */
+export function relisting(state: RunsState): RunsState {
+  return { ...state, problem: null, relisted: new Set() };
+}
 
 /** The state after an event that arrived at the time `at`, in milliseconds since the epoch. */
 export function applyEvent(state: RunsState, event: RunEvent, at: number): RunsState {
   switch (event.kind) {
     case "problem":
       return { ...state, problem: event.error };
+    case "listed": {
+      const told = state.relisted;
+      if (told === null) {
+        return state;
+      }
+      const runs = Object.fromEntries(Object.entries(state.runs).filter(([run]) => told.has(run)));
+      return { ...state, runs, relisted: null };
+    }
     case "record": {
       const { [event.run]: old, ...others } = state.runs;
+      const relisted = state.relisted && new Set(state.relisted).add(event.run);
       if (event.record === null) {
-        return { ...state, runs: others };
+        return { ...state, runs: others, relisted };
       }
       const entry = { record: event.record, receivedAt: at, files: old?.files ?? null };
-      return { ...state, runs: { ...others, [event.run]: entry } };
+      return { ...state, runs: { ...others, [event.run]: entry }, relisted };
     }
     case "files": {
       const old = state.runs[event.run];

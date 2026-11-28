@@ -476,6 +476,8 @@ pub struct RunWatch<'p> {
     sent: BTreeMap<String, Sent>,
     /// The error the last problem event reported; None when there was none, or it cleared.
     problem: Option<String>,
+    /// True once a poll has read the project, and so has told of every run it lists.
+    listed: bool,
 }
 
 /// What an event stream last told of one run.
@@ -496,7 +498,7 @@ struct Sent {
 impl<'p> RunWatch<'p> {
     /// A watch of project that has sent nothing yet.
     pub fn new(project: &'p ProjectRuns) -> RunWatch<'p> {
-        RunWatch { project, sent: BTreeMap::new(), problem: None }
+        RunWatch { project, sent: BTreeMap::new(), problem: None, listed: false }
     }
 
     /// The events since the last poll, in order:
@@ -507,6 +509,8 @@ impl<'p> RunWatch<'p> {
     /// - files, {"run", "files"}: the run's files, as ProjectRuns::files lists them, when they changed; after the
     ///   run's record event, if it has one.
     /// - problem, {"error"}: the project could not be read, and why; error is null once it can be again. First.
+    /// - listed, {}: after the events of the first poll that read the project, which told of every run it lists, so
+    ///   that a client that held runs from an earlier stream can drop those it was not told of. Last, once.
     ///
     /// The first poll sends every run's record and files. A running run's files are listed on every poll. A finished
     /// or failed run's are listed until its state.json is FINISHED_RUN_WRITES old (the record's heartbeat_age) and two
@@ -519,7 +523,11 @@ impl<'p> RunWatch<'p> {
     /// watch holds.
     pub fn poll(&mut self) -> Vec<Event> {
         match self.changes() {
-            Ok(events) => self.problem_events(None).into_iter().chain(events).collect(),
+            Ok(events) => {
+                let listed = !std::mem::replace(&mut self.listed, true);
+                let listed = listed.then(|| Event { kind: "listed", payload: Value::Object(Object::new()) });
+                self.problem_events(None).into_iter().chain(events).chain(listed).collect()
+            }
             Err(e) => self.problem_events(Some(e.to_string())),
         }
     }

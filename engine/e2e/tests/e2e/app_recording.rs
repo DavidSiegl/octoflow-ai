@@ -3,8 +3,8 @@
 //!
 //! The file is a list of batches, {"after", "events"}: the events serve sent after the step `after` names, each
 //! {"kind", ...its payload}. Of the events of a batch, only the last record and the last files of each run are kept,
-//! the record first, the runs in the order the batch first named them: how many polls a step took, and what each
-//! caught of it, is the clock's.
+//! the record first, the runs in the order the batch first named them, and then {"kind": "listed"} if the batch held
+//! one: how many polls a step took, and what each caught of it, is the clock's.
 //!
 //! What else the clock, the process table or chance decides is written as the same stand-in every time, of the type
 //! the app reads there, so that recording twice gives the same file:
@@ -42,8 +42,8 @@ const START: i64 = 1_792_850_400;
 const FILE_SIZE: i64 = 1024;
 
 /// The recording of batches, as the module comment has it. project is the directory serve was asked for, and
-/// normalizer the world's, which learns the batches' runs here. Panics on an event that is neither a record nor a
-/// files event, on files serve sent in another order than oldest first and by name within a second, on more runs
+/// normalizer the world's, which learns the batches' runs here. Panics on an event that is not a record, files or listed
+/// event, on files serve sent in another order than oldest first and by name within a second, on more runs
 /// than RUN_IDS names, and on a placeholder of the normalizer's this module has no stand-in for: something new that
 /// differs between two recordings, which needs one.
 pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path) -> Value {
@@ -56,9 +56,14 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
     for (n, batch) in batches.iter().enumerate() {
         // By run, in the order the batch first names them, its last record and last files.
         let mut last: IndexMap<String, (Option<Value>, Option<Value>)> = IndexMap::new();
+        let mut held_listed = false;
         for (kind, payload) in &batch.events {
             let part = match kind.as_str() {
                 "record" | "files" => at(payload, kind).clone(),
+                "listed" => {
+                    held_listed = true;
+                    continue;
+                }
                 _ => panic!("serve sent a {kind} event after: {}: {payload}", batch.after),
             };
             let run = str_at(payload, "run").to_string();
@@ -111,6 +116,9 @@ pub fn recording(batches: &[Batch], normalizer: &mut Normalizer, project: &Path)
                     ("files", files.collect()),
                 ]));
             }
+        }
+        if held_listed {
+            events.push(object([("kind", "listed".into())]));
         }
         out.push(object([("after", batch.after.into()), ("events", Value::Array(events))]));
     }

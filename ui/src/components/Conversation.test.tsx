@@ -169,6 +169,30 @@ describe("the conversation of an agent over ACP", () => {
     expect(screen.getByText("The run is not running, so its agents cannot be answered here.")).toBeInTheDocument();
   });
 
+  it("keeps the message being typed while the box is hidden and shown again", async () => {
+    vi.useFakeTimers();
+    const waiting = session("interview");
+    const { api } = fakeApi([
+      { session_start: 1, events: waiting, answerable: true },
+      { session_start: 1, events: waiting, answerable: false },
+      { session_start: 1, events: waiting, answerable: true },
+    ]);
+    show(api);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.change(screen.getByLabelText("Message to the spec agent"), { target: { value: "per cli" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+    });
+    expect(screen.queryByLabelText("Message to the spec agent")).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_POLL_MS);
+    });
+    expect(screen.getByLabelText("Message to the spec agent")).toHaveValue("per cli");
+  });
+
   it("reads on from the last event held, and starts over when a new session starts", async () => {
     vi.useFakeTimers();
     const resumed = [
