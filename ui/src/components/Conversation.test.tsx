@@ -102,6 +102,33 @@ describe("the conversation of an agent over ACP", () => {
     expect(within(permission).queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("sends one answer to a request clicked twice, or on two of its options", async () => {
+    const { api, settle } = fakeApi([{ session_start: 1, events: session(null), answerable: true }]);
+    const list = show(api);
+    const permission = await within(list).findByRole("group", { name: "permission 1" });
+
+    fireEvent.click(within(permission).getByRole("button", { name: "Allow" }));
+    fireEvent.click(within(permission).getByRole("button", { name: "Allow" }));
+    fireEvent.click(within(permission).getByRole("button", { name: "Deny" }));
+
+    expect(settle).toHaveBeenCalledTimes(1);
+    // The answer took, but the journal has yet to say so: the options stay disabled until its answered event.
+    await act(async () => settle.mock.results[0]?.value);
+    expect(within(permission).getByRole("button", { name: "Allow" })).toBeDisabled();
+    expect(within(permission).getByRole("button", { name: "Deny" })).toBeDisabled();
+  });
+
+  it("offers a request's options again once its answer is refused, and says why", async () => {
+    const { api } = fakeApi([{ session_start: 1, events: session(null), answerable: true }], "the run is not running");
+    const list = show(api);
+    const permission = await within(list).findByRole("group", { name: "permission 1" });
+
+    fireEvent.click(within(permission).getByRole("button", { name: "Deny" }));
+
+    expect(await screen.findByText("the run is not running")).toBeInTheDocument();
+    expect(within(permission).getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
   it.each([
     ["interview", "The agent is waiting for your answer."],
     ["blocked", "The agent is blocked and waits for your answer to its question."],

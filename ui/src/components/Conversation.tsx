@@ -38,6 +38,9 @@ export function Conversation({ api, project, record, role }: Props) {
   const run = record.id;
   const { start, events, answerable, problem, refresh } = useConversation(api, project, record, role);
   const [sendProblem, setSendProblem] = useState<string | null>(null);
+  // The permission requests, by their journal number (unique within the journal), answered from here and not refused:
+  // their buttons stay disabled until the journal's `answered` replaces them, so that one request gets one answer.
+  const [answering, setAnswering] = useState<ReadonlySet<number>>(new Set());
   const list = useFollowEnd<HTMLOListElement>(events, start);
 
   const answers = new Map<number, { option: string; by: string }>();
@@ -73,10 +76,15 @@ export function Conversation({ api, project, record, role }: Props) {
             <ItemView
               item={item}
               answer={item.kind === "permission" ? answers.get(item.request) : undefined}
-              answerable={answerable}
-              onAnswer={(request, option) =>
-                void settle(api.answerPermission(project, run, role, request, option))
-              }
+              answerable={answerable && !(item.kind === "permission" && answering.has(item.request))}
+              onAnswer={(request, option) => {
+                setAnswering((before) => new Set(before).add(request));
+                void settle(api.answerPermission(project, run, role, request, option)).then((sent) => {
+                  if (!sent) {
+                    setAnswering((before) => new Set([...before].filter((r) => r !== request)));
+                  }
+                });
+              }}
             />
           </li>
         ))}
@@ -93,7 +101,8 @@ export function Conversation({ api, project, record, role }: Props) {
   );
 }
 
-/** One item of the conversation. answer is a permission's, once answered. */
+/** One item of the conversation. answer is a permission's, once answered; answerable is whether its options can be
+ * clicked. */
 function ItemView({
   item,
   answer,

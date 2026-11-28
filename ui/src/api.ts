@@ -610,13 +610,15 @@ export class Api {
   }
 
   /** Resume run, a resumable "acp" run of project (RunRecord.resumable): its leftover agents are ended, and its
-   * resume started detached, each agent continuing its saved session. Resolves once the resume has taken the run up,
-   * or the server's 30 seconds of waiting for that have passed. Rejects with the server's error message: status 404
+   * resume started detached, each agent continuing its saved session. Resolves to true once the resume has taken the
+   * run up, false when the server's 30 seconds of waiting for that passed first: the run's record may not show it
+   * resumed yet, and a resume that exits after the wait never will. Rejects with the server's error message: status 404
    * for no such run, 409 for a run that is not the app's or not resumable, 422 for a resume that exited before taking
    * the run up, the message ending with its log's last lines, and 502 for a project it cannot reach or a resume that
    * cannot be started. */
-  async resumeRun(project: Project, run: string): Promise<void> {
-    await this.json(this.url("/resume", project, { run }), { method: "POST" });
+  async resumeRun(project: Project, run: string): Promise<boolean> {
+    const body = (await this.json(this.url("/resume", project, { run }), { method: "POST" })) as { listed?: unknown };
+    return body.listed !== false;
   }
 
   /** What closing each run of the project that `close --all` closes would do, as its dry run says, changing
