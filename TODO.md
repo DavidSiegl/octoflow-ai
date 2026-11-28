@@ -42,6 +42,12 @@ is rewritten to say what is left. The quality gate's entries moved with it to
 
 ## Open issues
 
+- **An Octoflow AppImage mounted by hand still trusts an `APPIMAGE` another AppImage passed on.** `run_program`
+  (`ui/src-tauri/src/lib.rs`) trusts `APPIMAGE` while `$APPDIR` is the root of a FUSE mount, which also holds for an
+  Octoflow AppImage mounted with squashfuse or `--appimage-mount` and started through its AppRun from a shell that
+  inherited another AppImage's variables: its runs would start that other AppImage. Nothing ties the mount to the file
+  `APPIMAGE` names. Raised by cross-review 352 (round 2). What would close it: checking the mount's source
+  (`/proc/self/mountinfo`) against `APPIMAGE`.
 - **The app words a finished run's verdict by a copy of the engine's rule.** `finishedVerdict` (`ui/src/runs.ts`)
   repeats `outcome_verdict` (`engine/src/cli/listing.rs`): a non-APPROVE verdict from a run judged by several steps
   names the last step. A change to one passes every test of the other. Left when the run record became typed

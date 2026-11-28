@@ -98,7 +98,8 @@ impl Bundle {
         self.roots.iter().any(|root| path.starts_with(root))
     }
 
-    /// The bundle's directory, its links resolved, or as `$APPDIR` names it when it does not exist.
+    /// The bundle's directory, its links resolved, or as `$APPDIR` names it when they cannot be (it is not there, or
+    /// not searchable).
     fn dir(&self) -> &Path {
         &self.roots[0]
     }
@@ -469,7 +470,7 @@ fn fuse_mount_root(dir: &Path) -> bool {
         use std::os::unix::fs::MetadataExt;
         let device = |path: &Path| std::fs::metadata(path).map(|meta| meta.dev()).ok();
         let on_fuse = statfs(dir).is_ok_and(|fs| fs.filesystem_type() == FUSE_SUPER_MAGIC);
-        on_fuse && dir.parent().is_some_and(|parent| device(dir).is_some_and(|own| device(parent) != Some(own)))
+        on_fuse && dir.parent().and_then(device).zip(device(dir)).is_some_and(|(parent, own)| parent != own)
     }
     #[cfg(not(target_os = "linux"))]
     {

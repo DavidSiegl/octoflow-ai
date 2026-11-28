@@ -109,15 +109,15 @@ fn a_run_program_the_user_gives_serve_wins_over_the_app_s() {
 fn runs_start_by_the_appimage_file_only_while_the_app_runs_from_its_mount() {
     let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
     let appimage = || Some(OsString::from("/home/u/Octoflow.AppImage"));
-    let mounted = |dir: &Path| dir == Path::new("/tmp/.mount_Octofl");
+    let mount_root = |dir: &Path| dir == Path::new("/tmp/.mount_Octofl");
     let its_mount = || bundle("/tmp/.mount_Octofl");
-    assert_eq!(run_program(appimage(), its_mount(), exe, mounted), Some(PathBuf::from("/home/u/Octoflow.AppImage")));
+    assert_eq!(run_program(appimage(), its_mount(), exe, mount_root), Some(PathBuf::from("/home/u/Octoflow.AppImage")));
     // Extracted by the runtime (APPIMAGE_EXTRACT_AND_RUN), which still sets APPIMAGE.
     let extracted = Path::new("/tmp/appimage_extracted_0123/usr/bin/octoflow-desktop");
-    assert_eq!(run_program(appimage(), bundle("/tmp/appimage_extracted_0123"), extracted, mounted), None);
+    assert_eq!(run_program(appimage(), bundle("/tmp/appimage_extracted_0123"), extracted, mount_root), None);
     // The .deb and macOS: no AppImage.
     assert_eq!(run_program(None, None, Path::new("/usr/bin/octoflow-desktop"), |_: &Path| false), None);
-    assert_eq!(run_program(Some(OsString::new()), its_mount(), exe, mounted), None);
+    assert_eq!(run_program(Some(OsString::new()), its_mount(), exe, mount_root), None);
 }
 
 #[test]
