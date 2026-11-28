@@ -49,6 +49,13 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `plugin:dialog|open`, which its tests mock; the by-hand check in the packaged app was not run. What would close it:
   a test that builds the app with Tauri's mock runtime (`tauri::test`), asks its webview to navigate to another
   origin, and invokes `plugin:dialog|open` through its IPC to see that the command is known and allowed.
+- **A dialog whose request is never answered cannot be left.** Review 361 (F2): the app's requests to its sidecar
+  serve have no deadline (`ui/src/api.ts`), and its dialogs disable Close while their own request is pending:
+  WorkflowsDialog while a delete is (`ui/src/components/WorkflowsDialog.tsx`), SettingsDialog while a pick is saved,
+  Escape too, RunForm while a run starts, CleanUpDialog, ForgetDialog and SetupDialog while they act. Each is modal
+  (Dialog makes the rest inert), so a request that hangs keeps the user in it until the app restarts. CloseGuard
+  alone bounds its requests (CLOSE_CHECK_WAIT). What would close it: a bound on the UI's requests to the sidecar,
+  ending in a failure each dialog already shows, or a way out of each that leaves the request to finish unseen.
 - **The guards against a second resume or permission answer are lost when their component remounts.** Review 360
   (F2, F4): ResumeButton's `clickedOn` (`ui/src/components/RunDetail.tsx`) and Conversation's `answering`
   (`ui/src/components/Conversation.tsx`) are component state. Leaving a run with ‹ Runs and coming back, or switching

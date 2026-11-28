@@ -202,8 +202,9 @@ export interface FakeResume {
 /** What a stubbed server's POST /stop and /close-choice answer: `running` to a dry run of /stop (none unless given),
  * and `stopped` to a stop (each of `running` stopped unless given), or a 502 with `error`; a stop is answered once
  * `held`, if given, resolves, and counted in `stops`. GET /close-choice answers `choice` ("ask" unless given), or a 500
- * with `choiceError`; POST /close-choice sets `choice`. A dry run of
- * /stop is answered once `previewHeld`, if given, resolves. */
+ * with `choiceError`; POST /close-choice sets `choice`, or answers a 500 with `saveError`, once `saveHeld`, if given,
+ * resolves, and adds the choice sent to `saves`. A dry run of /stop is answered once `previewHeld`, if given,
+ * resolves. */
 export interface FakeStop {
   running?: StoppedRun[];
   stopped?: StoppedRun[];
@@ -212,6 +213,9 @@ export interface FakeStop {
   stops?: number;
   choice?: CloseChoice;
   choiceError?: string;
+  saveError?: string;
+  saveHeld?: Promise<void>;
+  saves?: CloseChoice[];
   previewHeld?: Promise<void>;
 }
 
@@ -289,12 +293,13 @@ export function workflowAnswers(): Record<string, Answer> {
  * 404 for a name it lacks); POST /workflow/check with `problem`'s answer to its body (none unless given) and the
  * placeholders `task`, `cwd` and `{id}_path` of each step; POST /workflow/save with `save` (201 and
  * /cfg/workflows/NAME.toml unless given) and POST /workflow/delete with `remove` (200 and the file's path unless
- * given). `posts` gets each POST's path and body, in order. */
+ * given), answered once `removeHeld`, if given, resolves. `posts` gets each POST's path and body, in order. */
 export interface FakeEdit {
   workflows?: Record<string, Answer>;
   problem?: (body: { name: string; definition: WorkflowDefinition }) => string | null;
   save?: Answer;
   remove?: Answer;
+  removeHeld?: Promise<void>;
   posts?: { path: string; body: Record<string, unknown> }[];
 }
 
@@ -380,6 +385,9 @@ export function stubServer(
         return answer(200, { problem: edit.problem?.({ name, definition }) ?? null, placeholders: ["task", "cwd", ...steps] });
       }
       const path = `/cfg/workflows/${name}.toml`;
+      if (pathname === "/workflow/delete") {
+        await edit.removeHeld;
+      }
       const reply = pathname === "/workflow/save" ? (edit.save ?? { status: 201, body: { path } }) : (edit.remove ?? { status: 200, body: { path } });
       return answer(reply.status, reply.body);
     }
@@ -417,7 +425,13 @@ export function stubServer(
     }
     if (pathname === "/close-choice") {
       if (init?.method === "POST") {
-        stop.choice = (JSON.parse(String(init.body)) as { choice: CloseChoice }).choice;
+        const { choice } = JSON.parse(String(init.body)) as { choice: CloseChoice };
+        stop.saves = [...(stop.saves ?? []), choice];
+        await stop.saveHeld;
+        if (stop.saveError !== undefined) {
+          return answer(500, { error: stop.saveError });
+        }
+        stop.choice = choice;
       } else if (stop.choiceError !== undefined) {
         return answer(500, { error: stop.choiceError });
       }

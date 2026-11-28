@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { STEP_FLAG_HELP, STEP_FLAGS, type WorkflowDefinition } from "../api";
 import { App } from "../App";
@@ -397,6 +397,50 @@ describe("the workflows dialog", { timeout: EDITOR_TIMEOUT_MS }, () => {
     fireEvent.click(within(ask).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(posts(edit, "/workflow/delete")).toEqual([{ name: "broken", base: "broken's text" }]));
     expect(screen.queryByRole("dialog", { name: "delete workflow" })).not.toBeInTheDocument();
+  });
+
+  it("shows a delete under way as Deleting…, with nothing to click on its entry or Close until it is answered", async () => {
+    let release = () => {};
+    const edit: FakeEdit = { removeHeld: new Promise((resolve) => (release = resolve)) };
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Delete…" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "delete workflow" })).getByRole("button", { name: "Delete" }));
+
+    expect(within(entry(dialog, "tdd")).getByText("Deleting…")).toBeInTheDocument();
+    expect(within(entry(dialog, "tdd")).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+    await act(async () => release());
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled());
+    expect(posts(edit, "/workflow/delete")).toHaveLength(1);
+  });
+
+  it("clears a failed delete's reason once a workflow is saved", async () => {
+    const edit: FakeEdit = { remove: { status: 409, body: { error: "tdd.toml changed since it was read" } } };
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Delete…" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "delete workflow" })).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByText("tdd.toml changed since it was read")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "New…" }));
+    const form = await editor();
+    type(form, "Name", "mine");
+    fireEvent.click(await saveable(form));
+
+    await waitFor(() => expect(within(dialog).queryByText("tdd.toml changed since it was read")).not.toBeInTheDocument());
+  });
+
+  it("clears a failed delete's reason once a later delete is confirmed", async () => {
+    const edit: FakeEdit = { remove: { status: 409, body: { error: "tdd.toml changed since it was read" } } };
+    const dialog = await openWorkflows(edit);
+    fireEvent.click(within(entry(dialog, "tdd")).getByRole("button", { name: "Delete…" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "delete workflow" })).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByText("tdd.toml changed since it was read")).toBeInTheDocument();
+
+    edit.remove = undefined;
+    fireEvent.click(within(entry(dialog, "broken")).getByRole("button", { name: "Delete…" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "delete workflow" })).getByRole("button", { name: "Delete" }));
+    expect(within(dialog).queryByText("tdd.toml changed since it was read")).not.toBeInTheDocument();
+    await waitFor(() => expect(posts(edit, "/workflow/delete")).toHaveLength(2));
   });
 
   it("deletes nothing when the confirmation is cancelled", async () => {

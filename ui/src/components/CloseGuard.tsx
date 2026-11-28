@@ -13,7 +13,8 @@ export interface AppWindow {
 }
 
 /** How long, in milliseconds, a close waits to learn whether runs are running before it closes anyway, as it does
- * when the server cannot be asked: the window cannot close while it waits, and nothing shows that it does. */
+ * when the server cannot be asked, and how long the close dialog waits for its choice to be saved before acting on
+ * it: the window cannot close while it waits. */
 export const CLOSE_CHECK_WAIT = 5000;
 
 /** Where the close dialog is: asking, with the runs running when the window was asked to close; stopping them; or
@@ -150,7 +151,8 @@ export function CloseGuard({ api, project, appWindow }: { api: Api; project: Pro
 }
 
 /** "Keep running" (focused) or "Stop all", with "Don't ask again", which saves the choice made. A choice that cannot
- * be saved still goes ahead: the next close asks again. */
+ * be saved, or whose save is not answered within CLOSE_CHECK_WAIT, still goes ahead: the next close asks again. Once
+ * one is clicked, nothing in the dialog can be until it acts, so that one choice is saved and acted on. */
 function AskDialog({
   api,
   project,
@@ -165,11 +167,14 @@ function AskDialog({
   onStop: () => void;
 }) {
   const [remember, setRemember] = useState(false);
+  // True once Stop all or Keep running was clicked: the dialog is acting on that choice, and takes no other.
+  const [chosen, setChosen] = useState(false);
   const choose = (choice: "keep" | "stop", then: () => void) => {
+    setChosen(true);
     if (!remember) {
       return then();
     }
-    api.saveCloseChoice(choice).then(then, then);
+    withDeadline(api.saveCloseChoice(choice), CLOSE_CHECK_WAIT).then(then, then);
   };
   return (
     <Dialog label="close the app" title="Close the app?" project={project} className="close-app">
@@ -178,14 +183,14 @@ function AskDialog({
         They go on without the app, and show here again when it opens; or stop them now, to resume later.
       </p>
       <label className="check">
-        <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+        <input type="checkbox" checked={remember} disabled={chosen} onChange={(e) => setRemember(e.target.checked)} />
         Don't ask again
       </label>
       <footer>
-        <button type="button" onClick={() => choose("stop", onStop)}>
+        <button type="button" disabled={chosen} onClick={() => choose("stop", onStop)}>
           Stop all
         </button>
-        <button type="button" onClick={() => choose("keep", onKeep)} autoFocus>
+        <button type="button" disabled={chosen} onClick={() => choose("keep", onKeep)} autoFocus>
           Keep running
         </button>
       </footer>

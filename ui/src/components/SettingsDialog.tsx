@@ -10,11 +10,14 @@ const CHOICES: { choice: CloseChoice; label: string }[] = [
 
 /** The app's settings, this computer's for every project: what closing the window does with the open project's runs
  * still running (CloseGuard), which "Don't ask again" in its dialog sets. A choice is saved as soon as it is picked;
- * onClose is called on Close or Escape. */
+ * onClose is called on Close or Escape, which do nothing while a pick is being saved, so that its outcome is shown. */
 export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void }) {
   // The saved choice; null while it is read, or when it could not be.
   const [choice, setChoice] = useState<CloseChoice | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // True while a pick is being saved. Another pick is not taken meanwhile, so that choice, once the save settles, is
+  // what the server holds. The radios stay enabled, so that the one focused keeps the focus.
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     let current = true;
     api.closeChoice().then(
@@ -26,22 +29,29 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
     };
   }, [api]);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && !saving && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, saving]);
   const pick = (next: CloseChoice) => {
+    if (saving) {
+      return;
+    }
     const before = choice;
     setChoice(next);
     setProblem(null);
-    api.saveCloseChoice(next).catch((error: Error) => {
-      setChoice(before);
-      setProblem(`Could not save the setting: ${error.message}`);
-    });
+    setSaving(true);
+    api
+      .saveCloseChoice(next)
+      .catch((error: Error) => {
+        setChoice(before);
+        setProblem(`Could not save the setting: ${error.message}`);
+      })
+      .finally(() => setSaving(false));
   };
   return (
     <Dialog label="settings" title="Settings" className="settings">
-      <fieldset disabled={choice === null && problem === null}>
+      <fieldset disabled={choice === null && problem === null} aria-busy={saving}>
         <legend>When the app closes with the open project's runs running</legend>
         {CHOICES.map(({ choice: value, label }) => (
           <label key={value} className="check">
@@ -50,9 +60,10 @@ export function SettingsDialog({ api, onClose }: { api: Api; onClose: () => void
           </label>
         ))}
       </fieldset>
+      {saving && <p className="loading">Saving…</p>}
       {problem && <p className="problem">{problem}</p>}
       <footer>
-        <button type="button" onClick={onClose} autoFocus>
+        <button type="button" onClick={onClose} disabled={saving} autoFocus>
           Close
         </button>
       </footer>
