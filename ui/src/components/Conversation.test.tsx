@@ -112,6 +112,8 @@ describe("the conversation of an agent over ACP", () => {
     fireEvent.click(within(permission).getByRole("button", { name: "Deny" }));
 
     expect(settle).toHaveBeenCalledTimes(1);
+    // The answer took, but the journal has yet to say so: the options stay disabled until its answered event.
+    await act(async () => settle.mock.results[0]?.value);
     expect(within(permission).getByRole("button", { name: "Allow" })).toBeDisabled();
     expect(within(permission).getByRole("button", { name: "Deny" })).toBeDisabled();
   });

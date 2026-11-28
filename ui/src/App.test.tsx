@@ -385,11 +385,25 @@ describe("resuming a run", () => {
     expect(resume.requests).toEqual([{ cwd: CONNECTION.project, run: DONE }]);
   });
 
-  it("says a resume the server stopped waiting for has started, and keeps Resume disabled", async () => {
+  it("says a resume the server stopped waiting for has started, and keeps Resume disabled until the run's next record", async () => {
+    const source = await openResumable({ status: 202, body: { run: DONE, listed: false } });
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText(/The resume has started, but the run does not show it yet\./)).toBeInTheDocument();
+    expect(screen.getByText(`.octoflow-ai/runs/${DONE}/run.log`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
+
+    const done = RECORDED[0]?.events.find((e) => e.kind === "record")?.record as Record<string, unknown>;
+    act(() => source.emit("record", { run: DONE, record: { ...done, backend: "acp", resumable: true, error: "interrupted again" } }));
+    expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
+    expect(screen.queryByText(/does not show it yet/)).not.toBeInTheDocument();
+  });
+
+  it("offers Resume again when the user stops waiting for a resume the server did not see take the run up", async () => {
     await openResumable({ status: 202, body: { run: DONE, listed: false } });
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
-    expect(await screen.findByText("The resume has started, but the run does not show it yet.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop waiting" }));
+    expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
+    expect(screen.queryByText(/does not show it yet/)).not.toBeInTheDocument();
   });
 
   it("says why a resume failed", async () => {

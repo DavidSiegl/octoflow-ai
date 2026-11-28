@@ -49,6 +49,15 @@ is rewritten to say what is left. The quality gate's entries moved with it to
   `plugin:dialog|open`, which its tests mock; the by-hand check in the packaged app was not run. What would close it:
   a test that builds the app with Tauri's mock runtime (`tauri::test`), asks its webview to navigate to another
   origin, and invokes `plugin:dialog|open` through its IPC to see that the command is known and allowed.
+- **The guards against a second resume or permission answer are lost when their component remounts.** Review 360
+  (F2, F4): ResumeButton's `clickedOn` (`ui/src/components/RunDetail.tsx`) and Conversation's `answering`
+  (`ui/src/components/Conversation.tsx`) are component state. Leaving a run with ‹ Runs and coming back, or switching
+  to another role's tab and back (AgentPanes keys Conversation by agent), shows Resume or the request's options
+  enabled again while the first is under way; after a 202 the server no longer holds the run's resume lock, so a
+  second resume ends the first one's agents. A second answer is refused with 409 `already_answered` and shown. The
+  stream's reconnect remounted RunDetail too, until ticket gui-review/07 kept it mounted. What would close it: keep
+  both in App's state, keyed by project and run (and agent), or have the server refuse a resume while one it started
+  is still starting.
 - **A conversation can miss an ACP agent's journal for a turn.** Review 359: the engine saves a role's new agent into
   state.json (`engine/src/workflow/turn.rs`) before `Agents::start` opens its journal (`engine/src/acp.rs`), so a
   record that lists the agent can come first; the conversation's first read then answers 404, and it reads again

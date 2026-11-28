@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Api, Project, RunRecord } from "../api";
 import { useNow } from "../hooks";
 import type { RunEntry } from "../runs";
@@ -83,23 +83,30 @@ function Status({ entry }: { entry: RunEntry }) {
 }
 
 /** Resume, for a desktop app's run a resume would take up (RunRecord.resumable), and why the last resume failed. The
- * run's next record, from the event stream, shows it resumed. From the click until that record comes, or the resume
- * fails, Resume cannot be clicked again: a second resume would end the first one's agents (POST /resume). */
+ * run's next record, from the event stream, shows it resumed. From the click until that record comes, the resume
+ * fails, or the user stops waiting for a resume the server did not see take the run up, Resume cannot be clicked
+ * again: a second resume would end the first one's agents (POST /resume). */
 function ResumeButton({ api, project, record }: { api: Api; project: Project; record: RunRecord }) {
-  // The record Resume was clicked on, until the resume fails; null before a click. The stream sends a run's record
+  // The record shown when the resume now under way was asked for; null when none is. The stream sends a run's record
   // only when it changes, so while this is still the record shown, the resume has not shown in it yet.
   const [clickedOn, setClickedOn] = useState<RunRecord | null>(null);
-  // True when the last resume started but had not taken the run up by the end of the server's wait.
+  // True when the resume under way started but had not taken the run up by the end of the server's wait.
   const [unlisted, setUnlisted] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // The number of the latest click: an earlier click's answer, come late, must not undo a later one's state.
+  const clicks = useRef(0);
   const resuming = clickedOn === record;
   const resume = () => {
+    const click = ++clicks.current;
     setClickedOn(record);
     setUnlisted(false);
     setProblem(null);
     api.resumeRun(project, record.id).then(
-      (listed) => setUnlisted(!listed),
+      (listed) => {
+        if (click === clicks.current) setUnlisted(!listed);
+      },
       (e: unknown) => {
+        if (click !== clicks.current) return;
         setClickedOn(null);
         setProblem(e instanceof Error ? e.message : String(e));
       },
@@ -110,7 +117,18 @@ function ResumeButton({ api, project, record }: { api: Api; project: Project; re
       <button type="button" onClick={resume} disabled={resuming}>
         {resuming ? "Resuming…" : "Resume"}
       </button>
-      {resuming && unlisted && <span className="note"> The resume has started, but the run does not show it yet.</span>}
+      {resuming && unlisted && (
+        <>
+          <span className="note">
+            {" "}
+            The resume has started, but the run does not show it yet. If it never does, its log,{" "}
+            <code>.octoflow-ai/runs/{record.id}/run.log</code> in the project, shows why.
+          </span>{" "}
+          <button type="button" onClick={() => setClickedOn(null)}>
+            Stop waiting
+          </button>
+        </>
+      )}
       {problem && <span className="problem"> {problem}</span>}
     </p>
   );
