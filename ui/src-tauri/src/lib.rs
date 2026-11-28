@@ -614,6 +614,7 @@ pub fn run() {
         .build();
     tauri::Builder::default()
         .plugin(stay_in_app)
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(Sidecar::of_app(&webview_origin(app.config())));
             Ok(())

@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { homeDir } from "@tauri-apps/api/path";
 import { useState, type FormEvent } from "react";
 import type { Project } from "../api";
 
@@ -10,12 +12,40 @@ interface Props {
   onCheckSetup: () => void;
 }
 
-/** The project folder field, and the button that checks the open project's setup. */
+/** The folder the system's folder dialog starts in: the open project's, its `~` replaced by the home directory, which
+ * the dialog does not know; the home directory when no project is open. */
+async function dialogStart(cwd: string): Promise<string> {
+  if (cwd !== "" && cwd !== "~" && !cwd.startsWith("~/")) {
+    return cwd;
+  }
+  const home = (await homeDir()).replace(/\/$/, "");
+  return home + cwd.slice(1);
+}
+
+/** The project folder field, typed or pasted into, with Open, and Choose…, which picks a folder in the system's folder
+ * dialog and opens it as Open does; and the button that checks the open project's setup. */
 export function ProjectBar({ project, onOpen, onCheckSetup }: Props) {
   const [cwd, setCwd] = useState(project.cwd);
+  // Why the folder dialog could not be shown; null while it has not failed since Choose… was last clicked.
+  const [failure, setFailure] = useState<string | null>(null);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onOpen({ cwd: cwd.trim() });
+  };
+  const choose = async () => {
+    setFailure(null);
+    try {
+      // The dialog plugin's own command, as its npm package's open() sends it; that package is not a dependency, as it
+      // ships no license text the app's bundle could carry (ui/scripts/npm-licenses.js). null when cancelled.
+      const options = { directory: true, defaultPath: await dialogStart(project.cwd) };
+      const picked = await invoke<string | null>("plugin:dialog|open", { options });
+      if (picked !== null) {
+        setCwd(picked);
+        onOpen({ cwd: picked });
+      }
+    } catch (error) {
+      setFailure(String(error));
+    }
   };
   return (
     <form className="project-bar" onSubmit={submit}>
@@ -26,9 +56,13 @@ export function ProjectBar({ project, onOpen, onCheckSetup }: Props) {
       <button type="submit" disabled={!cwd.trim()}>
         Open
       </button>
+      <button type="button" onClick={() => void choose()}>
+        Choose…
+      </button>
       <button type="button" onClick={onCheckSetup} disabled={!project.cwd}>
         Check setup…
       </button>
+      {failure && <span className="problem">Could not show the folder dialog: {failure}</span>}
     </form>
   );
 }

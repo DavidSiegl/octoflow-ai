@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: Tauri's core; closing itself (window.destroy) once the webview's close handler has let it (CloseGuard); and the app's own commands, server and open_outside (an https page or a bundled license file), which every window may call since build.rs lists none",
+  "description": "The main window: Tauri's core; closing itself (window.destroy) once the webview's close handler has let it (CloseGuard); the system's open dialog, its narrowest permission, which the window shows only as a folder dialog to pick the project folder (ProjectBar), and none of the dialog plugin's save, message or ask dialogs; and the app's own commands, server and open_outside (an https page or a bundled license file), which every window may call since build.rs lists none",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-destroy"]
+  "permissions": ["core:default", "core:window:allow-destroy", "dialog:allow-open"]
 }
