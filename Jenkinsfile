@@ -8,13 +8,14 @@ pipeline {
         // Per branch or pull request; a discarded build takes its archived quality.md with it. Jenkins never discards
         // the last successful build, which GIT_PREVIOUS_SUCCESSFUL_COMMIT names for the Gate stage.
         buildDiscarder(logRotator(numToKeepStr: '30'))
-        // One build at a time per branch or pull request. On main a build waits for the one before rather than
-        // aborting it, which would skip that merge's release, so main releases in merge order and the highest version
-        // is the one GitHub marks Latest; Jenkins merges builds queued meanwhile into one, of the newest commit, whose
-        // notes still carry the versions it skipped (ci/release-notes.sh). On a pull request, whose job alone has
-        // CHANGE_ID, a new build aborts the running one: a superseded head releases nothing, and waiting for it would
-        // hold back the new head's status and its auto-merge. Any other job, CHANGE_ID unset, queues as main does,
-        // so a job that lacked it when options are read would wait, never abort a release.
+        // One build at a time per branch or pull request. On main a build waits for the one before rather than aborting
+        // it, which would skip that merge's release, so main releases in merge order and the highest version is the one
+        // GitHub marks Latest (but for a re-run of an older build: ci/release-latest.sh); Jenkins merges builds queued
+        // meanwhile into one, of the newest commit, whose notes still carry the versions it skipped
+        // (ci/release-notes.sh). On a pull request, whose job alone has CHANGE_ID, a new build aborts the running one:
+        // a superseded head releases nothing, and waiting for it would hold back the new head's status and its
+        // auto-merge. Any other job, CHANGE_ID unset, queues as main does, so a job that lacked it when options are
+        // read would wait, never abort a release.
         disableConcurrentBuilds(abortPrevious: env.CHANGE_ID != null)
     }
 
@@ -335,6 +336,9 @@ pipeline {
                         ci/release-notes.sh "$version" < release-tags.txt > release-notes.md
                         set --
                         [ ! -s release-notes.md ] || set -- --notes-file release-notes.md
+                        # Not Latest below a release already there (ci/release-latest.sh).
+                        latest=$(ci/release-latest.sh "$version" < release-tags.txt)
+                        [ "$latest" = true ] || set -- "$@" --latest=false
                         # Publishing it starts .github/workflows/macos-binary.yml, which adds the macOS binary and app.
                         gh release create "$tag" "$@" \
                             dist/octoflow-linux-x86_64 dist/octoflow-linux-x86_64.sha256 \
