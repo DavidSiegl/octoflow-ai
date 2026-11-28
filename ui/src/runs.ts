@@ -1,4 +1,4 @@
-import type { RunEvent, RunFile, RunRecord, Turn } from "./api";
+import { HttpError, type RunEvent, type RunFile, type RunRecord, type Turn } from "./api";
 
 /** A run as the app last heard of it. */
 export interface RunEntry {
@@ -175,4 +175,13 @@ function finishedVerdict(record: RunRecord): string {
     return verdict;
   }
   return `${verdict} by ${judge.step}`;
+}
+
+/** Whether an agent's pane or conversation (components/AgentPanes.tsx, Conversation.tsx) reads record's run again
+ * AGENT_POLL_MS after a read: after one that answered (failure null), while something drives the run (health not
+ * null), since nothing else changes what a finished or cut-short run's agents show; after a failure, unless it is a
+ * 404, which reading again will not change while the record stays as it is. Both read over at once whenever the run's
+ * record changes, as it does when the engine starts an agent again under the same name. */
+export function readsAgain(record: RunRecord, failure: Error | null): boolean {
+  return failure === null ? record.health !== null : !(failure instanceof HttpError && failure.status === 404);
 }

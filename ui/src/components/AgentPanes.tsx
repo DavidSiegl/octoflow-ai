@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { type AgentInput, type AgentRef, type Api, HttpError, type Project, type RunRecord } from "../api";
 import { useHeldWhileScrolledUp } from "../hooks";
+import { readsAgain } from "../runs";
 import { Conversation } from "./Conversation";
 
 /** How often the shown agent's terminal is read again, in milliseconds. */
@@ -24,9 +25,9 @@ interface Props {
   record: RunRecord;
 }
 
-/** The run's agents, a tab each: for a run in herdr, what the chosen one's pane shows, read again every AGENT_POLL_MS
- * while it is shown, and a box and keys to type into it, as into its herdr pane; for a run over ACP, its conversation
- * (Conversation). The current role's agent is chosen until another is. */
+/** The run's agents, a tab each: for a run in herdr, what the chosen one's pane shows, read again as readsAgain says
+ * while it is shown, and a box and keys to type into it, as into its herdr pane, while it has not exited; for a run
+ * over ACP, its conversation (Conversation). The current role's agent is chosen until another is. */
 export function AgentPanes({ api, project, record }: Props) {
   const agents = record.agents ?? [];
   const [chosen, setChosen] = useState<string | null>(null);
@@ -56,17 +57,17 @@ export function AgentPanes({ api, project, record }: Props) {
       </div>
       {/* Keyed by the agent, so another one starts from nothing read and nothing typed. */}
       {record.backend === "acp" ? (
-        <Conversation key={shown.name} api={api} project={project} run={record.id} role={shown.role} />
+        <Conversation key={shown.name} api={api} project={project} record={record} role={shown.role} />
       ) : (
-        <AgentPane key={shown.name} api={api} project={project} run={record.id} agent={shown} />
+        <AgentPane key={shown.name} api={api} project={project} record={record} agent={shown} />
       )}
     </section>
   );
 }
 
-/** What one agent's pane shows, and the input to it. */
-function AgentPane({ api, project, run, agent }: { api: Api; project: Project; run: string; agent: AgentRef }) {
-  const { text, problem, refresh } = useAgentText(api, project, run, agent.role);
+/** What record's run's agent shows in its pane, and the input to it while it has not exited. */
+function AgentPane({ api, project, record, agent }: { api: Api; project: Project; record: RunRecord; agent: AgentRef }) {
+  const { text, problem, exited, refresh } = useAgentText(api, project, record, agent.role);
   const [draft, setDraft] = useState("");
   // True while the draft is being sent: it can be neither sent again nor changed until the send settles, so that one
   // Enter sends it once and success clears what was sent.
@@ -76,7 +77,7 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
   const { ref: screen, shown: screenText, held, toEnd } = useHeldWhileScrolledUp<HTMLPreElement, string | null>(text);
 
   const type = (input: AgentInput) =>
-    api.typeInto(project, run, agent.role, input).then(
+    api.typeInto(project, record.id, agent.role, input).then(
       () => {
         setSendProblem(null);
         // As a terminal does on input: the reader is to see what it brings, also if they had scrolled up.
@@ -106,7 +107,7 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
     <div className="agent" role="tabpanel" aria-label={`${agent.role} agent`}>
       {problem && <p className="problem">{problem}</p>}
       <pre ref={screen} aria-label={`what the ${agent.role} agent shows`}>
-        {screenText ?? "Reading…"}
+        {screenText ?? (exited ? "No output to show." : "Reading…")}
       </pre>
       {/* Mounted, empty, while nothing is held, so that a screen reader announces the text when it comes. */}
       <p className="notice" role="status">
@@ -117,14 +118,21 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
           aria-label={`Message to the ${agent.role} agent`}
           value={draft}
           readOnly={sending}
+          disabled={exited}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Type to the agent, as in its pane"
         />
-        <button type="submit" disabled={!draft.trim() || sending}>
+        <button type="submit" disabled={!draft.trim() || sending || exited}>
           Send
         </button>
         {KEYS.map(([key, label]) => (
-          <button key={key} type="button" aria-label={`press ${key}`} onClick={() => void type({ keys: [key] })}>
+          <button
+            key={key}
+            type="button"
+            aria-label={`press ${key}`}
+            disabled={exited}
+            onClick={() => void type({ keys: [key] })}
+          >
             {label}
           </button>
         ))}
@@ -134,30 +142,35 @@ function AgentPane({ api, project, run, agent }: { api: Api; project: Project; r
   );
 }
 
-/** The last AGENT_LINES lines of what the agent shows, read now and every AGENT_POLL_MS while mounted, one read at a
- * time, until a read answers 404: the agent has exited, or never was, and the server would only spawn herdr to say so
- * again. text keeps the last read that succeeded, and problem says why the last one failed, null once one succeeds.
- * refresh reads again at once, and resumes reading after a 404. */
-function useAgentText(api: Api, project: Project, run: string, role: string) {
+/** The last AGENT_LINES lines of what record's run's agent of role shows, read now and again as readsAgain says while
+ * mounted, one read at a time. A 404 means the agent has exited, or never was; reading on would only have the server
+ * spawn herdr to say so again. text keeps the last read that succeeded, and problem says why the last one failed, null
+ * once one succeeds; exited is true while the last read answered 404. refresh reads again at once. */
+function useAgentText(api: Api, project: Project, record: RunRecord, role: string) {
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [exited, setExited] = useState(false);
   const [reads, setReads] = useState(0);
   useEffect(() => {
     let current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
-      api.agentText(project, run, role, AGENT_LINES).then(
+      api.agentText(project, record.id, role, AGENT_LINES).then(
         (next) => {
           if (current) {
             setText(next);
             setProblem(null);
-            timer = setTimeout(read, AGENT_POLL_MS);
+            setExited(false);
+            if (readsAgain(record, null)) {
+              timer = setTimeout(read, AGENT_POLL_MS);
+            }
           }
         },
         (error: Error) => {
           if (current) {
             setProblem(error.message);
-            if (!(error instanceof HttpError && error.status === 404)) {
+            setExited(error instanceof HttpError && error.status === 404);
+            if (readsAgain(record, error)) {
               timer = setTimeout(read, AGENT_POLL_MS);
             }
           }
@@ -169,6 +182,6 @@ function useAgentText(api: Api, project: Project, run: string, role: string) {
       current = false;
       clearTimeout(timer);
     };
-  }, [api, project, run, role, reads]);
-  return { text, problem, refresh: () => setReads((n) => n + 1) };
+  }, [api, project, record, role, reads]);
+  return { text, problem, exited, refresh: () => setReads((n) => n + 1) };
 }
