@@ -266,7 +266,7 @@ started, as the human would start one from a terminal.
   whose directory holds only that log). The program is the one serve was given with the hidden `--run-program`,
   while it is there, else serve's own. The desktop app's CLI gives its AppImage file to every `serve`, its window's
   sidecar and one started from a terminal alike, while it runs from the AppImage's FUSE mount (`run_program` and
-  `with_run_program` in `ui/src-tauri/src/lib.rs`, whose doc says when that mount ends); `Cli::run` chooses before it
+  `with_run_program` in `ui/src-tauri/src/lib.rs`, whose doc says when that mount ends); `Cli::enter` chooses before it
   enters the user's shell, which has neither `APPIMAGE` nor `APPDIR` to tell it. The hidden `--run-id` lets serve then
   wait for exactly that run: its `state.json` saved answers 201; its pid gone without one answers 422 with the log's
   last lines; neither within 30 seconds (`START_WAIT`) answers 202. The run's agents are its own children over ACP, and
@@ -367,7 +367,7 @@ browser, at a far smaller download.
   prctl(2)'s parent-death signal), so whatever stops the runtime stops it by SIGTERM. On macOS, a lone `-psn_`
   argument, which a Finder launch may pass, opens the window. Windows, which builds no app and no console, has no
   CLI.
-- **The user's shell.** Before the engine starts, `Cli::run` makes the process's environment and directory
+- **The user's shell.** Before the engine starts, `Cli::enter` makes the process's environment and directory
   `UserShell`'s (`UserShell::enter`), not the ones the app was started with; the sidecar, being the CLI, does so
   itself. Only an AppImage makes them differ: its `AppRun` points path lists, `PYTHONHOME` and GTK's variables
   into the bundle and starts the app in `$APPDIR/usr`, and so does an extracted one's `squashfs-root/AppRun`.

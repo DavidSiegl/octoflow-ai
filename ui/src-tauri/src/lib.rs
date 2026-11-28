@@ -231,17 +231,32 @@ fn is_finder_launch(args: &[OsString]) -> bool {
 }
 
 impl Cli {
-    /// Run the engine's CLI (`octoflow_engine::cli::main`) as this process, in the user's shell's environment and
-    /// directory (`UserShell`), and end the process as the orchestrator's own program ends: with the CLI's exit
-    /// status, or by the SIGTERM or SIGHUP that interrupted it. Under an AppImage run without FUSE the process the
-    /// caller started is the AppImage's runtime, which stays this one's parent and passes on no signal sent to it:
-    /// the CLI gets SIGTERM when the runtime dies, whatever signal stopped it (`stop_with_appimage_runtime`). A
-    /// `serve`, the app's sidecar or one the user started, starts its runs by `run_program`'s choice
-    /// (`with_run_program`). Returns never: when the user's directory is gone, prints why on standard error and
-    /// exits 1. Call it on the main thread before anything else starts a thread or opens a window: it changes the
-    /// process's environment and starts its signal handling.
+    /// Run the engine's CLI (`octoflow_engine::cli::main`) as this process, after `Cli::enter`, and end the process
+    /// as the orchestrator's own program ends: with the CLI's exit status, or by the SIGTERM or SIGHUP that
+    /// interrupted it. Returns never: when the user's directory is gone, prints why on standard error and exits 1. Call
+    /// it on the main thread before anything else starts a thread or opens a window: it changes the process's
+    /// environment and starts its signal handling.
     #[cfg(unix)]
     pub fn run(self) -> ! {
+        match self.enter(fuse_mount_root) {
+            Ok(argv) => octoflow_engine::interrupt::exit(octoflow_engine::cli::main(argv)),
+            Err(why) => {
+                eprintln!("octoflow: {why}");
+                std::process::exit(1)
+            }
+        }
+    }
+
+    /// Make this process the CLI's: in the user's shell's environment and directory (`UserShell`), and returns the
+    /// command line to run the engine's CLI with. Under an AppImage run without FUSE the process the caller started is
+    /// the AppImage's runtime, which stays this one's parent and passes on no signal sent to it: the CLI gets SIGTERM
+    /// when the runtime dies, whatever signal stopped it (`stop_with_appimage_runtime`). A `serve`, the app's sidecar
+    /// or one the user started, starts its runs by `run_program`'s choice (`with_run_program`), mount_root telling
+    /// whether a directory is a FUSE mount's root (`fuse_mount_root`). Prints on standard error what it cannot do and
+    /// runs on without. Errors, saying why, when the user's directory cannot be entered (`UserShell::enter`). Call it
+    /// before the process starts another thread.
+    #[cfg(unix)]
+    fn enter(self, mount_root: impl Fn(&Path) -> bool) -> Result<Vec<OsString>, String> {
         // Read before the user's shell is entered, which has neither.
         let appimage = std::env::var_os("APPIMAGE");
         let appdir = std::env::var_os("APPDIR");
@@ -253,18 +268,15 @@ impl Cli {
         // An app that cannot tell its own program leaves serve to start its runs by its own: say so, as those runs may
         // die with the AppImage's mount.
         let runs_by = match std::env::current_exe() {
-            Ok(exe) => run_program(appimage, Bundle::of(appdir.as_deref()), &exe, fuse_mount_root),
+            Ok(exe) => run_program(appimage, Bundle::of(appdir.as_deref()), &exe, mount_root),
             Err(e) => {
                 eprintln!("octoflow: cannot tell the app's own program, so runs start by serve's: {e}");
                 None
             }
         };
         let argv = with_run_program(self.argv, runs_by);
-        if let Err(why) = UserShell::current().enter() {
-            eprintln!("octoflow: {why}");
-            std::process::exit(1)
-        }
-        octoflow_engine::interrupt::exit(octoflow_engine::cli::main(argv))
+        UserShell::current().enter()?;
+        Ok(argv)
     }
 }
 
@@ -350,7 +362,7 @@ struct Sidecar {
 
 impl Sidecar {
     /// The app itself as its sidecar: `Sidecar::start` with this process's executable, which is the CLI when given
-    /// arguments (`cli`), and so chooses the program its runs start by (`Cli::run`), with the checkout the app was
+    /// arguments (`cli`), and so chooses the program its runs start by (`Cli::enter`), with the checkout the app was
     /// built in as the project of a development build (`tauri dev`), none otherwise. When the executable cannot be
     /// told, that is the connection's reason.
     fn of_app(origin: &str) -> Sidecar {
@@ -366,7 +378,7 @@ impl Sidecar {
 
     /// Start program's `serve`, answering requests from origin, and read the server's first line; project is the one
     /// the window opens first. The sidecar inherits the app's environment and directory, and takes the user's shell
-    /// itself, as the CLI does (`Cli::run`). A sidecar that cannot be started, or prints no such line, keeps the reason
+    /// itself, as the CLI does (`Cli::enter`). A sidecar that cannot be started, or prints no such line, keeps the reason
     /// as its connection.
     fn start(program: &Path, origin: &str, project: Option<String>) -> Sidecar {
         match spawn(program, origin) {

@@ -521,6 +521,37 @@ fn the_process_takes_the_users_shell() {
     assert!(printed.ends_with("/\nkept,the user's,added,unset,unset\n"), "{printed}");
 }
 
+/// Set for the process `serve_starts_its_runs_by_the_appimage_the_app_was_started_from` starts: that run of the test
+/// stands in for an app started from its AppImage's mount, and enters the CLI.
+#[cfg(unix)]
+const ENTERS_CLI: &str = "OCTOFLOW_UI_TEST_ENTERS_CLI";
+
+#[test]
+#[cfg(unix)]
+fn serve_starts_its_runs_by_the_appimage_the_app_was_started_from() {
+    let appimage = "/home/u/Octoflow.AppImage";
+    if std::env::var_os(ENTERS_CLI).is_some() {
+        let cli = Cli { argv: vec!["octoflow".into(), "serve".into()] };
+        let argv = cli.enter(|_: &Path| true).expect("the user's shell entered");
+        assert_eq!(argv, ["octoflow", "serve", "--run-program", appimage].map(OsString::from));
+        assert_eq!(std::env::var_os("APPIMAGE"), None, "the user's shell has no APPIMAGE");
+        return;
+    }
+    // The test binary's own directory as the bundle, the AppImage's mount (`mount_root` above says it is one).
+    let exe = std::env::current_exe().expect("the test binary");
+    let appdir = exe.parent().expect("the test binary's directory");
+    let out = Command::new(&exe)
+        .args(["tests::serve_starts_its_runs_by_the_appimage_the_app_was_started_from", "--exact"])
+        .env(ENTERS_CLI, "1")
+        .env("APPIMAGE", appimage)
+        .env("APPDIR", appdir)
+        .env("OWD", "/")
+        .output()
+        .expect("the test binary runs");
+    let printed = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{printed}{}", String::from_utf8_lossy(&out.stderr));
+}
+
 #[test]
 fn a_directory_since_removed_is_refused_with_nothing_changed() {
     let gone = UserShell { vars: Vec::new(), dir: Some("/nonexistent/proj".into()) };
