@@ -1,7 +1,10 @@
-import { act, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import type { Api } from "../api";
 import { HandoffFile } from "./HandoffFile";
+
+const invoke = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 const PROJECT = { cwd: "/home/me/proj", machine: "" };
 const RUN = "20261122-120000-c0ffee";
@@ -80,5 +83,22 @@ describe("the handoff file on show", () => {
     await settle(1, new Error("spec.md: no such file"));
     expect(screen.getByText("spec.md: no such file")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "First draft" })).toBeNull();
+  });
+
+  it("opens an https link outside the app and follows no other link", async () => {
+    const { api, settle } = pendingReads();
+    render(<HandoffFile api={api} project={PROJECT} run={RUN} file={{ name: "summary.md", mtime: 1, size: 10 }} />);
+    await settle(0, '[the PR](https://github.com/o/r/pull/1 "PR 1"), [the spec](spec.md), [a page](http://example.com)');
+
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
+    const pr = screen.getByRole("button", { name: "the PR" });
+    expect(pr).toHaveAttribute("title", "PR 1 — https://github.com/o/r/pull/1");
+    fireEvent.click(pr);
+    expect(invoke).toHaveBeenLastCalledWith("open_outside", { target: { page: "https://github.com/o/r/pull/1" } });
+    invoke.mockClear();
+    fireEvent.click(screen.getByText("the spec"));
+    fireEvent.click(screen.getByText("a page"));
+    expect(invoke).not.toHaveBeenCalled();
+    expect(screen.getByText("the spec").title).toMatch(/^spec\.md \(not opened/);
   });
 });

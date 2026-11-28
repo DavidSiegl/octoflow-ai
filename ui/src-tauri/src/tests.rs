@@ -681,3 +681,16 @@ fn a_cli_gets_sigterm_when_its_appimage_runtime_dies() {
     }
     assert!(!left, "the CLI still runs 2 s after its runtime died");
 }
+
+#[test]
+fn only_the_apps_own_pages_are_in_the_app() {
+    let url = |s: &str| tauri::Url::parse(s).unwrap();
+    assert!(in_app(&url("tauri://localhost/"), "tauri://localhost"));
+    assert!(in_app(&url("tauri://localhost/index.html#run"), "tauri://localhost"));
+    assert!(in_app(&url("http://localhost:1420/"), "http://localhost:1420"));
+    assert!(in_app(&url("http://tauri.localhost/"), "http://tauri.localhost"));
+    assert!(!in_app(&url("https://github.com/o/r/pull/1"), "tauri://localhost"));
+    assert!(!in_app(&url("http://localhost:1421/"), "http://localhost:1420"));
+    assert!(!in_app(&url("file:///etc/passwd"), "tauri://localhost"));
+    assert!(!in_app(&url("tauri://localhost.evil.example/"), "tauri://localhost"));
+}
