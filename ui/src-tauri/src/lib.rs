@@ -79,8 +79,8 @@ const APPIMAGE_ONLY: &[&str] = &["GTK_THEME", "PYTHONDONTWRITEBYTECODE", "APPDIR
 /// An AppImage's bundle, the directory its start-up names as `$APPDIR`: the mount the runtime made for it, or the
 /// directory it was extracted to.
 struct Bundle {
-    /// `$APPDIR` as named, and what it resolves to, which differ when `TMPDIR` is a link; everything under either is
-    /// in the bundle. The resolved one first.
+    /// `$APPDIR` resolved (`dir`), and as named, which differ when `TMPDIR` is a link; everything under either is in
+    /// the bundle.
     roots: [PathBuf; 2],
 }
 
@@ -96,6 +96,11 @@ impl Bundle {
     /// Whether path is in the bundle, by its name alone: path is not resolved.
     fn contains(&self, path: &Path) -> bool {
         self.roots.iter().any(|root| path.starts_with(root))
+    }
+
+    /// The bundle's directory, its links resolved, or as `$APPDIR` names it when it does not exist.
+    fn dir(&self) -> &Path {
+        &self.roots[0]
     }
 }
 
@@ -119,7 +124,7 @@ impl UserShell {
             return UserShell { vars, dir: None };
         };
         let in_bundle = |path: &Path| bundle.contains(path);
-        let extracted = exe.is_some_and(in_bundle) && appdir_marker(&bundle.roots[0]);
+        let extracted = exe.is_some_and(in_bundle) && appdir_marker(bundle.dir());
         if get("APPIMAGE").is_none() && !extracted {
             return UserShell { vars, dir: None };
         }
@@ -247,7 +252,7 @@ impl Cli {
         // An app that cannot tell its own program leaves serve to start its runs by its own: say so, as those runs may
         // die with the AppImage's mount.
         let runs_by = match std::env::current_exe() {
-            Ok(exe) => run_program(appimage, Bundle::of(appdir.as_deref()), &exe, on_fuse),
+            Ok(exe) => run_program(appimage, Bundle::of(appdir.as_deref()), &exe, fuse_mount_root),
             Err(e) => {
                 eprintln!("octoflow: cannot tell the app's own program, so runs start by serve's: {e}");
                 None
@@ -430,38 +435,45 @@ fn spawn(program: &Path, origin: &str) -> Result<(Child, Served), String> {
 }
 
 /// The program `serve` starts its runs and resumes by, the app's being exe: the AppImage file, appimage
-/// (`$APPIMAGE`, None or empty when unset), while exe is on that AppImage's mount: in its bundle (`$APPDIR`, None
-/// when unset or not one, `Bundle::of`) and on a mount by mounted (`on_fuse`). That mount ends with the process the
-/// AppImage's runtime started, the app's window or a `serve` started from a terminal, and a run still to page in some
-/// of its program would then die by SIGBUS; the AppImage file starts the same program in a mount of the run's own.
-/// None, for serve's own program, otherwise: the .deb, macOS, and an AppImage extracted, by the user or by its
-/// runtime (`APPIMAGE_EXTRACT_AND_RUN`), whose files stay readable to the processes that run them; an app whose
-/// program is outside bundle, as one on a FUSE home (sshfs, gocryptfs) that inherited another AppImage's `APPIMAGE`
-/// and `APPDIR`, or `APPIMAGE` alone; and an AppImage whose path is not UTF-8, which serve, whose paths are strings,
-/// would refuse along with the whole sidecar.
+/// (`$APPIMAGE`, None or empty when unset), while exe is on the mount the AppImage's runtime made: in bundle
+/// (`$APPDIR`, None when unset or not one, `Bundle::of`), whose directory is a mount's root by mount_root
+/// (`fuse_mount_root`). That mount ends with the process the runtime started, the app's window or a `serve` started
+/// from a terminal, and a run still to page in some of its program would then die by SIGBUS; the AppImage file starts
+/// the same program in a mount of the run's own. None, for serve's own program, otherwise: the .deb, macOS, and an
+/// AppImage extracted, by the user or by its runtime (`APPIMAGE_EXTRACT_AND_RUN`), whose files stay readable to the
+/// processes that run them, also on a FUSE home (sshfs, gocryptfs), where an `APPIMAGE` another AppImage passed on
+/// names some other program; and an AppImage whose path is not UTF-8, which serve, whose paths are strings, would
+/// refuse along with the whole sidecar.
 #[cfg(any(test, unix))]
 fn run_program(
     appimage: Option<OsString>,
     bundle: Option<Bundle>,
     exe: &Path,
-    mounted: impl Fn(&Path) -> bool,
+    mount_root: impl Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
-    let on_its_mount = bundle.is_some_and(|bundle| bundle.contains(exe)) && mounted(exe);
-    appimage.filter(|path| !path.is_empty() && path.to_str().is_some() && on_its_mount).map(PathBuf::from)
+    appimage
+        .filter(|path| !path.is_empty() && path.to_str().is_some())
+        .filter(|_| bundle.is_some_and(|bundle| bundle.contains(exe) && mount_root(bundle.dir())))
+        .map(PathBuf::from)
 }
 
-/// Whether path is on a FUSE file system, as a mounted AppImage's files are. False when that cannot be told, as for a
-/// path that is not there, and off Linux, where there are no AppImages.
+/// Whether dir is the root of a FUSE mount, as a mounted AppImage's `$APPDIR` is (`/tmp/.mount_<name><random>`):
+/// on FUSE, and on another device than its parent. A directory below a mount's root, as an extracted AppImage on an
+/// sshfs home is, is not one. False when that cannot be told, as for a directory that is not there, and off Linux,
+/// where there are no AppImages.
 #[cfg(any(test, unix))]
-fn on_fuse(path: &Path) -> bool {
+fn fuse_mount_root(dir: &Path) -> bool {
     #[cfg(target_os = "linux")]
     {
         use nix::sys::statfs::{statfs, FUSE_SUPER_MAGIC};
-        statfs(path).is_ok_and(|fs| fs.filesystem_type() == FUSE_SUPER_MAGIC)
+        use std::os::unix::fs::MetadataExt;
+        let device = |path: &Path| std::fs::metadata(path).map(|meta| meta.dev()).ok();
+        let on_fuse = statfs(dir).is_ok_and(|fs| fs.filesystem_type() == FUSE_SUPER_MAGIC);
+        on_fuse && dir.parent().is_some_and(|parent| device(dir).is_some_and(|own| device(parent) != Some(own)))
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = path;
+        let _ = dir;
         false
     }
 }

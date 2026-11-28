@@ -109,7 +109,7 @@ fn a_run_program_the_user_gives_serve_wins_over_the_app_s() {
 fn runs_start_by_the_appimage_file_only_while_the_app_runs_from_its_mount() {
     let exe = Path::new("/tmp/.mount_Octofl/usr/bin/octoflow-desktop");
     let appimage = || Some(OsString::from("/home/u/Octoflow.AppImage"));
-    let mounted = |path: &Path| path.starts_with("/tmp/.mount_Octofl");
+    let mounted = |dir: &Path| dir == Path::new("/tmp/.mount_Octofl");
     let its_mount = || bundle("/tmp/.mount_Octofl");
     assert_eq!(run_program(appimage(), its_mount(), exe, mounted), Some(PathBuf::from("/home/u/Octoflow.AppImage")));
     // Extracted by the runtime (APPIMAGE_EXTRACT_AND_RUN), which still sets APPIMAGE.
@@ -122,15 +122,35 @@ fn runs_start_by_the_appimage_file_only_while_the_app_runs_from_its_mount() {
 
 #[test]
 fn an_appimage_leaked_to_a_program_on_another_fuse_mount_is_not_trusted() {
-    // An Octoflow on a FUSE home (sshfs, gocryptfs), started by another AppImage that passed on its variables.
-    let exe = Path::new("/home/u/apps/octoflow/usr/bin/octoflow-desktop");
+    // An Octoflow on a FUSE home (sshfs, gocryptfs), started by another AppImage that passed on its variables: only
+    // that AppImage's /tmp/.mount_Other1 is a mount's root.
+    let exe = Path::new("/home/u/apps/squashfs-root/usr/bin/octoflow-desktop");
     let other = || Some(OsString::from("/home/u/Other.AppImage"));
-    let fuse = |_: &Path| true;
-    assert_eq!(run_program(other(), bundle("/tmp/.mount_Other1"), exe, fuse), None);
-    assert_eq!(run_program(other(), None, exe, fuse), None);
+    let mount_root = |dir: &Path| dir == Path::new("/tmp/.mount_Other1");
+    assert_eq!(run_program(other(), bundle("/tmp/.mount_Other1"), exe, mount_root), None);
+    assert_eq!(run_program(other(), None, exe, mount_root), None);
+    // Its own squashfs-root/AppRun sets APPDIR to its bundle, a directory on the FUSE home but not a mount's root.
+    assert_eq!(run_program(other(), bundle("/home/u/apps/squashfs-root"), exe, mount_root), None);
     // An APPDIR of `/` or a relative one is no bundle, rather than one holding every path.
-    assert_eq!(run_program(other(), bundle("/"), exe, fuse), None);
-    assert_eq!(run_program(other(), bundle("home/u/apps/octoflow"), exe, fuse), None);
+    assert_eq!(run_program(other(), bundle("/"), exe, |_: &Path| true), None);
+    assert_eq!(run_program(other(), bundle("home/u/apps/squashfs-root"), exe, |_: &Path| true), None);
+}
+
+#[test]
+#[cfg(unix)]
+fn an_appdir_named_through_a_link_is_the_mount_it_resolves_to() {
+    // APPDIR as the runtime names it under a TMPDIR that is a link; exe as /proc/self/exe names it, resolved.
+    let tmp = scratch_dir();
+    let mount = tmp.path().join("real/.mount_Octofl");
+    std::fs::create_dir_all(mount.join("usr/bin")).expect("the mount's directories");
+    std::os::unix::fs::symlink(tmp.path().join("real"), tmp.path().join("link")).expect("the link");
+    let appdir = tmp.path().join("link/.mount_Octofl");
+    let exe = canonical(mount.clone()).join("usr/bin/octoflow-desktop");
+    let resolved = canonical(mount);
+    let mount_root = |dir: &Path| dir == resolved;
+    let runs_by =
+        run_program(Some("/home/u/Octoflow.AppImage".into()), Bundle::of(Some(appdir.as_os_str())), &exe, mount_root);
+    assert_eq!(runs_by, Some(PathBuf::from("/home/u/Octoflow.AppImage")));
 }
 
 #[test]
@@ -145,8 +165,9 @@ fn an_appimage_path_that_is_not_utf_8_is_not_passed_on() {
 #[test]
 #[cfg(target_os = "linux")]
 fn a_directory_on_disk_is_no_fuse_mount() {
-    assert!(!on_fuse(scratch_dir().path()));
-    assert!(!on_fuse(Path::new("/nonexistent/octoflow")));
+    assert!(!fuse_mount_root(scratch_dir().path()));
+    assert!(!fuse_mount_root(Path::new("/nonexistent/octoflow")));
+    assert!(!fuse_mount_root(Path::new("/")));
 }
 
 #[test]
