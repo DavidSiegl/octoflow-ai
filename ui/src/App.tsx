@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { Api, type Connection, type Project } from "./api";
 import { About } from "./components/About";
 import { CleanUpDialog } from "./components/CleanUpDialog";
@@ -30,6 +30,39 @@ function savedProject(fallback: string | null): { project: Project; machine: str
     // Storage may be unavailable or hold something else; the fallback will do.
   }
   return { project: { cwd: fallback ?? "" }, machine: null };
+}
+
+/** Save project as the one to reopen once the server says it can read it (Api.runsProblem), unless latest, when the
+ * answer comes, no longer names project, as after another project opened since. A project the server refuses is no
+ * longer saved, if it was, so that a folder deleted or moved since it was saved is not reopened at every start. An
+ * answer that never comes changes nothing. */
+function rememberIfRead(api: Api, project: Project, latest: RefObject<Project>): void {
+  api.runsProblem(project).then(
+    (why) => {
+      if (latest.current !== project) {
+        return;
+      }
+      if (why === null) {
+        saveProject(project);
+      } else if (savedCwd() === project.cwd) {
+        forgetProject();
+      }
+    },
+    () => {},
+  );
+}
+
+/** The folder of the project saved as the one to reopen; "" when none is. */
+function savedCwd(): string {
+  return savedProject(null).project.cwd;
+}
+
+function forgetProject(): void {
+  try {
+    localStorage.removeItem(PROJECT_KEY);
+  } catch {
+    // Remembering the project is a convenience.
+  }
 }
 
 function saveProject(project: Project): void {
@@ -91,11 +124,18 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
       current = false;
     };
   }, [api, startedWithProject]);
-  // The project the user last opened, saved as the one to reopen once the server has read it (ProjectRuns' remember);
-  // null before they open one.
-  const [opened, setOpened] = useState<Project | null>(null);
+  // The project opened last, the one shown at start until the user opens another: rememberIfRead saves only it.
+  const latest = useRef(saved.project);
+  // A saved project is checked again at start, so that one the server now refuses is forgotten; a project the app
+  // fell back to, not saved, stays unsaved until the user opens it.
+  useEffect(() => {
+    if (saved.project.cwd !== "" && savedCwd() === saved.project.cwd) {
+      rememberIfRead(api, saved.project, latest);
+    }
+  }, [api, saved]);
   const open = (next: Project) => {
-    setOpened(next);
+    latest.current = next;
+    rememberIfRead(api, next, latest);
     setProject(next);
     setDroppedMachine(null);
   };
@@ -133,7 +173,7 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
       )}
       {project.cwd ? (
         // Keyed by the project, so opening another one starts from its overview.
-        <ProjectRuns key={project.cwd} api={api} project={project} remember={project === opened} />
+        <ProjectRuns key={project.cwd} api={api} project={project} />
       ) : (
         <p className="empty">Open a project folder to see its runs.</p>
       )}
@@ -152,9 +192,8 @@ function Connected({ connection, appWindow }: { connection: Connection; appWindo
 /** One project's runs, live: the overview, with the form for a new run and the dialogs that clean up runs and delete
  * closed ones, or the run picked from it, or started, in detail. A selected run the stream has not listed shows as the
  * overview until it does, with a word on it when it is the run just started. While the server reports a problem with
- * the project, no run can be started or cleaned up. remember saves project as the one to reopen once the server has
- * read it, never before, so a folder that cannot be opened is not reopened at the next start. */
-function ProjectRuns({ api, project, remember }: { api: Api; project: Project; remember: boolean }) {
+ * the project, New run… and Clean up runs… are disabled. */
+function ProjectRuns({ api, project }: { api: Api; project: Project }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
@@ -165,11 +204,6 @@ function ProjectRuns({ api, project, remember }: { api: Api; project: Project; r
   // The id of the run last started from the form; null before one is.
   const [started, setStarted] = useState<string | null>(null);
   const state = useRunStream(api, project);
-  useEffect(() => {
-    if (remember && state.read) {
-      saveProject(project);
-    }
-  }, [remember, state.read, project]);
   const entry = selected ? state.runs[selected] : undefined;
   const openStarted = (run: string) => {
     setFormOpen(false);

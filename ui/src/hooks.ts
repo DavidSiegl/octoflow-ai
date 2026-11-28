@@ -2,17 +2,10 @@ import { type RefObject, useEffect, useLayoutEffect, useReducer, useRef, useStat
 import { EVENT_KINDS, type Api, type Project, type RunEvent } from "./api";
 import { applyEvent, NO_RUNS, type RunsState } from "./runs";
 
-type Action = { type: "reset" } | { type: "opened" } | { type: "event"; event: RunEvent; at: number };
+type Action = { type: "reset" } | { type: "event"; event: RunEvent; at: number };
 
 function reduce(state: RunsState, action: Action): RunsState {
-  switch (action.type) {
-    case "reset":
-      return NO_RUNS;
-    case "opened":
-      return { ...NO_RUNS, read: true };
-    case "event":
-      return applyEvent(state, action.event, action.at);
-  }
+  return action.type === "reset" ? NO_RUNS : applyEvent(state, action.event, action.at);
 }
 
 /** The project's runs, kept up to date by the server's event stream for as long as the component is mounted.
@@ -20,7 +13,7 @@ function reduce(state: RunsState, action: Action): RunsState {
  * The stream starts with every run's record and files, also after the EventSource reconnects, so each opening
  * starts from no runs. A dropped stream, which the EventSource reconnects, shows as the state's problem until it
  * does. A stream the server refused, as for a project folder it cannot open, is closed for good: its problem is then
- * the server's reason (Api.runsProblem), and nothing reconnects it.
+ * the server's reason (Api.runsProblem), and nothing reconnects it but opening the project again.
  */
 export function useRunStream(api: Api, project: Project): RunsState {
   const [state, dispatch] = useReducer(reduce, NO_RUNS);
@@ -31,14 +24,15 @@ export function useRunStream(api: Api, project: Project): RunsState {
       current && dispatch({ type: "event", event: { kind: "problem", error }, at: Date.now() });
     dispatch({ type: "reset" });
     const source = new EventSource(api.eventsUrl(project));
-    source.addEventListener("open", () => dispatch({ type: "opened" }));
+    source.addEventListener("open", () => dispatch({ type: "reset" }));
     source.addEventListener("error", () => {
       if (source.readyState !== EventSource.CLOSED) {
         problem("lost the connection to the orchestrator; retrying");
         return;
       }
       api.runsProblem(project).then(
-        (why) => problem(why ?? "the orchestrator closed the project's event stream; open the project again"),
+        (why) =>
+          problem(`${why ?? "the orchestrator closed the project's event stream"}; open the project again to retry`),
         (error: Error) => problem(`lost the connection to the orchestrator: ${error.message}`),
       );
     });

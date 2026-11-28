@@ -14,12 +14,9 @@ export interface RunsState {
   runs: Record<string, RunEntry>;
   /** Why the server could not read the project, as its last problem event said; null once it can. */
   problem: string | null;
-  /** Whether the server has read the project's runs: its stream opened, which it does only for a project it can
-   * read, since this state started. */
-  read: boolean;
 }
 
-export const NO_RUNS: RunsState = { runs: {}, problem: null, read: false };
+export const NO_RUNS: RunsState = { runs: {}, problem: null };
 
 /** The state after an event that arrived at the time `at`, in milliseconds since the epoch. */
 export function applyEvent(state: RunsState, event: RunEvent, at: number): RunsState {

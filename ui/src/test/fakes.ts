@@ -59,6 +59,7 @@ export class FakeEventSource {
 
   close(): void {
     this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
   }
 
   /** Dispatch an event of the kind, with data as its JSON; a bare open or error without it. */
@@ -297,13 +298,13 @@ export interface FakeEdit {
   posts?: { path: string; body: Record<string, unknown> }[];
 }
 
-/** Stub EventSource, and fetch with a server whose /file answers the text of `files` by name, else 404; whose /agent
- * answers the screen of `agents` by role, else 404 as for an agent that has exited; whose POST /agent/input takes
- * any input; whose /setup endpoints answer as `setup` says, a POST of /setup/checked setting its `checked`, and a
- * POST of /setup/gate recording its cwd and one of /setup/adapter its agent; and
- * whose /workflows and POST /run answer as `start` says, POST /close as `close` says, the workflow endpoints as
- * `edit` says, POST /forget as `forget` says, POST /resume as `resume` says, and POST /stop and /close-choice as
- * `stop` says. */
+/** Stub EventSource, and fetch with a server whose /runs answers that the project has none; whose /file answers the
+ * text of `files` by name, else 404; whose /agent answers the screen of `agents` by role, else 404 as for an agent
+ * that has exited; whose POST /agent/input takes any input; whose /setup endpoints answer as `setup` says, a POST of
+ * /setup/checked setting its `checked`, and a POST of /setup/gate recording its cwd and one of /setup/adapter its
+ * agent; and whose /workflows and POST /run answer as `start` says, POST /close as `close` says, the workflow
+ * endpoints as `edit` says, POST /forget as `forget` says, POST /resume as `resume` says, and POST /stop and
+ * /close-choice as `stop` says. */
 export function stubServer(
   files: Record<string, string>,
   agents: Record<string, string> = {},
@@ -421,6 +422,9 @@ export function stubServer(
         return answer(500, { error: stop.choiceError });
       }
       return answer(200, { choice: stop.choice ?? "ask" });
+    }
+    if (pathname === "/runs") {
+      return answer(200, { version: 1, runs: [] });
     }
     if (pathname === "/agent/input") {
       return init?.method === "POST" ? answer(200, { run: "r", role }) : answer(501, {});

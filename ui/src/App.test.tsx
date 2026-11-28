@@ -159,8 +159,9 @@ describe("the runs overview", () => {
     expect(url.searchParams.get("cwd")).toBe("~/other");
     // Saved only once the server has read it.
     expect(localStorage.getItem("orchestrator.project")).toBeNull();
-    act(() => FakeEventSource.last.emit("open"));
-    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "")).toEqual({ cwd: "~/other" });
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "null")).toEqual({ cwd: "~/other" }),
+    );
   });
 
   it("shows why the server refused a project folder, without retrying, and does not remember it", async () => {
@@ -181,11 +182,34 @@ describe("the runs overview", () => {
     source.readyState = FakeEventSource.CLOSED;
     act(() => source.emit("error"));
 
-    expect(await screen.findByText(refused)).toHaveClass("problem");
+    expect(await screen.findByText(`${refused}; open the project again to retry`)).toHaveClass("problem");
     expect(screen.queryByText(/retrying/)).toBeNull();
     expect(screen.getByRole("button", { name: "New run…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clean up runs…" })).toBeDisabled();
     expect(localStorage.getItem("orchestrator.project")).toBeNull();
+  });
+
+  it("forgets a saved project the server now refuses, so the next start does not reopen it", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "/gone" }));
+    const fetch = stubServer({});
+    const served = fetch.getMockImplementation();
+    if (!served) {
+      throw new Error("stubServer's fetch has no implementation");
+    }
+    fetch.mockImplementation(async (url: string, init?: RequestInit) =>
+      new URL(url).pathname === "/runs"
+        ? new Response(JSON.stringify({ error: "can't cd to /gone" }), { status: 502 })
+        : served(url, init),
+    );
+    render(<App connect={connect} appWindow={new FakeWindow()} />);
+    await waitFor(() => expect(localStorage.getItem("orchestrator.project")).toBeNull());
+  });
+
+  it("keeps a saved project the server can read", async () => {
+    localStorage.setItem("orchestrator.project", JSON.stringify({ cwd: "~/proj" }));
+    const { fetch } = await openApp();
+    await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(url).pathname === "/runs")).toBe(true));
+    expect(JSON.parse(localStorage.getItem("orchestrator.project") ?? "null")).toEqual({ cwd: "~/proj" });
   });
 
   it("says it is retrying while a dropped stream reconnects, and enables its actions again once it has", async () => {
